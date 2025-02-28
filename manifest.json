@@ -1,0 +1,12 @@
+{
+  "domain": "ksenia_lares",
+  "name": "Ksenia Lares 4.0",
+  "version": "1.0.0",
+  "codeowners": ["@emanuelegreco29"],
+  "config_flow": true,
+  "iot_class": "local_polling",
+  "branding": {
+    "icon": "https://brands.home-assistant.io/custom_integrations/ksenia_lares/icon.png",
+    "logo": "https://brands.home-assistant.io/custom_integrations/ksenia_lares/logo.png"
+  }
+}
