@@ -1,10 +1,9 @@
 import asyncio
 import logging
-from .const import DOMAIN, CONF_HOST, CONF_PIN, PLATFORMS
+from .const import DOMAIN, CONF_HOST, CONF_PIN
 from .websocketmanager import WebSocketManager
 
 _LOGGER = logging.getLogger(__name__)
-
 
 """
 Set up the Ksenia integration from a config entry.
@@ -37,9 +36,11 @@ async def async_setup_entry(hass, entry):
     await ws_manager.wait_for_initial_data(timeout=10)
 
     # Forward the setup for each platform
+    platforms = entry.data.get("platforms", ["light", "cover", "switch", "sensor", "scenario", "button"])
+    _LOGGER.debug("Forwarding entry setup for platforms: %s", platforms)
     tasks = [
         hass.config_entries.async_forward_entry_setup(entry, platform)
-        for platform in PLATFORMS
+        for platform in platforms
     ]
     await asyncio.gather(*tasks)
 
@@ -62,11 +63,12 @@ async def async_unload_entry(hass, entry):
     ws_manager = hass.data[DOMAIN]["ws_manager"]
     await ws_manager.stop()
 
+    platforms = entry.data.get("platforms", ["light", "cover", "switch", "sensor", "scenario", "button"])
     unload_ok = all(
         await asyncio.gather(
             *[
                 hass.config_entries.async_forward_entry_unload(entry, platform)
-                for platform in PLATFORMS
+                for platform in platforms
             ]
         )
     )

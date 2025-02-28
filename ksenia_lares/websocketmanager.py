@@ -9,6 +9,13 @@ ssl_context.verify_mode = ssl.CERT_NONE
 ssl_context.options |= 0x4
 
 class WebSocketManager:
+    """
+    Constructor for WebSocketManager
+
+    :param ip: IP of the Ksenia Lares panel
+    :param pin: PIN to login to the Ksenia Lares panel
+    :param logger: Logger instance
+    """
     def __init__(self, ip, pin, logger):
         self._ip = ip
         self._pin = pin
@@ -28,14 +35,35 @@ class WebSocketManager:
         self._retries = 0
         self._connSecure = 0    # 0: no SSL, 1: SSL
 
+
+    """
+    Wait until the initial data are available.
+
+    The method waits until the initial data (both static and realtime) are
+    available. If the data are not available within the given timeout, it
+    raises an exception.
+
+    :param timeout: The timeout in seconds to wait for the data
+    :raises TimeoutError: if the data are not available within the timeout
+    """
     async def wait_for_initial_data(self, timeout=10):
-        """Attende che _readData e _realtimeInitialData siano disponibili, fino al timeout."""
         start_time = time.time()
         while (self._readData is None or self._realtimeInitialData is None) and (time.time() - start_time < timeout):
             await asyncio.sleep(0.5)
 
+
+    """
+    Establishes a NOT SECURE connection to the Ksenia Lares web socket server.
+
+    This method is responsible for establishing a connection to the Ksenia Lares
+    web socket server and retrieving the initial data (both static and
+    realtime). If the connection fails, it retries up to a maximum number of
+    times. If all retries fail, the method raises an exception.
+
+    :raises websockets.exceptions.WebSocketException: if the connection fails
+    :raises OSError: if the connection fails
+    """
     async def connect(self):
-        """Connette in modalità non sicura (ws://)."""
         self._connSecure = 0
         while self._retries < self._max_retries:
             try:
@@ -70,8 +98,19 @@ class WebSocketManager:
 
         self._logger.critical("Maximum retries reached. WebSocket connection failed.")
 
+
+    """
+    Establishes a SECURE connection to the Ksenia Lares web socket server.
+
+    This method is responsible for establishing a connection to the Ksenia Lares
+    web socket server and retrieving the initial data (both static and
+    realtime). If the connection fails, it retries up to a maximum number of
+    times. If all retries fail, the method raises an exception.
+
+    :raises websockets.exceptions.WebSocketException: if the connection fails
+    :raises OSError: if the connection fails
+    """
     async def connectSecure(self):
-        """Connette in modalità sicura (wss://)."""
         self._connSecure = 1
         while self._retries < self._max_retries:
             try:
@@ -105,8 +144,19 @@ class WebSocketManager:
 
         self._logger.critical("Maximum retries reached. WebSocket connection failed.")
 
+
+    """
+    Listener for the websocket messages.
+
+    This method is responsible for listening for messages from the Ksenia
+    Lares web socket server. If a message is received, it is decoded as JSON
+    and passed to the handle_message method for further processing. If the
+    connection is closed, it tries to reconnect up to a maximum number of
+    times.
+
+    :raises Exception: if the connection is closed or an error occurs
+    """
     async def listener(self):
-        """Ascolta i messaggi in arrivo dal WebSocket."""
         self._logger.info("Starting listener")
         while self._running:
             message = None
@@ -125,7 +175,7 @@ class WebSocketManager:
                             await self.connect()
                     else:
                         self._logger.error("WebSocket closed. Maximum retries reached")
-                    continue  # Passa al prossimo ciclo dopo la riconnessione
+                    continue
                 except Exception as e:
                     self._logger.error(f"Listener error: {e}")
                     continue
@@ -138,8 +188,24 @@ class WebSocketManager:
                     continue
                 await self.handle_message(data)
 
+
+    """
+    Handles messages received from the Ksenia Lares WebSocket server.
+
+    This method is called whenever a message is received from the WebSocket
+    server. It checks the type of the message and processes it accordingly.
+    If the message is a result of a command (CMD_USR_RES), it checks if the
+    command is present in the pending commands dictionary, and if so,
+    resolves the associated future with a successful result. If the message
+    is a real-time update (REALTIME), it checks the type of data contained
+    in the message and updates the corresponding real-time data dictionary.
+    It also notifies the registered listeners for the corresponding type of
+    data.
+
+    :param message: the message received from the WebSocket server
+    :type message: dict
+    """
     async def handle_message(self, message):
-        """Gestisce i messaggi ricevuti dal WebSocket."""
         payload = message.get("PAYLOAD", {})
         data = payload.get('HomeAssistant', {})
 
@@ -154,14 +220,14 @@ class WebSocketManager:
         elif message.get("CMD") == "REALTIME":
             if "STATUS_OUTPUTS" in data:
                 self._logger.debug(f"Updating state for outputs: {data['STATUS_OUTPUTS']}")
-                # Aggiorna i dati realtime memorizzati:
+                # Update the initial data
                 if self._realtimeInitialData is None:
                     self._realtimeInitialData = {}
                 if "PAYLOAD" not in self._realtimeInitialData:
                     self._realtimeInitialData["PAYLOAD"] = {}
                 self._realtimeInitialData["PAYLOAD"]["STATUS_OUTPUTS"] = data["STATUS_OUTPUTS"]
 
-                # Notifica i listener registrati
+                # Notify listeners
                 for callback in self.listeners.get("lights", []):
                     await callback(data["STATUS_OUTPUTS"])
                 for callback in self.listeners.get("switches", []):
@@ -185,13 +251,33 @@ class WebSocketManager:
                 for callback in self.listeners.get("systems", []):
                     await callback(data["STATUS_SYSTEM"])
 
+
+
+    """
+    Registers a listener for a specific entity type.
+        
+    Args:
+        entity_type (str): entity type (e.g. "lights")
+        callback (function): function to call when an update is received
+        for that entity type
+    """
     def register_listener(self, entity_type, callback):
-        """Registra un nuovo listener per un tipo di entità."""
         if entity_type in self.listeners:
             self.listeners[entity_type].append(callback)
 
+
+    """
+    Processes the command queue in a loop.
+
+    This function runs in a separate task and is responsible for sending
+    commands to the Ksenia panel. It reads commands from the command queue,
+    locks the websocket to ensure only one command is sent at a time,
+    and sends the command using exeScenario or setOutput functions.
+
+    If an exception occurs while sending a command, the error is logged
+    and the command is not retried.
+    """
     async def process_command_queue(self):
-        """Processa la coda dei comandi da inviare."""
         self._logger.debug("Command queue started")
         while self._running:
             command_data = await self._command_queue.get()
@@ -232,8 +318,22 @@ class WebSocketManager:
             except Exception as e:
                 self._logger.error(f"Error processing command {command} for {output_id}: {e}")
 
+    
+    """
+    Sends a command for the specified output.
+
+    Args:
+        output_id (int): ID of the output
+        command (str or int): command to send (as a string or as a number)
+
+    Returns:
+        bool: True if the command was sent successfully, False otherwise
+
+    Examples:
+        await self.send_command(1, "ON")
+        await self.send_command(2, 50)
+    """
     async def send_command(self, output_id, command):
-        """Invia un comando mettendolo in coda e attende la conferma."""
         future = asyncio.Future()
         command_data = {
             "output_id": output_id,
@@ -426,8 +526,21 @@ class WebSocketManager:
                 domus_with_states.append({**sensor, **state_data})
         return domus_with_states
 
+
+    """
+    Retrieves the list of sensors of a specific type, combining static and real-time data.
+
+    This method waits for the initial data to be available, then extracts the
+    sensors of the given type from the static read data and enriches them with
+    real-time state information. If the initial data is not received, it logs an
+    error and returns an empty list.
+
+    :param sName: The name of the sensor type to retrieve.
+    :type sName: str
+    :return: List of sensors with their current states, each represented as a dictionary.
+    :rtype: list
+    """
     async def getSensor(self, sName):
-        """Recupera la lista dei sensori del tipo specificato combinando dati statici e realtime."""
         await self.wait_for_initial_data(timeout=5)
         if not self._readData or not self._realtimeInitialData:
             self._logger.error("Initial data not received in getSensor")
@@ -442,8 +555,18 @@ class WebSocketManager:
                 sensor_with_states.append({**sensor, **state_data})
         return sensor_with_states
 
+
+    """
+    Retrieves the list of scenarios available in the system.
+
+    This function waits for initial data to be available and then extracts
+    the scenarios from the read data. If the initial data is not received,
+    it logs an error and returns an empty list.
+
+    :return: List of scenarios, each represented as a dictionary with keys as
+             scenario attributes.
+    """
     async def getScenarios(self):
-        """Recupera la lista degli scenari."""
         await self.wait_for_initial_data(timeout=5)
         if not self._readData:
             self._logger.error("Initial data not received in getScenarios")
@@ -451,8 +574,17 @@ class WebSocketManager:
         scenarios = self._readData.get("SCENARIOS", [])
         return scenarios
 
+
+    """
+    Retrieves the list of systems (plants) combining static and real-time data.
+
+    :return: List of systems, each with the following keys:
+        - ID: System ID
+        - ARM: Armed status (True/False)
+        - T_IN: Internal temperature
+        - T_OUT: External temperature
+    """
     async def getSystem(self):
-        """Recupera lo stato di sistema."""
         await self.wait_for_initial_data(timeout=5)
         if not self._readData:
             self._logger.error("Initial data not received in getSystem")

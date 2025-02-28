@@ -40,8 +40,6 @@ class KseniaLightEntity(LightEntity):
         self._name = light_data.get("DES") or light_data.get("LBL") or light_data.get("NM") or f"Light {self._id}"
         self._state = light_data.get("STA", "off").lower() == "on"
         self._available = True
-        # Flag per mantenere lo stato locale per alcuni secondi dopo un comando
-        # Format: (command, timestamp)
         self._pending_command = None
 
     @property
@@ -61,12 +59,12 @@ class KseniaLightEntity(LightEntity):
 
     @property
     def supported_color_modes(self):
-        """Only ONOFF is supported."""
+        """Only ON/OFF is supported."""
         return {ColorMode.ONOFF}
 
     @property
     def color_mode(self):
-        """Only ONOFF is supported."""
+        """Only ON/OFF is supported."""
         return ColorMode.ONOFF
 
 

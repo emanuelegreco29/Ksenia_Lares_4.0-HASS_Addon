@@ -45,8 +45,8 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data_schema=DATA_SCHEMA,
                     errors=errors,
                     description_placeholders={
-                        "ssl_info": "Seleziona se usare una connessione sicura (wss://).",
-                        "platform_info": "Seleziona le piattaforme da integrare (light, cover, switch, sensor, scenario, button)."
+                        "ssl_info": "Choose to use a secure connection (wss://).",
+                        "platform_info": "Choose the platforms to integrate."
                     },
                 )
             return self.async_create_entry(title=f"Ksenia @ {host}", data=user_input)
@@ -55,7 +55,7 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=DATA_SCHEMA,
             description_placeholders={
-                "ssl_info": "Seleziona se usare una connessione sicura (wss://).",
-                "platform_info": "Seleziona le piattaforme da integrare (light, cover, switch, sensor, scenario, button)."
+                "ssl_info": "Choose to use a secure connection (wss://).",
+                "platform_info": "Choose the platforms to integrate."
             },
         )
