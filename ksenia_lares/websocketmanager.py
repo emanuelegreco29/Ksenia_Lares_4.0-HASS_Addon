@@ -354,14 +354,30 @@ class WebSocketManager:
             return False
         return True
 
+
+    """
+    Stops the WebSocketManager.
+
+    This method sets the running flag to False and closes the WebSocket
+    connection if it exists.
+    """
     async def stop(self):
-        """Chiude la connessione WebSocket."""
         self._running = False
         if self._ws:
             await self._ws.close()
 
+
+    """
+    Turns on the specified output.
+
+    Args:
+        output_id (int): ID of the output to turn on
+        brightness (int, optional): Brightness level (0-100). Defaults to None.
+
+    Returns:
+        bool: True if the output was turned on successfully, False otherwise
+    """
     async def turnOnOutput(self, output_id, brightness=None):
-        """Accende l'output specificato (con o senza luminosità)."""
         try:
             if brightness:
                 success = await self.send_command(output_id, brightness)
@@ -375,8 +391,17 @@ class WebSocketManager:
             self._logger.error(f"Error turning on output {output_id}: {e}")
             return False
 
+
+    """
+    Turns off the specified output.
+
+    Args:
+        output_id (int): ID of the output to turn off
+
+    Returns:
+        bool: True if the output was turned off successfully, False otherwise
+    """
     async def turnOffOutput(self, output_id):
-        """Spegne l'output specificato."""
         try:
             success = await self.send_command(output_id, "OFF")
             if not success:
@@ -387,8 +412,17 @@ class WebSocketManager:
             self._logger.error(f"Error turning off output {output_id}: {e}")
             return False
 
+
+    """
+    Raises the specified cover.
+
+    Args:
+        roll_id (int): ID of the cover to raise
+
+    Returns:
+        bool: True if the cover was raised successfully, False otherwise
+    """
     async def raiseCover(self, roll_id):
-        """Alza la tenda inviando il comando 'UP'."""
         try:
             success = await self.send_command(roll_id, "UP")
             if not success:
@@ -399,8 +433,17 @@ class WebSocketManager:
             self._logger.error(f"Error raising cover {roll_id}: {e}")
             return False
 
+
+    """
+    Lowers the specified cover.
+
+    Args:
+        roll_id (int): ID of the cover to lower
+
+    Returns:
+        bool: True if the cover was lowered successfully, False otherwise
+    """
     async def lowerCover(self, roll_id):
-        """Abbassa la tenda inviando il comando 'DOWN'."""
         try:
             success = await self.send_command(roll_id, "DOWN")
             if not success:
@@ -411,8 +454,17 @@ class WebSocketManager:
             self._logger.error(f"Error lowering cover {roll_id}: {e}")
             return False
 
+
+    """
+    Stops the specified cover.
+
+    Args:
+        roll_id (int): ID of the cover to stop
+        
+    Returns:
+        bool: True if the cover was stopped successfully, False otherwise
+    """
     async def stopCover(self, roll_id):
-        """Ferma il movimento della tenda inviando il comando 'ALT'."""
         try:
             success = await self.send_command(roll_id, "ALT")
             if not success:
@@ -423,12 +475,18 @@ class WebSocketManager:
             self._logger.error(f"Error stopping cover {roll_id}: {e}")
             return False
 
+
+    """
+    Sets the position of the specified cover.
+
+    Args:
+        roll_id (int): ID of the cover to set the position
+        position (int): Position to set (0-100)
+
+    Returns:
+        bool: True if the cover position was set successfully, False otherwise
+    """
     async def setCoverPosition(self, roll_id, position):
-        """
-        Imposta la tenda a una specifica percentuale di apertura.
-        
-        Il parametro 'position' (0-100) viene passato come stringa al comando.
-        """
         try:
             success = await self.send_command(roll_id, str(position))
             if not success:
@@ -439,8 +497,17 @@ class WebSocketManager:
             self._logger.error(f"Error setting cover position for {roll_id}: {e}")
             return False
 
+
+    """
+    Executes the specified scenario.
+
+    Args:
+        scenario_id (int): ID of the scenario to execute
+
+    Returns:
+        bool: True if the scenario was executed successfully, False otherwise
+    """
     async def executeScenario(self, scenario_id):
-        """Esegue lo scenario specificato."""
         try:
             success = await self.send_command(scenario_id, "SCENARIO")
             if not success:
@@ -451,8 +518,19 @@ class WebSocketManager:
             self._logger.error(f"Error executing scenario {scenario_id}: {e}")
             return False
 
+
+    """
+    Retrieves the list of lights combining static and real-time data.
+
+    This method waits for the initial data to be available, then extracts the
+    lights from the static read data and enriches them with real-time
+    state information. If the initial data is not received, it logs an error
+    and returns an empty list.
+
+    :return: List of lights with their current states, each represented as a dictionary.
+    :rtype: list
+    """
     async def getLights(self):
-        """Recupera la lista delle luci combinando dati statici e realtime."""
         await self.wait_for_initial_data(timeout=5)
         if not self._realtimeInitialData or not self._readData:
             self._logger.error("Initial data not received in getLights")
@@ -469,33 +547,48 @@ class WebSocketManager:
                 lights_with_states.append({**light, **state_data})
         return lights_with_states
 
+
+    """
+    Retrieves the list of roller blinds (covers) combining static and real-time data.
+
+    This method waits for the initial data to be available, then extracts the
+    roller blinds from the static read data and enriches them with real-time
+    state information. If the initial data is not received, it logs an error
+    and returns an empty list.
+
+    :return: List of roller blinds with their current states, each represented as a dictionary.
+    :rtype: list
+    """
     async def getRolls(self):
-        """Recupera la lista delle roller blinds combinando dati statici e realtime."""
-        # Attende che i dati iniziali siano disponibili
         await self.wait_for_initial_data(timeout=5)
         if not self._readData or not self._realtimeInitialData:
             self._logger.error("Initial data not received in getRolls")
             return []
-        # Estrae lo stato realtime degli outputs
         lares_realtime = self._realtimeInitialData.get("PAYLOAD", {}).get("STATUS_OUTPUTS", [])
-        # Estrae la lista degli output letti
         outputs = self._readData.get("OUTPUTS", [])
-        # Filtra solo le roller blinds (CAT == "ROLL")
         rolls = [output for output in outputs if output.get("CAT") == "ROLL"]
         rolls_with_states = []
         for roll in rolls:
             roll_id = roll.get("ID")
-            # Cerca lo stato corrispondente per lo stesso ID
             state_data = next((state for state in lares_realtime if state.get("ID") == roll_id), None)
             if state_data:
-                # Normalizza lo stato e la posizione (se presente)
                 state_data["STA"] = state_data.get("STA", "off").lower()
                 state_data["POS"] = int(state_data.get("POS", 255))
                 rolls_with_states.append({**roll, **state_data})
         return rolls_with_states
 
+
+    """
+    Retrieves the list of switches combining static and real-time data.
+
+    This method waits for the initial data to be available, then extracts the
+    switches from the static read data and enriches them with real-time state information.
+    If the initial data is not received, it logs an error and returns an empty list.
+
+    :return: List of switches with their current states, each represented as a dictionary.
+    :rtype: list
+    """
     async def getSwitches(self):
-        """Recupera la lista degli interruttori combinando dati statici e realtime."""
         await self.wait_for_initial_data(timeout=5)
         if not self._realtimeInitialData or not self._readData:
             self._logger.error("Initial data not received in getSwitches")
@@ -510,8 +603,18 @@ class WebSocketManager:
                 switches_with_states.append({**switch, **state_data})
         return switches_with_states
 
+
+    """
+    Retrieves the list of domus (domotic sensors) combining static and real-time data.
+
+    This method waits for the initial data to be available, then extracts the
+    domus from the static read data and enriches them with real-time state information.
+    If the initial data is not received, it logs an error and returns an empty list.
+
+    :return: List of domus with their current states, each represented as a dictionary.
+    :rtype: list
+    """
     async def getDom(self):
-        """Recupera la lista dei sensori DOMUS combinando dati statici e realtime."""
         await self.wait_for_initial_data(timeout=5)
         if not self._readData or not self._realtimeInitialData:
             self._logger.error("Initial data not received in getDom")
