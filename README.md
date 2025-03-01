@@ -18,13 +18,13 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 #### ⚠️ Warning ⚠️
 If any of the devices listed is not compatible, or if some devices listed as "compatible" are not working as intended, please open an issue. Collaboration is more than welcome, if somebody wants to implement new functions or contribute in any form to the integration, feel free to send a pull request.
 
-
+![Screenshot from 2025-03-01 14-09-38](https://github.com/user-attachments/assets/280f2f83-8de6-43a8-ae22-8c3f094ad219)
 
 ## Installation
 To install, simply clone this repository or download it locally. Then, add the 'ksenia_lares' folder to your 'custom_components' folder and restart HomeAssistant.
 Proceed to add the integration as you would with any other integration.
 
-[IMAGE HERE]
+
 
 When prompted, insert:
 - The (local) IP address of your Ksenia Control Panel
