@@ -1,5 +1,8 @@
 # Ksenia Lares 4.0 Integration for Home Assistant
 
+![GitHub last commit](https://img.shields.io/github/last-commit/emanuelegreco29/Ksenia_Lares_4.0-HASS_Addon)
+![GitHub License](https://img.shields.io/github/license/emanuelegreco29/Ksenia_Lares_4.0-HASS_Addon)
+
 This **unofficial** integration allows you to connect your HomeAssistant to the [Ksenia Lares 4.0](https://www.kseniasecurity.com/en/insights/control-panel-ksenia-lares-4-0-the-most-complete-iot-platform-for-home-automation.html) control panel and add all your devices.
 
 ## Compatible Devices
