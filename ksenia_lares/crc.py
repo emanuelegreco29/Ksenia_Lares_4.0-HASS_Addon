@@ -4,6 +4,8 @@ Each byte is represented as an integer, with the high bits set to indicate the t
 The first byte in a sequence is always a 0xxxxxxx byte, the second is always a 10xxxxxx byte, and the third is always a 10xxxxxx byte.
 When the function encounters a byte that is not a UTF-8 byte, it will read the next byte as well and return a 4-byte sequence.
 The function will throw an exception if the string contains a non-UTF-8 byte.
+
+Huge thanks to @gvisconti1983 for these functions!
 """
 def u(e):
 	t = []

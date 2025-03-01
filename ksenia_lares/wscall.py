@@ -1,3 +1,7 @@
+"""
+Huge thanks to @realnot16 for these functions!
+"""
+
 import asyncio
 import websockets
 import time, json

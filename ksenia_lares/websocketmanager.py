@@ -1,3 +1,7 @@
+"""
+Huge thanks to @realnot16 for these functions!
+"""
+
 import asyncio
 import websockets
 import json, time
@@ -460,7 +464,7 @@ class WebSocketManager:
 
     Args:
         roll_id (int): ID of the cover to stop
-        
+
     Returns:
         bool: True if the cover was stopped successfully, False otherwise
     """

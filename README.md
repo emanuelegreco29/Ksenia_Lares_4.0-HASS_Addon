@@ -1,0 +1,38 @@
+# Ksenia Lares 4.0 Integration for Home Assistant
+
+This **unofficial** integration allows you to connect your HomeAssistant to the [Ksenia Lares 4.0](https://www.kseniasecurity.com/en/insights/control-panel-ksenia-lares-4-0-the-most-complete-iot-platform-for-home-automation.html) control panel and add all your devices.
+
+## Compatible Devices
+| Device | Compatibility |
+|:-----------------------|:------------------------------------:|
+| Lights | ✅ |
+| Roller Blinds | ✅ |
+| Window Shutters | ✅ |
+| Buttons | ✅ |
+| Switches | ✅ |
+| Sensors | ✅ |
+
+#### Legend
+⛔ - Not Compatible; ⚠️ - Work In Progress; ✅ - Compatible
+
+#### ⚠️ Warning ⚠️
+If any of the devices listed is not compatible, or if some devices listed as "compatible" are not working as intended, please open an issue. Collaboration is more than welcome, if somebody wants to implement new functions or contribute in any form to the integration, feel free to send a pull request.
+
+
+
+## Installation
+To install, simply clone this repository or download it locally. Then, add the 'ksenia_lares' folder to your 'custom_components' folder and restart HomeAssistant.
+Proceed to add the integration as you would with any other integration.
+
+[IMAGE HERE]
+
+When prompted, insert:
+- The (local) IP address of your Ksenia Control Panel
+- The user PIN to access the Ksenia Control Panel. I highly encourage you to use a user PIN, **without admin permissions** and (if you wish) without access to the home security system
+- Check the "SSL" box if you want HomeAssistant to communicate using a **secure connection**. In case of network error, and only in that case, un-check the box
+- Check all the devices that you want to add to HomeAssistant (by default, the integration will scan for all compatible devices)
+
+[IMAGE HERE]
+
+## Credits
+Big thanks to [@gvisconti1983](https://github.com/gvisconti1983) for the crc functions and to [@realnot16](https://github.com/realnot16) for the WebSocket library, which has been reworked and updated by me.
