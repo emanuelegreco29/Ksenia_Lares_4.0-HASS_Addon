@@ -11,9 +11,10 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 | Lights | ✅ |
 | Roller Blinds | ✅ |
 | Window Shutters | ✅ |
-| Buttons | ✅ |
-| Switches | ✅ |
-| Sensors | ✅ |
+| Buttons | ⚠️ |
+| Switches | ⚠️ |
+| Scenarios | ⚠️ |
+| Sensors | ⚠️ |
 
 #### Legend
 ⛔ - Not Compatible; ⚠️ - Work In Progress; ✅ - Compatible
