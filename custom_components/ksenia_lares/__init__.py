@@ -36,7 +36,7 @@ async def async_setup_entry(hass, entry):
     await ws_manager.wait_for_initial_data(timeout=10)
 
     # Forward the setup for each platform
-    platforms = entry.data.get("platforms", ["light", "cover", "switch", "sensor", "scenario", "button"])
+    platforms = entry.data.get("Platforms", ["light", "cover", "switch", "sensor", "button"])
     _LOGGER.debug("Forwarding entry setup for platforms: %s", platforms)
     tasks = [
         hass.config_entries.async_forward_entry_setup(entry, platform)
@@ -63,7 +63,7 @@ async def async_unload_entry(hass, entry):
     ws_manager = hass.data[DOMAIN]["ws_manager"]
     await ws_manager.stop()
 
-    platforms = entry.data.get("platforms", ["light", "cover", "switch", "sensor", "scenario", "button"])
+    platforms = entry.data.get("Platforms", ["light", "cover", "switch", "sensor", "button"])
     unload_ok = all(
         await asyncio.gather(
             *[

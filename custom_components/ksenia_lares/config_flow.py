@@ -5,14 +5,14 @@ import homeassistant.helpers.config_validation as cv
 
 from .const import DOMAIN, CONF_HOST, CONF_PIN
 
-PLATFORMS_OPTIONS = ["light", "cover", "switch", "sensor", "scenario", "button"]
+PLATFORMS_OPTIONS = ["light", "cover", "switch", "sensor", "button"]
 
 # Validation form schema
 DATA_SCHEMA = vol.Schema({
     vol.Required(CONF_HOST): str,
     vol.Required(CONF_PIN): str,
     vol.Required("SSL", default=True): bool,
-    vol.Required("platforms", default=PLATFORMS_OPTIONS): cv.multi_select(PLATFORMS_OPTIONS),
+    vol.Required("Platforms", default=PLATFORMS_OPTIONS): cv.multi_select(PLATFORMS_OPTIONS),
 })
 
 class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
