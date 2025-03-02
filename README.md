@@ -3,6 +3,10 @@
 ![GitHub last commit](https://img.shields.io/github/last-commit/emanuelegreco29/Ksenia_Lares_4.0-HASS_Addon)
 ![GitHub License](https://img.shields.io/github/license/emanuelegreco29/Ksenia_Lares_4.0-HASS_Addon)
 
+<a href="https://www.buymeacoffee.com/lelegreco29" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 50px !important;width: 200px !important;">
+</a>
+
 This **unofficial** integration allows you to connect your HomeAssistant to the [Ksenia Lares 4.0](https://www.kseniasecurity.com/en/insights/control-panel-ksenia-lares-4-0-the-most-complete-iot-platform-for-home-automation.html) control panel and add all your devices.
 
 ## Compatible Devices
