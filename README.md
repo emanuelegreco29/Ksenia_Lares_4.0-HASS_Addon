@@ -28,8 +28,17 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 If any of the devices listed is not compatible, or if some devices listed as "compatible" are not working as intended, please open an issue. Collaboration is more than welcome, if somebody wants to implement new functions or contribute in any form to the integration, feel free to send a pull request.
 
 ## Installation
-To install, simply clone this repository or download it locally. Then, add the 'ksenia_lares' folder to your 'custom_components' folder and restart HomeAssistant.
+### 1. HACS installation (best method)
+1. Make sure you have installed HACS to Home Assistant: [HACS install guide](https://hacs.xyz/docs/setup/download).
+2. Open HACS, click **Custom repositories** in the top-right menu, Repository input: `https://github.com/emanuelegreco29/Ksenia_Lares_4.0-HASS_Addon`, Category select **Integration**.
+3. **Restart Home Assistant**.
+4. You can now search for `Ksenia Lares 4.0` in HACS and install through there.
+
+### 2. Manual installation
+To install, simply clone this repository or download it locally. Then, add the `ksenia_lares` folder to your `custom_components` folder and restart HomeAssistant.
 Proceed to add the integration as you would with any other integration.
+
+## Setup
 
 ![Screenshot from 2025-03-01 14-09-38](https://github.com/user-attachments/assets/280f2f83-8de6-43a8-ae22-8c3f094ad219)
 
