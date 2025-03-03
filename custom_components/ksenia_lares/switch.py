@@ -54,7 +54,7 @@ class KseniaSwitchEntity(SwitchEntity):
     Turn on the switch.
     """
     async def async_turn_on(self, **kwargs):
-        await self.ws_manager.turnOnOutput(self._id)
+        await self.ws_manager.turnOnOutput(self.switch_id)
         self._state = True
         self.async_write_ha_state()
 
@@ -63,7 +63,7 @@ class KseniaSwitchEntity(SwitchEntity):
     Turn off the switch.
     """
     async def async_turn_off(self, **kwargs):
-        await self.ws_manager.turnOffOutput(self._id)
+        await self.ws_manager.turnOffOutput(self.switch_id)
         self._state = False
         self.async_write_ha_state()
 
@@ -74,6 +74,6 @@ class KseniaSwitchEntity(SwitchEntity):
     async def async_update(self):
         switches = await self.ws_manager.getSwitches()
         for switch in switches:
-            if switch["ID"] == self._id:
+            if str(switch.get("ID")) == str(self.switch_id):
                 self._state = switch.get("STA", "off").lower() == "on"
                 break
