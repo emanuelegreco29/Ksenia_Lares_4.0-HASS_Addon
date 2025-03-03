@@ -1,6 +1,8 @@
+import logging
 from homeassistant.components.button import ButtonEntity
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
 
 """
 Configures Ksenia scenarios in Home Assistant.
@@ -17,19 +19,33 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     ws_manager = hass.data[DOMAIN]["ws_manager"]
 
     scenarios = await ws_manager.getScenarios()
+    _LOGGER.debug("Received scenarios data: %s", scenarios)
     entities = []
     for scenario in scenarios:
-        entities.append(KseniaScenarioButtonEntity(ws_manager, scenario))
+        name = scenario.get("DES") or scenario.get("LBL") or scenario.get("NM") or f"Button {scenario.get('ID')}"
+        entities.append(KseniaScenarioButtonEntity(ws_manager, scenario.get("ID"), name))
     async_add_entities(entities, update_before_add=True)
 
 class KseniaScenarioButtonEntity(ButtonEntity):
-    """Button entity for Ksenia scenarios."""
+    """
+    Initialize the scenario button entity.
 
-    def __init__(self, ws_manager, scenario_data):
-        """Initializes the button with static and initial state data."""
+    Args:
+        ws_manager: The WebSocket manager instance.
+        scenario_id: The ID of the scenario.
+        name: The name of the scenario.
+        scenario_data: Additional data for the scenario.
+    """
+    def __init__(self, ws_manager, scenario_id, name):
         self.ws_manager = ws_manager
-        self._id = scenario_data["ID"]
-        self._name = scenario_data.get("NM") or scenario_data.get("LBL") or scenario_data.get("DES") or f"Scenario {self._id}"
+        self._scenario_id = scenario_id
+        self._name = name
+        self._available = True
+
+    @property
+    def unique_id(self):
+        """Returns a unique ID for the button."""
+        return f"{self.ws_manager._ip}_{self._scenario_id}"
 
     @property
     def name(self):

@@ -1,6 +1,8 @@
+import logging
 from homeassistant.components.switch import SwitchEntity
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
 
 """
 Configure the
@@ -9,9 +11,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     ws_manager = hass.data[DOMAIN]["ws_manager"]
 
     switches = await ws_manager.getSwitches()
+    _LOGGER.debug("Received switches data: %s", switches)
     entities = []
     for switch in switches:
-        entities.append(KseniaSwitchEntity(ws_manager, switch))
+        name = switch.get("DES") or switch.get("LBL") or switch.get("NM") or f"Switch {switch.get('ID')}"
+        entities.append(KseniaSwitchEntity(ws_manager, switch.get("ID"), name, switch))
     async_add_entities(entities, update_before_add=True)
 
 class KseniaSwitchEntity(SwitchEntity):
@@ -23,12 +27,17 @@ class KseniaSwitchEntity(SwitchEntity):
         ws_manager: The WebSocket manager instance.
         switch_data: The data of the switch.
     """
-    def __init__(self, ws_manager, switch_data):
+    def __init__(self, ws_manager, switch_id, name, switch_data):
         self.ws_manager = ws_manager
-        self._id = switch_data["ID"]
-        self._name = switch_data.get("NM") or switch_data.get("LBL") or switch_data.get("DES") or f"Switch {self._id}"
+        self.switch_id = switch_id
+        self._name = name
         self._state = switch_data.get("STA", "off").lower() == "on"
         self._available = True
+
+    @property
+    def unique_id(self):
+        """Returns a unique ID for the switch."""
+        return f"{self.ws_manager._ip}_{self.switch_id}"
 
     @property
     def name(self):

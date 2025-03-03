@@ -1,6 +1,8 @@
+import logging
 from homeassistant.components.sensor import SensorEntity
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
 
 """
 Configures Ksenia sensors in Home Assistant.
@@ -19,26 +21,31 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     # DOMUS sensors
     domus = await ws_manager.getDom()
+    _LOGGER.debug("Received domus data: %s", domus)
     for sensor in domus:
         entities.append(KseniaSensorEntity(ws_manager, sensor, "domus"))
 
     # POWERLINES sensors
     powerlines = await ws_manager.getSensor("POWER_LINES")
+    _LOGGER.debug("Received powerlines data: %s", powerlines)
     for sensor in powerlines:
         entities.append(KseniaSensorEntity(ws_manager, sensor, "powerlines"))
 
     # PARTITIONS sensors
     partitions = await ws_manager.getSensor("PARTITIONS")
+    _LOGGER.debug("Received partitions data: %s", partitions)
     for sensor in partitions:
         entities.append(KseniaSensorEntity(ws_manager, sensor, "partitions"))
 
     # ZONES sensors
     zones = await ws_manager.getSensor("ZONES")
+    _LOGGER.debug("Received zones data: %s", zones)
     for sensor in zones:
         entities.append(KseniaSensorEntity(ws_manager, sensor, "zones"))
 
     # SYSTEM sensors for system status
     systems = await ws_manager.getSystem()
+    _LOGGER.debug("Received systems data: %s", systems)
     for sensor in systems:
         entities.append(KseniaSensorEntity(ws_manager, sensor, "system"))
 
@@ -69,6 +76,12 @@ class KseniaSensorEntity(SensorEntity):
         else:
             self._state = sensor_data.get("STA", "unknown")
             self._attributes = sensor_data
+
+
+    @property
+    def unique_id(self):
+        """Returns a unique ID for the sensor."""
+        return f"{self._sensor_type}_{self._id}"
 
     @property
     def name(self):

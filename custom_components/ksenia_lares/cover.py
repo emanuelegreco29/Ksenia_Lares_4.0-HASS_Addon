@@ -25,13 +25,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
 class KseniaRollEntity(CoverEntity):
     """
-        Initializes a KseniaRollEntity.
+    Initializes a KseniaRollEntity.
 
-        :param ws_manager: WebSocketManager instance to command Ksenia
-        :param roll_id: ID of the roller blind
-        :param name: Name of the roller blind
-        :param roll_data: Dictionary with the roller blind data
-        """
+    :param ws_manager: WebSocketManager instance to command Ksenia
+    :param roll_id: ID of the roller blind
+    :param name: Name of the roller blind
+    :param roll_data: Dictionary with the roller blind data
+    """
     def __init__(self, ws_manager, roll_id, name, roll_data):
         self.ws_manager = ws_manager
         self._roll_id = roll_id
