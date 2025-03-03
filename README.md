@@ -13,12 +13,13 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 ## Compatible Devices
 | Device | Compatibility |
 |:-----------------------|:------------------------------------:|
+| Alarm System | ✅ |
 | Lights | ✅ |
 | Roller Blinds | ✅ |
 | Window Shutters | ✅ |
-| Buttons | ⚠️ |
+| Buttons | ✅ |
 | Switches | ✅ |
-| Scenarios | ⚠️ |
+| Scenarios | ✅ |
 | Sensors | ✅ |
 
 #### Legend
