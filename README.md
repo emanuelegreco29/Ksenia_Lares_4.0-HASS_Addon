@@ -20,7 +20,7 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 | Buttons | ✅ |
 | Switches | ✅ |
 | Scenarios | ✅ |
-| Sensors | ✅ |
+| Sensors | ⚠️ |
 
 #### Legend
 ⛔ - Not Compatible; ⚠️ - Work In Progress; ✅ - Compatible
