@@ -94,27 +94,49 @@ class KseniaSensorEntity(SensorEntity):
                 _LOGGER.error("Error converting PPROD: %s", e)
                 pprod_val = None
             # Use PCONS if it exists, otherwise use STATUS
-            self._state = pcons_val if pcons_val is not None else sensor_data.get("STATUS", "unknown")
+            consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
+            self._state = pcons_val if pcons_val is not None else sensor_data.get("STATUS", "Unknown")
             self._attributes = {
-                "Consumo": pcons_val,
+                "Consumo": consumo_kwh,
                 "Produzione": pprod_val,
-                "Status": sensor_data.get("STATUS", "unknown")
+                "Status": sensor_data.get("STATUS", "Unknown")
             }
+            if consumo_kwh is not None:
+                self._name = f"Cons: {self._name}"
 
         elif sensor_type == "domus":
-            # Manage domus sensors, extract temperature and humidity
+            domus_data = sensor_data.get("DOMUS", {})
+            if not isinstance(domus_data, dict):
+                domus_data = {}
             try:
-                temperature = float(sensor_data.get("T", "0").replace("+", "")) if sensor_data.get("T") else None
+                temp_str = domus_data.get("TEM")
+                temperature = float(temp_str.replace("+", "")) if temp_str and temp_str not in ["NA", ""] else None
             except Exception as e:
                 _LOGGER.error("Error converting temperature in domus sensor: %s", e)
                 temperature = None
             try:
-                humidity = float(sensor_data.get("H", "0")) if sensor_data.get("H") else None
+                hum_str = domus_data.get("HUM")
+                humidity = float(hum_str) if hum_str and hum_str not in ["NA", ""] else None
             except Exception as e:
                 _LOGGER.error("Error converting humidity in domus sensor: %s", e)
                 humidity = None
-            self._state = temperature if temperature is not None else sensor_data.get("STA", "unknown")
-            self._attributes = {**sensor_data, "temperature": temperature, "humidity": humidity}
+
+            # Altri parametri opzionali utili
+            lht = domus_data.get("LHT") if domus_data.get("LHT") not in [None, "NA", ""] else "Unknown"
+            pir = domus_data.get("PIR") if domus_data.get("PIR") not in [None, "NA", ""] else "Unknown"
+            tl = domus_data.get("TL") if domus_data.get("TL") not in [None, "NA", ""] else "Unknown"
+            th = domus_data.get("TH") if domus_data.get("TH") not in [None, "NA", ""] else "Unknown"
+
+            state_value = temperature if temperature is not None else "Unknown"
+            self._state = state_value
+            self._attributes = {
+                "temperature": temperature if temperature is not None else "Unknown",
+                "humidity": humidity if humidity is not None else "Unknown",
+                "light": lht,
+                "pir": pir,
+                "tl": tl,
+                "th": th
+            }
 
         elif sensor_type == "partitions":
             # Manage partitions sensors, extract total consumption
@@ -209,18 +231,35 @@ class KseniaSensorEntity(SensorEntity):
             sensors = await self.ws_manager.getDom()
             for sensor in sensors:
                 if sensor["ID"] == self._id:
+                    domus_data = sensor.get("DOMUS", {})
+                    if not isinstance(domus_data, dict):
+                        domus_data = {}
                     try:
-                        temperature = float(sensor.get("T", "0").replace("+", "")) if sensor.get("T") else None
+                        temp_str = domus_data.get("TEM")
+                        temperature = float(temp_str.replace("+", "")) if temp_str and temp_str not in ["NA", ""] else None
                     except Exception as e:
-                        _LOGGER.error("Error converting temperature in domus sensor update: %s", e)
+                        _LOGGER.error("Error converting temperature: %s", e)
                         temperature = None
                     try:
-                        humidity = float(sensor.get("H", "0")) if sensor.get("H") else None
+                        hum_str = domus_data.get("HUM")
+                        humidity = float(hum_str) if hum_str and hum_str not in ["NA", ""] else None
                     except Exception as e:
-                        _LOGGER.error("Error converting humidity in domus sensor update: %s", e)
+                        _LOGGER.error("Error converting humidity: %s", e)
                         humidity = None
-                    self._state = temperature if temperature is not None else sensor.get("STA", "unknown")
-                    self._attributes = {**sensor, "temperature": temperature, "humidity": humidity}
+                    lht = domus_data.get("LHT") if domus_data.get("LHT") not in [None, "NA", ""] else "Unknown"
+                    pir = domus_data.get("PIR") if domus_data.get("PIR") not in [None, "NA", ""] else "Unknown"
+                    tl = domus_data.get("TL") if domus_data.get("TL") not in [None, "NA", ""] else "Unknown"
+                    th = domus_data.get("TH") if domus_data.get("TH") not in [None, "NA", ""] else "Unknown"
+                    state_value = temperature if temperature is not None else "Unknown"
+                    self._state = state_value
+                    self._attributes = {
+                        "temperature": temperature if temperature is not None else "Unknown",
+                        "humidity": humidity if humidity is not None else "Unknown",
+                        "light": lht,
+                        "pir": pir,
+                        "tl": tl,
+                        "th": th,
+                    }
                     break
 
         elif self._sensor_type == "partitions":
