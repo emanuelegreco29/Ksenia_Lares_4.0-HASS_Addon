@@ -1,7 +1,7 @@
 {
   "domain": "ksenia_lares",
   "name": "Ksenia Lares 4.0",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "codeowners": ["@emanuelegreco29"],
   "documentation": "https://github.com/emanuelegreco29/Ksenia_Lares_4.0-HASS_Addon/blob/00296b7f902d23ca85ceb0010d45d92ced49f17e/README.md",
   "issue_tracker": "https://github.com/emanuelegreco29/Ksenia_Lares_4.0-HASS_Addon/issues",
