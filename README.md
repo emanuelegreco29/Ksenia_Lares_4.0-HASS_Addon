@@ -32,8 +32,14 @@ If any of the devices listed is not compatible, or if some devices listed as "co
 ### 1. HACS installation (best method)
 1. Make sure you have installed HACS to Home Assistant: [HACS install guide](https://hacs.xyz/docs/setup/download).
 2. Open HACS, click **Custom repositories** in the top-right menu, Repository input: `https://github.com/emanuelegreco29/Ksenia_Lares_4.0-HASS_Addon`, Category select **Integration**.
+   
+![archivi](https://github.com/user-attachments/assets/b75f74d5-2f1d-45b5-9a94-d8db81f7f821)
+![intg](https://github.com/user-attachments/assets/c5f591b5-19a1-49bf-8b91-041dbe1642dd)
+
 3. **Restart Home Assistant**.
 4. You can now search for `Ksenia Lares 4.0` in HACS and install through there.
+
+![kkk](https://github.com/user-attachments/assets/bc088136-22f5-4b11-b903-2c9719617360)
 
 ### 2. Manual installation
 To install, simply clone this repository or download it locally. Then, add the `ksenia_lares` folder to your `custom_components` folder and restart HomeAssistant.
