@@ -157,6 +157,111 @@ class KseniaSensorEntity(SensorEntity):
             self._state = sensor_data.get("STA", "unknown")
             self._attributes = sensor_data
 
+    """
+    Register the sensor entity to start receiving real-time updates.
+
+    This method is called when the entity is added to Home Assistant.
+    It registers a listener for the specific sensor type or 'systems'
+    if the sensor type is 'system'. The listener will trigger the
+    `_handle_realtime_update` method when new data is received.
+    """
+    async def async_added_to_hass(self):
+        key = self._sensor_type if self._sensor_type != "system" else "systems"
+        self.ws_manager.register_listener(key, self._handle_realtime_update)
+
+    """
+    Handle real-time updates for the sensor.
+
+    This method is called when a new set of data is received from the real-time API.
+    It updates the state and attributes of the sensor based on the received data.
+    """
+    async def _handle_realtime_update(self, data_list):
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+
+            if self._sensor_type == "system":
+                self._state = data.get("ARM", "unknown")
+                temp_data = data.get("TEMP", {})
+                try:
+                    temp_in = float(temp_data.get("IN", "0").replace("+", "")) if temp_data.get("IN") else None
+                    temp_out = float(temp_data.get("OUT", "0").replace("+", "")) if temp_data.get("OUT") else None
+                except Exception as e:
+                    _LOGGER.error("Error converting system temperature: %s", e)
+                    temp_in, temp_out = None, None
+                self._attributes = {"temp_in": temp_in, "temp_out": temp_out}
+
+            elif self._sensor_type == "powerlines":
+                pcons = data.get("PCONS")
+                try:
+                    pcons_val = float(pcons) if pcons and pcons.replace('.', '', 1).isdigit() else None
+                except Exception as e:
+                    _LOGGER.error("Error converting PCONS: %s", e)
+                    pcons_val = None
+                pprod = data.get("PPROD")
+                try:
+                    pprod_val = float(pprod) if pprod and pprod.replace('.', '', 1).isdigit() else None
+                except Exception as e:
+                    _LOGGER.error("Error converting PPROD: %s", e)
+                    pprod_val = None
+                consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
+                self._state = pcons_val if pcons_val is not None else data.get("STATUS", "unknown")
+                self._attributes = {
+                    "Consumo": consumo_kwh,
+                    "Produzione": pprod_val,
+                    "Status": data.get("STATUS", "unknown")
+                }
+
+            elif self._sensor_type == "domus":
+                domus_data = data.get("DOMUS", {})
+                if not isinstance(domus_data, dict):
+                    domus_data = {}
+                try:
+                    temp_str = domus_data.get("TEM")
+                    temperature = float(temp_str.replace("+", "")) if temp_str and temp_str not in ["NA", ""] else None
+                except Exception as e:
+                    _LOGGER.error("Error converting domus temperature: %s", e)
+                    temperature = None
+                try:
+                    hum_str = domus_data.get("HUM")
+                    humidity = float(hum_str) if hum_str and hum_str not in ["NA", ""] else None
+                except Exception as e:
+                    _LOGGER.error("Error converting domus humidity: %s", e)
+                    humidity = None
+                lht = domus_data.get("LHT") if domus_data.get("LHT") not in [None, "NA", ""] else "Unknown"
+                pir = domus_data.get("PIR") if domus_data.get("PIR") not in [None, "NA", ""] else "Unknown"
+                tl = domus_data.get("TL") if domus_data.get("TL") not in [None, "NA", ""] else "Unknown"
+                th = domus_data.get("TH") if domus_data.get("TH") not in [None, "NA", ""] else "Unknown"
+                self._state = temperature if temperature is not None else "Unknown"
+                self._attributes = {
+                    "temperature": temperature if temperature is not None else "Unknown",
+                    "humidity": humidity if humidity is not None else "Unknown",
+                    "light": lht,
+                    "pir": pir,
+                    "tl": tl,
+                    "th": th,
+                }
+
+            elif self._sensor_type == "partitions":
+                total_consumption = 0.0
+                stat = data.get("STAT", [])
+                if stat:
+                    latest_stat = stat[-1]
+                    vals = latest_stat.get("VAL", [])
+                    for record in vals:
+                        try:
+                            total_consumption += float(record.get("ENC", 0))
+                        except Exception as e:
+                            _LOGGER.error("Error converting ENC in partitions realtime update: %s", e)
+                self._state = total_consumption if total_consumption > 0 else data.get("STA", "unknown")
+                self._attributes = {**data, "total_consumption": total_consumption}
+
+            else:
+                self._state = data.get("STA", "unknown")
+                self._attributes = data
+
+            self.async_write_ha_state()
+            break
 
     @property
     def unique_id(self):
