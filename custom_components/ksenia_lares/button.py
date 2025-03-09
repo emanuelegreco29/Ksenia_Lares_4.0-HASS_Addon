@@ -54,4 +54,4 @@ class KseniaScenarioButtonEntity(ButtonEntity):
 
     async def async_press(self):
         """Execute the scenario when the button is pressed."""
-        await self.ws_manager.executeScenario(self._id)
+        await self.ws_manager.executeScenario(self._scenario_id)
