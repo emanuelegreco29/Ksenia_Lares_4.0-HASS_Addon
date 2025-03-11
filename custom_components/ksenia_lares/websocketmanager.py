@@ -20,8 +20,9 @@ class WebSocketManager:
     :param pin: PIN to login to the Ksenia Lares panel
     :param logger: Logger instance
     """
-    def __init__(self, ip, pin, logger):
+    def __init__(self, ip, pin, port, logger):
         self._ip = ip
+        self._port = port
         self._pin = pin
         self._ws = None
         self.listeners = {"lights": [], "covers": [], "domus": [], "switches": [], "powerlines": [], "partitions": [], "zones": [], "systems": []}
@@ -71,7 +72,7 @@ class WebSocketManager:
         self._connSecure = 0
         while self._retries < self._max_retries:
             try:
-                uri = f"ws://{self._ip}/KseniaWsock"
+                uri = f"ws://{self._ip}:{self._port}/KseniaWsock"
                 self._logger.info("Connecting to WebSocket...")
                 self._ws = await websockets.connect(uri, subprotocols=['KS_WSOCK'])
                 self._loginId = await ws_login(self._ws, self._pin, self._logger)
@@ -118,7 +119,7 @@ class WebSocketManager:
         self._connSecure = 1
         while self._retries < self._max_retries:
             try:
-                uri = f"wss://{self._ip}/KseniaWsock"
+                uri = f"wss://{self._ip}:{self._port}/KseniaWsock"
                 self._logger.info(f"Connecting to WebSocket... {uri}")
                 self._ws = await websockets.connect(uri, ssl=ssl_context, subprotocols=['KS_WSOCK'])
                 self._loginId = await ws_login(self._ws, self._pin, self._logger)

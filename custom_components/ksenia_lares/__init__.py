@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from .const import DOMAIN, CONF_HOST, CONF_PIN
+from .const import DOMAIN, CONF_HOST, CONF_PIN, CONF_PORT
 from .websocketmanager import WebSocketManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,10 +21,11 @@ Returns:
 async def async_setup_entry(hass, entry):
     ip = entry.data[CONF_HOST]
     pin = entry.data[CONF_PIN]
+    port = entry.data.get(CONF_PORT, 443)
     ssl_option = entry.options.get("SSL", True)
 
     # Create WebSocketManager instance
-    ws_manager = WebSocketManager(ip, pin, _LOGGER)
+    ws_manager = WebSocketManager(ip, pin, port, _LOGGER)
     hass.data.setdefault(DOMAIN, {})["ws_manager"] = ws_manager
 
     # Wait that the connection is established and that the initial data is received.

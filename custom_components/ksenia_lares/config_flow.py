@@ -3,7 +3,7 @@ import ipaddress
 from homeassistant import config_entries
 import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN, CONF_HOST, CONF_PIN
+from .const import DOMAIN, CONF_HOST, CONF_PIN, CONF_PORT
 
 PLATFORMS_OPTIONS = ["light", "cover", "switch", "sensor", "button"]
 
@@ -11,6 +11,7 @@ PLATFORMS_OPTIONS = ["light", "cover", "switch", "sensor", "button"]
 DATA_SCHEMA = vol.Schema({
     vol.Required(CONF_HOST): str,
     vol.Required(CONF_PIN): str,
+    vol.Optional(CONF_PORT, default=443): int,
     vol.Required("SSL", default=True): bool,
     vol.Required("Platforms", default=PLATFORMS_OPTIONS): cv.multi_select(PLATFORMS_OPTIONS),
 })
