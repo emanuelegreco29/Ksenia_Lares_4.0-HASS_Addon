@@ -55,7 +55,7 @@ When prompted, insert:
 - Check the "SSL" box if you want HomeAssistant to communicate using a **secure connection**. In case of network error, and only in that case, un-check the box
 - Check all the devices that you want to add to HomeAssistant (by default, the integration will scan for all compatible devices)
 
-![Screenshot from 2025-03-01 14-09-54](https://github.com/user-attachments/assets/0fabd464-99ef-4953-bbf1-131e50402b25)
+![jklkljkl](https://github.com/user-attachments/assets/6e3cf343-bf33-4c72-9523-4f04dc99f18e)
 
 ## Credits
 Big thanks to [@gvisconti1983](https://github.com/gvisconti1983) for the crc functions and to [@realnot16](https://github.com/realnot16) for the WebSocket library, which has been reworked and updated by me.
