@@ -68,51 +68,37 @@ class KseniaSensorEntity(SensorEntity):
 
         if sensor_data.get("CAT", "").upper() == "DOOR":
             attributes = {}
-            # Descrizione della porta
             if "DES" in sensor_data:
                 attributes["Description"] = sensor_data["DES"]
-            # Partizione (se applicabile)
             if "PRT" in sensor_data:
                 attributes["Partition"] = sensor_data["PRT"]
-            # Tipo di comando: per le porte, se il campo CMD è "F" interpretiamo come "Fixed" (stato normale)
             if "CMD" in sensor_data:
                 attributes["Command"] = "Fixed" if sensor_data["CMD"] == "F" else sensor_data["CMD"]
-            # Bypass Enabled: "T" → Yes, altrimenti No
             if "BYP EN" in sensor_data:
                 attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
-            # Tipo di segnale: Analog se AN è "T", Digital altrimenti
             if "AN" in sensor_data:
                 attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            # Stato: mappiamo "R" a "Closed" e, eventualmente, "O" a "Open"
-            if "STA" in sensor_data:
-                state_mapping = {"R": "Closed", "O": "Open"}
-                attributes["State"] = state_mapping.get(sensor_data["STA"], sensor_data["STA"])
-            # Bypass: "NO" o "N" indica Inactive, altrimenti Active
+            state_mapping = {"R": "Closed", "O": "Open"}
+            mapped_state = state_mapping.get(sensor_data.get("STA"), sensor_data.get("STA", "unknown"))
+            attributes["State"] = mapped_state
             if "BYP" in sensor_data:
                 attributes["Bypass"] = "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-            # Tamper: "T" → Yes, altrimenti No
             if "T" in sensor_data:
                 attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
-            # Alarm: "T" → On, "N" → Off
             if "A" in sensor_data:
                 attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
-            # Fault Memory: "T" → Yes, "F" → No
             if "FM" in sensor_data:
                 attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
-            # Resistance: se il valore non è "NA", lo mostriamo, altrimenti "N/A"
             if "OHM" in sensor_data:
                 attributes["Resistance"] = sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
-            # Voltage Alarm Sensor: "T" → Active, altrimenti Inactive
             if "VAS" in sensor_data:
                 attributes["Voltage Alarm Sensor"] = "Active" if sensor_data["VAS"] == "T" else "Inactive"
-            # Label, se presente
             if "LBL" in sensor_data and sensor_data["LBL"]:
                 attributes["Label"] = sensor_data["LBL"]
 
-            self._state = sensor_data.get("STA", "unknown")
+            self._state = mapped_state
             self._attributes = attributes
-            self._sensor_type = "door"
-            self._name = f"Door {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            self._name = f"Door Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
 
 
         elif sensor_data.get("CAT", "").upper() == "CMD":
@@ -153,44 +139,31 @@ class KseniaSensorEntity(SensorEntity):
 
         elif sensor_data.get("CAT", "").upper() == "IMOV":
             attributes = {}
-            # Descrizione del sensore di movimento
             if "DES" in sensor_data:
                 attributes["Description"] = sensor_data["DES"]
-            # Partizione di appartenenza
             if "PRT" in sensor_data:
                 attributes["Partition"] = sensor_data["PRT"]
-            # Bypass Enabled: "T" → Yes, altrimenti No
             if "BYP EN" in sensor_data:
                 attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
-            # Tipo di segnale: Analog se "T", Digital altrimenti
             if "AN" in sensor_data:
                 attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            # Stato: mappiamo "R" a "Resting", "M" a "Movement Detected"
             if "STA" in sensor_data:
                 state_mapping = {"R": "Resting", "M": "Movement Detected"}
                 attributes["State"] = state_mapping.get(sensor_data["STA"], sensor_data["STA"])
-            # Bypass: se il campo "BYP" non è "NO" o "N", allora attivo
             if "BYP" in sensor_data:
                 attributes["Bypass"] = "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-            # Tamper: "T" → Yes, altrimenti No
             if "T" in sensor_data:
                 attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
-            # Alarm: "T" → On, "F" o "N" → Off (se applicabile)
             if "A" in sensor_data:
                 attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
-            # Fault Memory: "T" → Yes, "F" → No
             if "FM" in sensor_data:
                 attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
-            # Movimento: se presente il campo "MOV" indica se viene rilevato il movimento
             if "MOV" in sensor_data:
                 attributes["Movement"] = "Motion Detected" if sensor_data["MOV"] == "T" else "No Motion"
-            # Resistenza: se il valore non è "NA" lo mostra, altrimenti "N/A"
             if "OHM" in sensor_data:
                 attributes["Resistance"] = sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
-            # Voltage Alarm Sensor: "T" → Active, altrimenti Inactive
             if "VAS" in sensor_data:
                 attributes["Voltage Alarm Sensor"] = "Active" if sensor_data["VAS"] == "T" else "Inactive"
-            # Label, se presente
             if "LBL" in sensor_data and sensor_data["LBL"]:
                 attributes["Label"] = sensor_data["LBL"]
 
@@ -290,7 +263,7 @@ class KseniaSensorEntity(SensorEntity):
     `_handle_realtime_update` method when new data is received.
     """
     async def async_added_to_hass(self):
-        key = self._sensor_type if self._sensor_type != "system" else "systems"
+        key = self._sensor_type
         self.ws_manager.register_listener(key, self._handle_realtime_update)
 
     """
@@ -387,9 +360,9 @@ class KseniaSensorEntity(SensorEntity):
                             attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
                         if "AN" in data:
                             attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
-                        if "STA" in data:
-                            state_mapping = {"R": "Closed", "O": "Open"}
-                            attributes["State"] = state_mapping.get(data["STA"], data["STA"])
+                        state_mapping = {"R": "Closed", "O": "Open"}
+                        mapped_state = state_mapping.get(data.get("STA"), data.get("STA", "unknown"))
+                        attributes["State"] = mapped_state
                         if "BYP" in data:
                             attributes["Bypass"] = "Active" if data["BYP"].upper() not in ["NO", "N"] else "Inactive"
                         if "T" in data:
@@ -405,10 +378,11 @@ class KseniaSensorEntity(SensorEntity):
                         if "LBL" in data and data["LBL"]:
                             attributes["Label"] = data["LBL"]
 
-                        self._state = data.get("STA", "unknown")
+                        self._state = mapped_state
                         self._attributes = attributes
                         self.async_write_ha_state()
                         break
+
 
             elif self._sensor_type == "cmd":
                 for data in data_list:
@@ -628,9 +602,9 @@ class KseniaSensorEntity(SensorEntity):
                         attributes["Bypass Enabled"] = "Yes" if sensor["BYP EN"] == "T" else "No"
                     if "AN" in sensor:
                         attributes["Signal Type"] = "Analog" if sensor["AN"] == "T" else "Digital"
-                    if "STA" in sensor:
-                        state_mapping = {"R": "Closed", "O": "Open"}
-                        attributes["State"] = state_mapping.get(sensor["STA"], sensor["STA"])
+                    state_mapping = {"R": "Closed", "O": "Open"}
+                    mapped_state = state_mapping.get(sensor.get("STA"), sensor.get("STA", "unknown"))
+                    attributes["State"] = mapped_state
                     if "BYP" in sensor:
                         attributes["Bypass"] = "Active" if sensor["BYP"].upper() not in ["NO", "N"] else "Inactive"
                     if "T" in sensor:
@@ -646,9 +620,10 @@ class KseniaSensorEntity(SensorEntity):
                     if "LBL" in sensor and sensor["LBL"]:
                         attributes["Label"] = sensor["LBL"]
 
-                    self._state = sensor.get("STA", "unknown")
+                    self._state = mapped_state
                     self._attributes = attributes
                     break
+
 
         elif self._sensor_type == "cmd":
             sensors = await self.ws_manager.getSensor("CMD")
