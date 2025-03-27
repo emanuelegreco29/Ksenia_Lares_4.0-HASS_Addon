@@ -174,7 +174,7 @@ class KseniaSensorEntity(SensorEntity):
 
         elif sensor_type == "system":
             self._state = sensor_data.get("ARM", "unknown")
-            self.name = f"Alarm System Status {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            self._name = f"Alarm System Status {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
             self._attributes = {}
 
         elif sensor_type == "powerlines":
