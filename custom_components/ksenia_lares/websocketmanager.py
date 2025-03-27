@@ -25,7 +25,7 @@ class WebSocketManager:
         self._port = port
         self._pin = pin
         self._ws = None
-        self.listeners = {"lights": [], "covers": [], "domus": [], "switches": [], "powerlines": [], "partitions": [], "zones": [], "system": []}
+        self.listeners = {"lights": [], "covers": [], "domus": [], "switches": [], "powerlines": [], "partitions": [], "zones": [], "systems": []}
         self._logger = logger
         self._running = False       # Flag to keep process alive
         self._loginId = None

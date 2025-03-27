@@ -264,7 +264,7 @@ class KseniaSensorEntity(SensorEntity):
     `_handle_realtime_update` method when new data is received.
     """
     async def async_added_to_hass(self):
-        key = self._sensor_type
+        key = self._sensor_type if self._sensor_type != "system" else "systems"
         self.ws_manager.register_listener(key, self._handle_realtime_update)
 
     """
