@@ -111,6 +111,7 @@ class KseniaSensorEntity(SensorEntity):
 
             self._state = sensor_data.get("STA", "unknown")
             self._attributes = attributes
+            self._sensor_type = "door"
             self._name = f"Door {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
 
 
@@ -147,6 +148,7 @@ class KseniaSensorEntity(SensorEntity):
 
             self._state = sensor_data.get("STA", "unknown")
             self._attributes = attributes
+            self._sensor_type = "cmd"
             self._name = sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or f"Command Sensor {self._id}"
 
         elif sensor_data.get("CAT", "").upper() == "IMOV":
