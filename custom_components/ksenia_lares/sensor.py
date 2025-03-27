@@ -173,7 +173,8 @@ class KseniaSensorEntity(SensorEntity):
             self._sensor_type = "imov"
 
         elif sensor_type == "system":
-            self._state = sensor_data.get("STA", "unknown")
+            self._state = sensor_data.get("ARM", "unknown")
+            self.name = f"Alarm System Status {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
             self._attributes = {}
 
         elif sensor_type == "powerlines":
@@ -278,7 +279,7 @@ class KseniaSensorEntity(SensorEntity):
                 continue
 
             if self._sensor_type == "system":
-                self._state = data.get("STA", "unknown")
+                self._state = data.get("ARM", "unknown")
                 self._attributes = {}
 
             elif self._sensor_type == "powerlines":
@@ -492,6 +493,8 @@ class KseniaSensorEntity(SensorEntity):
             return "mdi:thermometer"
         elif self._sensor_type == "powerlines":
             return "mdi:lightning-bolt-outline"
+        elif self._sensor_type == "system":
+            return "mdi:alarm-panel"
         return None
 
     """
@@ -506,7 +509,7 @@ class KseniaSensorEntity(SensorEntity):
             systems = await self.ws_manager.getSystem()
             for sys in systems:
                 if sys["ID"] == self._id:
-                    self._state = sys.get("STA", "unknown")
+                    self._state = sys.get("ARM", "unknown")
                     self._attributes = {}
                     break
 
