@@ -175,9 +175,28 @@ class KseniaSensorEntity(SensorEntity):
             self._sensor_type = "imov"
 
         elif sensor_type == "system":
-            self._state = sensor_data.get("ARM", "unknown")
+            arm_data = sensor_data.get("ARM", {})
+            # Recupera il codice di stato; se non presente usa "unknown"
+            state_code = arm_data.get("S", "unknown")
+            # Mappatura dei codici di stato in valori leggibili
+            state_mapping = {
+                "T": "Inserito Totale",
+                "T_IN": "Inserito Totale con tempo d'ingresso attivo",
+                "T_OUT": "Inserito Totale con tempo d'uscita attivo",
+                "P": "Inserito Parziale",
+                "P_IN": "Inserito Parziale con tempo d'ingresso attivo",
+                "P_OUT": "Inserito Parziale con tempo d'uscita attivo",
+                "D": "Disinserito"
+            }
+            readable_state = state_mapping.get(state_code, state_code)
+            # Recupera la descrizione, se presente
+            description = arm_data.get("D", "")
+            final_state = f"{readable_state} ({description})" if description else readable_state
+
+            self._state = final_state
             self._name = f"Alarm System Status {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
             self._attributes = {}
+
 
         elif sensor_type == "powerlines":
             # Extract consumption and production

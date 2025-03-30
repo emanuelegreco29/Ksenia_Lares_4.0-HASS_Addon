@@ -689,8 +689,6 @@ class WebSocketManager:
     :return: List of systems, each with the following keys:
         - ID: System ID
         - ARM: Armed status (True/False)
-        - T_IN: Internal temperature
-        - T_OUT: External temperature
     """
     async def getSystem(self):
         await self.wait_for_initial_data(timeout=5)
@@ -702,8 +700,7 @@ class WebSocketManager:
         for sys in sysList:
             systemData = {
                 "ID": sys.get("ID"),
-                "ARM": sys.get("ARM", {}).get("D"),
-                "ARM": sys.get("ARM", {}).get("S")
+                "ARM": sys.get("ARM", {})
             }
             systems.append(systemData)
         return systems
