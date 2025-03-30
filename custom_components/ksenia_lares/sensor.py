@@ -23,7 +23,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     domus = await ws_manager.getDom()
     _LOGGER.debug("Received domus data: %s", domus)
     for sensor in domus:
-        entities.append(KseniaSensorEntity(ws_manager, sensor, "domus"))
+        # Se il sensore ha CAT = "DOOR", usiamo sensor_type "door"
+        sensor_type = "door" if sensor.get("CAT", "").upper() == "DOOR" else "domus"
+        entities.append(KseniaSensorEntity(ws_manager, sensor, sensor_type))
 
     # POWERLINES sensors
     powerlines = await ws_manager.getSensor("POWER_LINES")
@@ -78,7 +80,7 @@ class KseniaSensorEntity(SensorEntity):
                 attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
             if "AN" in sensor_data:
                 attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            state_mapping = {"R": "Closed", "O": "Open"}
+            state_mapping = {"R": "Closed", "A": "Open"}
             mapped_state = state_mapping.get(sensor_data.get("STA"), sensor_data.get("STA", "unknown"))
             attributes["State"] = mapped_state
             if "BYP" in sensor_data:

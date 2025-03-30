@@ -703,8 +703,7 @@ class WebSocketManager:
             systemData = {
                 "ID": sys.get("ID"),
                 "ARM": sys.get("ARM", {}).get("D"),
-                "T_IN": sys.get("TEMP", {}).get("IN"),
-                "T_OUT": sys.get("TEMP", {}).get("OUT"),
+                "ARM": sys.get("ARM", {}).get("S")
             }
             systems.append(systemData)
         return systems
