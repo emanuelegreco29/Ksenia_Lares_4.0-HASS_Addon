@@ -83,6 +83,7 @@ class KseniaSensorEntity(SensorEntity):
             state_mapping = {"R": "Closed", "A": "Open"}
             mapped_state = state_mapping.get(sensor_data.get("STA"), sensor_data.get("STA", "unknown"))
             attributes["State"] = mapped_state
+            sensor_data.pop("STA", None)
             if "BYP" in sensor_data:
                 attributes["Bypass"] = "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
             if "T" in sensor_data:
@@ -171,7 +172,7 @@ class KseniaSensorEntity(SensorEntity):
 
             self._state = sensor_data.get("STA", "unknown")
             self._attributes = attributes
-            self._name = f"Movement Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            self._name = f"Internal Movement Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
             self._sensor_type = "imov"
 
         elif sensor_type == "system":
@@ -271,6 +272,7 @@ class KseniaSensorEntity(SensorEntity):
                         _LOGGER.error("Error converting total consumption: %s", e)
             self._state = total_consumption if total_consumption > 0 else sensor_data.get("STA", "unknown")
             self._attributes = {**sensor_data, "total_consumption": total_consumption}
+            self._name = f"Part: {self._name}"
 
         else:
             self._state = sensor_data.get("STA", "unknown")
@@ -382,9 +384,10 @@ class KseniaSensorEntity(SensorEntity):
                             attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
                         if "AN" in data:
                             attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
-                        state_mapping = {"R": "Closed", "O": "Open"}
+                        state_mapping = {"R": "Closed", "A": "Open"}
                         mapped_state = state_mapping.get(data.get("STA"), data.get("STA", "unknown"))
                         attributes["State"] = mapped_state
+                        data.pop("STA", None)
                         if "BYP" in data:
                             attributes["Bypass"] = "Active" if data["BYP"].upper() not in ["NO", "N"] else "Inactive"
                         if "T" in data:
@@ -516,6 +519,10 @@ class KseniaSensorEntity(SensorEntity):
             return "mdi:lightning-bolt-outline"
         elif self._sensor_type == "system":
             return "mdi:alarm-panel"
+        elif self._sensor_type == "imov":
+            return "mdi:motion-sensor"
+        elif self._sensor_type == "door":
+            return "mdi:door"
         return None
 
     """
@@ -626,9 +633,10 @@ class KseniaSensorEntity(SensorEntity):
                         attributes["Bypass Enabled"] = "Yes" if sensor["BYP EN"] == "T" else "No"
                     if "AN" in sensor:
                         attributes["Signal Type"] = "Analog" if sensor["AN"] == "T" else "Digital"
-                    state_mapping = {"R": "Closed", "O": "Open"}
+                    state_mapping = {"R": "Closed", "A": "Open"}
                     mapped_state = state_mapping.get(sensor.get("STA"), sensor.get("STA", "unknown"))
                     attributes["State"] = mapped_state
+                    sensor.pop("STA", None)
                     if "BYP" in sensor:
                         attributes["Bypass"] = "Active" if sensor["BYP"].upper() not in ["NO", "N"] else "Inactive"
                     if "T" in sensor:
