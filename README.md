@@ -8,7 +8,7 @@
     <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 50px !important;width: 200px !important;">
 </a>
 
-This **unofficial** integration allows you to connect your HomeAssistant to the [Ksenia Lares 4.0](https://www.kseniasecurity.com/en/insights/control-panel-ksenia-lares-4-0-the-most-complete-iot-platform-for-home-automation.html) control panel and add all your devices.
+This **unofficial** integration allows you to connect your HomeAssistant to the [Ksenia Lares 4.0](https://www.kseniasecurity.com/en/insights/control-panel-ksenia-lares-4-0-the-most-complete-iot-platform-for-home-automation.html) control panel and add all your devices. I am **NOT** affiliated with Ksenia in any way, this integration was made for personal use only.
 
 ## Compatible Devices
 | Device | Compatibility |
