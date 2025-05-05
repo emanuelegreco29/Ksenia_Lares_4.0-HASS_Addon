@@ -17,6 +17,7 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 | Lights | ✅ |
 | Roller Blinds | ✅ |
 | Window Shutters | ✅ |
+| Garage Shutters | ✅ |
 | Buttons | ✅ |
 | Switches | ✅ |
 | Scenarios | ⚠️ |
