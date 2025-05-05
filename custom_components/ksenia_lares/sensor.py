@@ -227,8 +227,6 @@ class KseniaSensorEntity(SensorEntity):
 
         elif sensor_type == "system":
             arm_data = sensor_data.get("ARM", {})
-            # Recupera il codice di stato; se non presente usa "unknown"
-            state_code = arm_data.get("S", "unknown")
             # Mappatura dei codici di stato in valori leggibili
             state_mapping = {
                 "T": "Inserito Totale",
@@ -239,7 +237,7 @@ class KseniaSensorEntity(SensorEntity):
                 "P_OUT": "Inserito Parziale con tempo d'uscita attivo",
                 "D": "Disinserito"
             }
-            readable_state = state_mapping.get(state_code, state_code)
+            readable_state = state_mapping.get(arm_data, arm_data)
 
             self._state = readable_state
             self._name = f"Alarm System Status {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
