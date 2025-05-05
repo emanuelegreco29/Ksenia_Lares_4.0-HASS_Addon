@@ -227,7 +227,7 @@ class KseniaSensorEntity(SensorEntity):
 
         elif sensor_type == "system":
             arm_data = sensor_data.get("ARM", {})
-            # Mappatura dei codici di stato in valori leggibili
+            state_code = arm_data.get("S", "Unknown")
             state_mapping = {
                 "T": "Inserito Totale",
                 "T_IN": "Inserito Totale con tempo d'ingresso attivo",
@@ -237,7 +237,7 @@ class KseniaSensorEntity(SensorEntity):
                 "P_OUT": "Inserito Parziale con tempo d'uscita attivo",
                 "D": "Disinserito"
             }
-            readable_state = state_mapping.get(arm_data, arm_data)
+            readable_state = state_mapping.get(state_code, state_code)
 
             self._state = readable_state
             self._name = f"Alarm System Status {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
@@ -347,8 +347,26 @@ class KseniaSensorEntity(SensorEntity):
                 continue
 
             if self._sensor_type == "system":
-                self._state = data.get("ARM", "unknown")
-                self._attributes = {}
+                for data in data_list:
+                    if str(data.get("ID")) == str(self._id):
+                        arm_data = data.get("ARM", {})
+                        state_code = arm_data.get("S", "Unknown")
+                        state_mapping = {
+                            "T":    "Inserito Totale",
+                            "T_IN": "Inserito Totale con tempo d'ingresso attivo",
+                            "T_OUT":"Inserito Totale con tempo d'uscita attivo",
+                            "P":    "Inserito Parziale",
+                            "P_IN": "Inserito Parziale con tempo d'ingresso attivo",
+                            "P_OUT":"Inserito Parziale con tempo d'uscita attivo",
+                            "D":    "Disinserito"
+                        }
+                        readable_state = state_mapping.get(state_code, state_code)
+
+                        self._state = readable_state
+                        self._name = (f"Alarm System Status {data.get('NM') or data.get('LBL') or data.get('DES') or self._id}")
+                        self._attributes = {}
+                        self.async_write_ha_state()
+                        break
 
             elif self._sensor_type == "powerlines":
                 pcons = data.get("PCONS")
@@ -634,7 +652,7 @@ class KseniaSensorEntity(SensorEntity):
     async def async_update(self):
         if self._sensor_type == "system":
             return
-
+        
         elif self._sensor_type == "powerlines":
             sensors = await self.ws_manager.getSensor("POWER_LINES")
             for sensor in sensors:

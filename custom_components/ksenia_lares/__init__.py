@@ -40,7 +40,7 @@ async def async_setup_entry(hass, entry):
     platforms = entry.data.get("Platforms", ["light", "cover", "switch", "sensor", "button"])
     _LOGGER.debug("Forwarding entry setup for platforms: %s", platforms)
     tasks = [
-        hass.config_entries.async_forward_entry_setup(entry, platform)
+        await hass.config_entries.async_forward_entry_setups(entry, platform)
         for platform in platforms
     ]
     await asyncio.gather(*tasks)
