@@ -235,13 +235,13 @@ class KseniaSensorEntity(SensorEntity):
                 )
                 state_code = ""
             state_mapping = {
-                "T": "Inserito Totale",
-                "T_IN": "Inserito Totale con tempo d'ingresso attivo",
-                "T_OUT": "Inserito Totale con tempo d'uscita attivo",
-                "P": "Inserito Parziale",
-                "P_IN": "Inserito Parziale con tempo d'ingresso attivo",
-                "P_OUT": "Inserito Parziale con tempo d'uscita attivo",
-                "D": "Disinserito"
+                "T": "Fully Armed",
+                "T_IN": "Fully Armed with Entry Delay Active",
+                "T_OUT": "Fully Armed with Exit Delay Active",
+                "P": "Partially Armed",
+                "P_IN": "Partially Armed with Entry Delay Active",
+                "P_OUT": "Partially Armed with Exit Delay Active",
+                "D": "Disarmed"
             }
             readable_state = state_mapping.get(state_code, state_code)
             if state_code not in state_mapping:
@@ -343,7 +343,10 @@ class KseniaSensorEntity(SensorEntity):
     `_handle_realtime_update` method when new data is received.
     """
     async def async_added_to_hass(self):
-        key = self._sensor_type if self._sensor_type != "system" else "systems"
+        if self._sensor_type in ("door", "pmc"):
+            key = "zones"
+        else:
+            key = self._sensor_type if self._sensor_type != "system" else "systems"
         self.ws_manager.register_listener(key, self._handle_realtime_update)
 
     """
@@ -368,13 +371,13 @@ class KseniaSensorEntity(SensorEntity):
                     arm_data = data["ARM"]
                     state_code = arm_data.get("S")
                     state_mapping = {
-                        "T":    "Inserito Totale",
-                        "T_IN": "Inserito Totale con tempo d'ingresso attivo",
-                        "T_OUT":"Inserito Totale con tempo d'uscita attivo",
-                        "P":    "Inserito Parziale",
-                        "P_IN": "Inserito Parziale con tempo d'ingresso attivo",
-                        "P_OUT":"Inserito Parziale con tempo d'uscita attivo",
-                        "D":    "Disinserito"
+                        "T": "Fully Armed",
+                        "T_IN": "Fully Armed with Entry Delay Active",
+                        "T_OUT": "Fully Armed with Exit Delay Active",
+                        "P": "Partially Armed",
+                        "P_IN": "Partially Armed with Entry Delay Active",
+                        "P_OUT": "Partially Armed with Exit Delay Active",
+                        "D": "Disarmed"
                     }
                     readable_state = state_mapping.get(state_code, state_code)
 
