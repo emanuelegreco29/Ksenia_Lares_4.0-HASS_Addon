@@ -212,7 +212,11 @@ class WebSocketManager:
     """
     async def handle_message(self, message):
         payload = message.get("PAYLOAD", {})
-        data = payload.get('HomeAssistant', {})
+        if "HomeAssistant" in payload:
+            data = payload["HomeAssistant"]
+        else:
+            # payload like { "<receiver_id>": { … } }
+            data = next(iter(payload.values()), {})
 
         if message.get("CMD") == "CMD_USR_RES":
             if self._pending_commands:
@@ -222,6 +226,7 @@ class WebSocketManager:
                     self._pending_commands.pop(message.get("ID"))
             else:
                 self._logger.warning("Received CMD_USR_RES but no commands were pending")
+                
         elif message.get("CMD") == "REALTIME":
             if "STATUS_OUTPUTS" in data:
                 self._logger.debug(f"Updating state for outputs: {data['STATUS_OUTPUTS']}")

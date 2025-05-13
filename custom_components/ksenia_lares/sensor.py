@@ -750,42 +750,7 @@ class KseniaSensorEntity(SensorEntity):
                     break
 
         elif self._sensor_type == "door":
-            sensors = await self.ws_manager.getSensor("ZONES")
-            for sensor in sensors:
-                if sensor["ID"] == self._id and sensor.get("CAT", "").upper() == "DOOR":
-                    attributes = {}
-                    if "DES" in sensor:
-                        attributes["Description"] = sensor["DES"]
-                    if "PRT" in sensor:
-                        attributes["Partition"] = sensor["PRT"]
-                    if "CMD" in sensor:
-                        attributes["Command"] = "Fixed" if sensor["CMD"] == "F" else sensor["CMD"]
-                    if "BYP EN" in sensor:
-                        attributes["Bypass Enabled"] = "Yes" if sensor["BYP EN"] == "T" else "No"
-                    if "AN" in sensor:
-                        attributes["Signal Type"] = "Analog" if sensor["AN"] == "T" else "Digital"
-                    state_mapping = {"R": "Closed", "A": "Open"}
-                    mapped_state = state_mapping.get(sensor.get("STA"), sensor.get("STA", "unknown"))
-                    attributes["State"] = mapped_state
-                    sensor.pop("STA", None)
-                    if "BYP" in sensor:
-                        attributes["Bypass"] = "Active" if sensor["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                    if "T" in sensor:
-                        attributes["Tamper"] = "Yes" if sensor["T"] == "T" else "No"
-                    if "A" in sensor:
-                        attributes["Alarm"] = "On" if sensor["A"] == "T" else "Off"
-                    if "FM" in sensor:
-                        attributes["Fault Memory"] = "Yes" if sensor["FM"] == "T" else "No"
-                    if "OHM" in sensor:
-                        attributes["Resistance"] = sensor["OHM"] if sensor["OHM"] != "NA" else "N/A"
-                    if "VAS" in sensor:
-                        attributes["Voltage Alarm Sensor"] = "Active" if sensor["VAS"] == "T" else "Inactive"
-                    if "LBL" in sensor and sensor["LBL"]:
-                        attributes["Label"] = sensor["LBL"]
-
-                    self._state = mapped_state
-                    self._attributes = attributes
-                    break
+            return
 
         elif self._sensor_type == "cmd":
             sensors = await self.ws_manager.getSensor("CMD")
@@ -825,83 +790,10 @@ class KseniaSensorEntity(SensorEntity):
                     break
 
         elif self._sensor_type == "imov":
-            sensors = await self.ws_manager.getSensor("ZONES")
-            for sensor in sensors:
-                if sensor["ID"] == self._id and sensor.get("CAT", "").upper() == "IMOV":
-                    attributes = {}
-                    if "DES" in sensor:
-                        attributes["Description"] = sensor["DES"]
-                    if "PRT" in sensor:
-                        attributes["Partition"] = sensor["PRT"]
-                    if "BYP EN" in sensor:
-                        attributes["Bypass Enabled"] = "Yes" if sensor["BYP EN"] == "T" else "No"
-                    if "AN" in sensor:
-                        attributes["Signal Type"] = "Analog" if sensor["AN"] == "T" else "Digital"
-                    if "STA" in sensor:
-                        state_mapping = {"R": "Resting", "M": "Movement Detected"}
-                        attributes["State"] = state_mapping.get(sensor["STA"], sensor["STA"])
-                    if "BYP" in sensor:
-                        attributes["Bypass"] = "Active" if sensor["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                    if "T" in sensor:
-                        attributes["Tamper"] = "Yes" if sensor["T"] == "T" else "No"
-                    if "A" in sensor:
-                        attributes["Alarm"] = "On" if sensor["A"] == "T" else "Off"
-                    if "FM" in sensor:
-                        attributes["Fault Memory"] = "Yes" if sensor["FM"] == "T" else "No"
-                    if "MOV" in sensor:
-                        attributes["Movement"] = "Motion Detected" if sensor["MOV"] == "T" else "No Motion"
-                    if "OHM" in sensor:
-                        attributes["Resistance"] = sensor["OHM"] if sensor["OHM"] != "NA" else "N/A"
-                    if "VAS" in sensor:
-                        attributes["Voltage Alarm Sensor"] = "Active" if sensor["VAS"] == "T" else "Inactive"
-                    if "LBL" in sensor and sensor["LBL"]:
-                        attributes["Label"] = sensor["LBL"]
-
-                    self._state = sensor.get("STA", "unknown")
-                    self._attributes = attributes
-                    break
+            return
 
         elif self._sensor_type == "pmc":
-            sensors = await self.ws_manager.getSensor("ZONES")
-            for sensor in sensors:
-                if sensor["ID"] == self._id and sensor.get("CAT", "").upper() == "PMC":
-                    attributes = {}
-
-                    if "DES" in sensor:
-                        attributes["Description"] = sensor["DES"]
-                    if "PRT" in sensor:
-                        attributes["Partition"] = sensor["PRT"]
-                    if "CMD" in sensor:
-                        attributes["Command"] = "Fixed" if sensor["CMD"] == "F" else sensor["CMD"]
-                    if "BYP EN" in sensor:
-                        attributes["Bypass Enabled"] = "Yes" if sensor["BYP EN"] == "T" else "No"
-                    if "AN" in sensor:
-                        attributes["Signal Type"] = "Analog" if sensor["AN"] == "T" else "Digital"
-
-                    state_mapping = {"R": "Closed", "A": "Open"}
-                    mapped_state = state_mapping.get(sensor.get("STA"), sensor.get("STA", "unknown"))
-                    attributes["State"] = mapped_state
-                    sensor.pop("STA", None)
-
-                    if "BYP" in sensor:
-                        attributes["Bypass"] = "Active" if sensor["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                    if "T" in sensor:
-                        attributes["Tamper"] = "Yes" if sensor["T"] == "T" else "No"
-                    if "A" in sensor:
-                        attributes["Alarm"] = "On" if sensor["A"] == "T" else "Off"
-                    if "FM" in sensor:
-                        attributes["Fault Memory"] = "Yes" if sensor["FM"] == "T" else "No"
-                    if "OHM" in sensor:
-                        attributes["Resistance"] = sensor["OHM"] if sensor["OHM"] != "NA" else "N/A"
-                    if "VAS" in sensor:
-                        attributes["Voltage Alarm Sensor"] = "Active" if sensor["VAS"] == "T" else "Inactive"
-                    if "LBL" in sensor and sensor["LBL"]:
-                        attributes["Label"] = sensor["LBL"]
-
-                    self._state = mapped_state
-                    self._attributes = attributes
-                    break
-
+            return
 
         else:
             # For other sensors, we need to call getSensor with the specific type
