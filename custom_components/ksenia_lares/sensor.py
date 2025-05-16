@@ -105,6 +105,43 @@ class KseniaSensorEntity(SensorEntity):
             self._name = f"Door Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
 
 
+        elif sensor_data.get("CAT", "").upper() == "WINDOW" or sensor_type == "window":
+            attributes = {}
+            if "DES" in sensor_data:
+                attributes["Description"] = sensor_data["DES"]
+            if "PRT" in sensor_data:
+                attributes["Partition"] = sensor_data["PRT"]
+            if "CMD" in sensor_data:
+                attributes["Command"] = "Fixed" if sensor_data["CMD"] == "F" else sensor_data["CMD"]
+            if "BYP EN" in sensor_data:
+                attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
+            if "AN" in sensor_data:
+                attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
+            state_mapping = {"R": "Closed", "A": "Open"}
+            mapped_state = state_mapping.get(sensor_data.get("STA"), sensor_data.get("STA", "unknown"))
+            attributes["State"] = mapped_state
+            sensor_data.pop("STA", None)
+            if "BYP" in sensor_data:
+                attributes["Bypass"] = "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
+            if "T" in sensor_data:
+                attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
+            if "A" in sensor_data:
+                attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
+            if "FM" in sensor_data:
+                attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
+            if "OHM" in sensor_data:
+                attributes["Resistance"] = sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
+            if "VAS" in sensor_data:
+                attributes["Voltage Alarm Sensor"] = "Active" if sensor_data["VAS"] == "T" else "Inactive"
+            if "LBL" in sensor_data and sensor_data["LBL"]:
+                attributes["Label"] = sensor_data["LBL"]
+
+            self._state = mapped_state
+            self._attributes = attributes
+            self._sensor_type = "window"
+            self._name = f"Window Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+
+
         elif sensor_data.get("CAT", "").upper() == "CMD" or sensor_type == "cmd":
             attributes = {}
             if "DES" in sensor_data:
@@ -223,7 +260,7 @@ class KseniaSensorEntity(SensorEntity):
             self._state = mapped_state
             self._attributes = attributes
             self._sensor_type = "pmc"
-            self._name = f"Magnetic Contact Perimetral Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            self._name = f"Perimetral Magnetic Contact Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
 
         elif sensor_type == "system":
             arm_data = sensor_data.get("ARM", {})
@@ -452,7 +489,7 @@ class KseniaSensorEntity(SensorEntity):
                 self._state = total_consumption if total_consumption > 0 else data.get("STA", "unknown")
                 self._attributes = {**data, "total_consumption": total_consumption}
 
-            elif self._sensor_type == "door":
+            elif self._sensor_type == "door" or self._sensor_type == "window":
                 for data in data_list:
                     if str(data.get("ID")) == str(self._id):
                         attributes = {}
@@ -569,7 +606,6 @@ class KseniaSensorEntity(SensorEntity):
                 for data in data_list:
                     if str(data.get("ID")) == str(self._id):
                         attributes = {}
-                        # Descrizione e partizione
                         if "DES" in data:
                             attributes["Description"] = data["DES"]
                         if "PRT" in data:
@@ -583,7 +619,7 @@ class KseniaSensorEntity(SensorEntity):
                         # Signal Type
                         if "AN" in data:
                             attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
-                        # Stato aperto/chiuso
+                        # Status
                         if "STA" in data:
                             state_mapping = {"R": "Closed", "A": "Open"}
                             mapped_state = state_mapping.get(data["STA"], data["STA"])
@@ -610,7 +646,6 @@ class KseniaSensorEntity(SensorEntity):
                         if "LBL" in data and data["LBL"]:
                             attributes["Label"] = data["LBL"]
 
-                        # Imposta stato e attributi
                         self._state = data.get("STA", "unknown")
                         self._attributes = attributes
                         self.async_write_ha_state()
@@ -659,7 +694,23 @@ class KseniaSensorEntity(SensorEntity):
             return "mdi:door"
         elif self._sensor_type == "pmc":
             return "mdi:garage-variant"
+        elif self._sensor_type == "window":
+            return "mdi:window-closed"
         return None
+    
+    @property
+    def should_poll(self) -> bool:
+        """
+        Indicates if the sensor should be polled to retrieve its state.
+
+        Polling is disabled for door and pmc sensors, as their state is updated
+        in real time via the websocket connection. For all other types of sensors,
+        polling is enabled to retrieve their state periodically.
+        """
+        if self._sensor_type in ("door", "pmc", "window"):
+            return False
+
+        return True
 
     """
     Update the state of the sensor.
@@ -749,9 +800,6 @@ class KseniaSensorEntity(SensorEntity):
                     self._attributes = {**sensor, "total_consumption": total_consumption}
                     break
 
-        elif self._sensor_type == "door":
-            return
-
         elif self._sensor_type == "cmd":
             sensors = await self.ws_manager.getSensor("CMD")
             for sensor in sensors:
@@ -789,10 +837,7 @@ class KseniaSensorEntity(SensorEntity):
                     self._attributes = attributes
                     break
 
-        elif self._sensor_type == "imov":
-            return
-
-        elif self._sensor_type == "pmc":
+        elif self._sensor_type in ("door", "pmc", "zones", "imov", "window"):
             return
 
         else:
