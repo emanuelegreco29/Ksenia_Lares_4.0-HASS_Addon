@@ -42,6 +42,12 @@ If any of the devices listed is not compatible, or if some devices listed as "co
 
 ## Installation
 ### 1. HACS installation (best method)
+#### Automatic Installation via HACS
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=emanuelegreco29&repository=Ksenia_Lares_4.0-HASS_Addonl&category=integration)
+
+[![Add Integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start?domain=ksenia_lares)
+
+#### Manual Installation via HACS
 1. Make sure you have installed HACS to Home Assistant: [HACS install guide](https://hacs.xyz/docs/setup/download).
 2. Open HACS, click **Custom repositories** in the top-right menu, Repository input: `https://github.com/emanuelegreco29/Ksenia_Lares_4.0-HASS_Addon`, Category select **Integration**.
    
