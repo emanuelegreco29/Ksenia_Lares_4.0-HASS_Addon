@@ -24,7 +24,7 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 | Sensors | ⚠️ |
 
 #### Legend
-⛔ - Not Compatible; ⚠️ - Work In Progress; ✅ - Compatible
+⛔ - Not Implemented; ⚠️ - Work In Progress; ✅ - Implemented
 
 #### ⚠️ Warning ⚠️
 If any of the devices listed is not compatible, or if some devices listed as "compatible" are not working as intended, please open an issue. Collaboration is more than welcome, if somebody wants to implement new functions or contribute in any form to the integration, feel free to send a pull request.
