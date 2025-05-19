@@ -221,38 +221,28 @@ class KseniaSensorEntity(SensorEntity):
                 attributes["Partition"] = sensor_data["PRT"]
             if "CMD" in sensor_data:
                 attributes["Command"] = "Fixed" if sensor_data["CMD"] == "F" else sensor_data["CMD"]
-            # Bypass Enabled (T/N)
             if "BYP EN" in sensor_data:
                 attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
-            # Signal Type (Analog/Digital)
             if "AN" in sensor_data:
                 attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            # Status
             if "STA" in sensor_data:
                 state_mapping = {"R": "Closed", "A": "Open"}
                 mapped_state = state_mapping.get(sensor_data["STA"], sensor_data["STA"])
                 attributes["State"] = mapped_state
-            # Bypass (NO/N = Inactive)
             if "BYP" in sensor_data:
                 attributes["Bypass"] = (
                     "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
                 )
-            # Tamper
             if "T" in sensor_data:
                 attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
-            # Alarm
             if "A" in sensor_data:
                 attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
-            # Fault Memory
             if "FM" in sensor_data:
                 attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
-            # Resistance (NA → N/A)
             if "OHM" in sensor_data:
                 attributes["Resistance"] = sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
-            # Voltage Alarm Sensor
             if "VAS" in sensor_data:
                 attributes["Voltage Alarm Sensor"] = "Active" if sensor_data["VAS"] == "T" else "Inactive"
-            # Label
             if "LBL" in sensor_data and sensor_data["LBL"]:
                 attributes["Label"] = sensor_data["LBL"]
 
@@ -351,19 +341,49 @@ class KseniaSensorEntity(SensorEntity):
             }
 
         elif sensor_type == "partitions":
-            # Manage partitions sensors, extract total consumption
-            total_consumption = 0.0
-            stat = sensor_data.get("STAT", [])
-            if stat:
-                latest_stat = stat[-1]
-                vals = latest_stat.get("VAL", [])
-                for record in vals:
-                    try:
-                        total_consumption += float(record.get("ENC", 0))
-                    except Exception as e:
-                        _LOGGER.error("Error converting total consumption: %s", e)
-            self._state = total_consumption if total_consumption > 0 else sensor_data.get("STA", "unknown")
-            self._attributes = {**sensor_data, "total_consumption": total_consumption}
+            ARM_MAP = {
+                "D":  "Disarmed",
+                "DA": "Delayed Arming",
+                "IA": "Immediate Arming",
+                "IT": "Input time",
+                "OT": "Output time",
+            }
+            AST_MAP = {
+                "OK": "No ongoing alarm",
+                "AL": "Ongoing alarm",
+                "AM": "Alarm memory",
+            }
+            TST_MAP = {
+                "OK":  "No ongoing tampering",
+                "TAM": "Ongoing tampering",
+                "TM":  "Tampering memory",
+            }
+            raw_arm = sensor_data.get("ARM", "")
+            arm_desc = ARM_MAP.get(raw_arm, raw_arm)
+            if raw_arm in ("IT", "OT"):
+                timer = sensor_data.get("T", 0)
+                state = f"{arm_desc} ({timer}s)"
+            else:
+                state = arm_desc
+            self._state = state
+
+            attrs = {
+                "Partition":    sensor_data.get("ID"),
+                "Description":     sensor_data.get("DES"),
+                "Arming Mode":     raw_arm,
+                "Arming Description":     arm_desc,
+                "Alarm Mode":      sensor_data.get("AST"),
+                "Alarm Description":      AST_MAP.get(sensor_data.get("AST", ""), ""),
+                "Tamper Mode":     sensor_data.get("TST"),
+                "Tamper Description":     TST_MAP.get(sensor_data.get("TST", ""), ""),
+            }
+
+            if sensor_data.get("TIN") is not None:
+                attrs["entry_delay"] = sensor_data["TIN"]
+            if sensor_data.get("TOUT") is not None:
+                attrs["exit_delay"] = sensor_data["TOUT"]
+
+            self._attributes = attrs
             self._name = f"Part: {self._name}"
 
         else:
@@ -475,18 +495,49 @@ class KseniaSensorEntity(SensorEntity):
                 }
 
             elif self._sensor_type == "partitions":
-                total_consumption = 0.0
-                stat = data.get("STAT", [])
-                if stat:
-                    latest_stat = stat[-1]
-                    vals = latest_stat.get("VAL", [])
-                    for record in vals:
-                        try:
-                            total_consumption += float(record.get("ENC", 0))
-                        except Exception as e:
-                            _LOGGER.error("Error converting ENC in partitions realtime update: %s", e)
-                self._state = total_consumption if total_consumption > 0 else data.get("STA", "unknown")
-                self._attributes = {**data, "total_consumption": total_consumption}
+                ARM_MAP = {
+                    "D":  "Disarmed",
+                    "DA": "Delayed Arming",
+                    "IA": "Immediate Arming",
+                    "IT": "Input time",
+                    "OT": "Output time",
+                }
+                AST_MAP = {
+                    "OK": "No ongoing alarm",
+                    "AL": "Ongoing alarm",
+                    "AM": "Alarm memory",
+                }
+                TST_MAP = {
+                    "OK":  "No ongoing tampering",
+                    "TAM": "Ongoing tampering",
+                    "TM":  "Tampering memory",
+                }
+
+                raw_arm = data.get("ARM", "")
+                arm_desc = ARM_MAP.get(raw_arm, raw_arm)
+                if raw_arm in ("IT", "OT"):
+                    timer = data.get("T", 0)
+                    self._state = f"{arm_desc} ({timer}s)"
+                else:
+                    self._state = arm_desc
+
+                attrs = {
+                    "Partition":            data.get("ID"),
+                    "Description":          data.get("DES"),
+                    "Arming Mode":          raw_arm,
+                    "Arming Description":   arm_desc,
+                    "Alarm Mode":           data.get("AST"),
+                    "Alarm Description":    AST_MAP.get(data.get("AST", ""), ""),
+                    "Tamper Mode":          data.get("TST"),
+                    "Tamper Description":   TST_MAP.get(data.get("TST", ""), ""),
+                }
+
+                if data.get("TIN") is not None:
+                    attrs["entry_delay"] = data.get("TIN")
+                if data.get("TOUT") is not None:
+                    attrs["exit_delay"] = data.get("TOUT")
+
+                self._attributes = attrs
 
             elif self._sensor_type == "door" or self._sensor_type == "window":
                 for data in data_list:
@@ -706,7 +757,7 @@ class KseniaSensorEntity(SensorEntity):
         in real time via the websocket connection. For all other types of sensors,
         polling is enabled to retrieve their state periodically.
         """
-        if self._sensor_type in ("door", "pmc", "window", "imov", "emov"):
+        if self._sensor_type in ("door", "pmc", "window", "imov", "emov", "partitions"):
             return False
 
         return True
@@ -779,24 +830,6 @@ class KseniaSensorEntity(SensorEntity):
                         "tl": tl,
                         "th": th,
                     }
-                    break
-
-        elif self._sensor_type == "partitions":
-            sensors = await self.ws_manager.getSensor("PARTITIONS")
-            for sensor in sensors:
-                if sensor["ID"] == self._id:
-                    total_consumption = 0.0
-                    stat = sensor.get("STAT", [])
-                    if stat:
-                        latest_stat = stat[-1]
-                        vals = latest_stat.get("VAL", [])
-                        for record in vals:
-                            try:
-                                total_consumption += float(record.get("ENC", 0))
-                            except Exception as e:
-                                _LOGGER.error("Error converting ENC in partitions sensor update: %s", e)
-                    self._state = total_consumption if total_consumption > 0 else sensor.get("STA", "unknown")
-                    self._attributes = {**sensor, "total_consumption": total_consumption}
                     break
 
         elif self._sensor_type == "cmd":
