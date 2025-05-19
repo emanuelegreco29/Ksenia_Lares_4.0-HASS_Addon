@@ -21,10 +21,21 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 | Buttons | ✅ |
 | Switches | ✅ |
 | Scenarios | ⚠️ |
-| Sensors | ⚠️ |
+| Sensors | ⚠️ (see below) |
+| Partitions | ⛔ |
 
 #### Legend
 ⛔ - Not Implemented; ⚠️ - Work In Progress; ✅ - Implemented
+
+### Compatible Sensors
+- DOMUS (environmental)
+- Power Lines
+- Alarm System
+- Zone-based:
+    - Door
+    - Window
+    - Magnetic Contact (PMC)
+    - Internal Movement
 
 #### ⚠️ Warning ⚠️
 If any of the devices listed is not compatible, or if some devices listed as "compatible" are not working as intended, please open an issue. Collaboration is more than welcome, if somebody wants to implement new functions or contribute in any form to the integration, feel free to send a pull request.
