@@ -23,7 +23,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     domus = await ws_manager.getDom()
     _LOGGER.debug("Received domus data: %s", domus)
     for sensor in domus:
-        # Se il sensore ha CAT = "DOOR", usiamo sensor_type "door"
         sensor_type = "door" if sensor.get("CAT", "").upper() == "DOOR" else "domus"
         entities.append(KseniaSensorEntity(ws_manager, sensor, sensor_type))
 
@@ -323,7 +322,7 @@ class KseniaSensorEntity(SensorEntity):
                 _LOGGER.error("Error converting humidity in domus sensor: %s", e)
                 humidity = None
 
-            # Altri parametri opzionali utili
+            # Other parameters
             lht = domus_data.get("LHT") if domus_data.get("LHT") not in [None, "NA", ""] else "Unknown"
             pir = domus_data.get("PIR") if domus_data.get("PIR") not in [None, "NA", ""] else "Unknown"
             tl = domus_data.get("TL") if domus_data.get("TL") not in [None, "NA", ""] else "Unknown"
@@ -752,10 +751,6 @@ class KseniaSensorEntity(SensorEntity):
     def should_poll(self) -> bool:
         """
         Indicates if the sensor should be polled to retrieve its state.
-
-        Polling is disabled for door and pmc sensors, as their state is updated
-        in real time via the websocket connection. For all other types of sensors,
-        polling is enabled to retrieve their state periodically.
         """
         if self._sensor_type in ("door", "pmc", "window", "imov", "emov", "partitions"):
             return False
@@ -770,7 +765,7 @@ class KseniaSensorEntity(SensorEntity):
     and attributes accordingly.
     """
     async def async_update(self):
-        if self._sensor_type == "system":
+        if self._sensor_type == "system" or self._sensor_type == "partitions":
             return
         
         elif self._sensor_type == "powerlines":
