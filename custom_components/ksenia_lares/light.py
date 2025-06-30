@@ -35,17 +35,13 @@ class KseniaLightEntity(LightEntity):
     def __init__(self, ws_manager, light_data):
         self.ws_manager = ws_manager
         self._id = light_data.get("ID")
+        self._attr_unique_id = f"{self.ws_manager}_{self._id}"
         _LOGGER.debug("Initializing KseniaLightEntity with data: %s", light_data)
         # Use the name given by Ksenia, otherwise "Light <ID>"
         self._name = light_data.get("DES") or light_data.get("LBL") or light_data.get("NM") or f"Light {self._id}"
         self._state = light_data.get("STA", "off").lower() == "on"
         self._available = True
         self._pending_command = None
-
-    @property
-    def unique_id(self):
-        """Returns a unique ID for the light."""
-        return f"{self.ws_manager._ip}_{self._id}"
 
     @property
     def name(self):

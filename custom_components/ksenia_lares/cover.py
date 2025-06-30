@@ -35,16 +35,12 @@ class KseniaRollEntity(CoverEntity):
     def __init__(self, ws_manager, roll_id, name, roll_data):
         self.ws_manager = ws_manager
         self._roll_id = roll_id
+        self._attr_unique_id = f"{self.ws_manager}_{self._roll_id}"
         self._name = name
         # POS is the opening percentage (0=closed, 100=opened)
         self._position = roll_data.get("POS", 0)
         self._available = True
         self._pending_command = None
-
-    @property
-    def unique_id(self):
-        """Returns a unique ID for the roller blind."""
-        return f"{self.ws_manager._ip}_{self._roll_id}"
 
     @property
     def name(self):

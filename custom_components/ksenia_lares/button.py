@@ -39,13 +39,9 @@ class KseniaScenarioButtonEntity(ButtonEntity):
     def __init__(self, ws_manager, scenario_id, name):
         self.ws_manager = ws_manager
         self._scenario_id = scenario_id
+        self._attr_unique_id = f"{self.ws_manager}_{self._scenario_id}"
         self._name = name
         self._available = True
-
-    @property
-    def unique_id(self):
-        """Returns a unique ID for the button."""
-        return f"{self.ws_manager._ip}_{self._scenario_id}"
 
     @property
     def name(self):
