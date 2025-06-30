@@ -177,7 +177,7 @@ class KseniaSensorEntity(SensorEntity):
             self._sensor_type = "cmd"
             self._name = sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or f"Command Sensor {self._id}"
 
-        elif sensor_data.get("CAT", "").upper() == "IMOV":
+        elif sensor_data.get("CAT", "").upper() == "IMOV" or sensor_data.get("CAT", "").upper() == "EMOV":
             attributes = {}
             if "DES" in sensor_data:
                 attributes["Description"] = sensor_data["DES"]
@@ -209,8 +209,12 @@ class KseniaSensorEntity(SensorEntity):
 
             self._state = mapped_state
             self._attributes = attributes
-            self._sensor_type = "imov"
-            self._name = f"Internal Movement Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            if sensor_data.get("CAT", "").upper() == "EMOV":
+                self._sensor_type = "emov"
+                self._name = f"External Movement Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            else:
+                self._sensor_type = "imov"
+                self._name = f"Internal Movement Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
 
         elif sensor_data.get("CAT", "").upper() == "PMC":
             attributes = {}
@@ -614,7 +618,7 @@ class KseniaSensorEntity(SensorEntity):
                         self.async_write_ha_state()
                         break
 
-            elif self._sensor_type == "imov":
+            elif self._sensor_type == "imov" or self._sensor_type == "emov":
                 for data in data_list:
                     if str(data.get("ID")) == str(self._id):
                         attributes = {}
@@ -737,7 +741,7 @@ class KseniaSensorEntity(SensorEntity):
             return "mdi:lightning-bolt-outline"
         elif self._sensor_type == "system":
             return "mdi:alarm-panel"
-        elif self._sensor_type == "imov":
+        elif self._sensor_type == "imov" or self._sensor_type == "emov":
             return "mdi:motion-sensor"
         elif self._sensor_type == "door":
             return "mdi:door"
@@ -752,7 +756,7 @@ class KseniaSensorEntity(SensorEntity):
         """
         Indicates if the sensor should be polled to retrieve its state.
         """
-        if self._sensor_type in ("door", "pmc", "window", "imov", "emov", "partitions"):
+        if self._sensor_type in ("door", "pmc", "window", "imov", "emov"):
             return False
 
         return True
@@ -765,8 +769,55 @@ class KseniaSensorEntity(SensorEntity):
     and attributes accordingly.
     """
     async def async_update(self):
-        if self._sensor_type == "system" or self._sensor_type == "partitions":
+        if self._sensor_type == "system":
             return
+        
+        elif self._sensor_type == "partitions":
+            sensors = await self.ws_manager.getSensor("PARTITIONS")
+            for sensor in sensors:
+                if str(sensor.get("ID")) != str(self._id):
+                    continue
+
+                # mappa gli stati esattamente come in __init__
+                ARM_MAP = {
+                    "D":  "Disarmed",
+                    "DA": "Delayed Arming",
+                    "IA": "Immediate Arming",
+                    "IT": "Input time",
+                    "OT": "Output time",
+                }
+                AST_MAP = {
+                    "OK": "No ongoing alarm",
+                    "AL": "Ongoing alarm",
+                    "AM": "Alarm memory",
+                }
+                TST_MAP = {
+                    "OK":  "No ongoing tampering",
+                    "TAM": "Ongoing tampering",
+                    "TM":  "Tampering memory",
+                }
+
+                raw_arm = sensor.get("ARM", "")
+                arm_desc = ARM_MAP.get(raw_arm, raw_arm)
+                if raw_arm in ("IT", "OT"):
+                    timer = sensor.get("T", 0)
+                    self._state = f"{arm_desc} ({timer}s)"
+                else:
+                    self._state = arm_desc
+
+                self._attributes = {
+                    "Partition":            sensor.get("ID"),
+                    "Description":          sensor.get("DES"),
+                    "Arming Mode":          raw_arm,
+                    "Arming Description":   arm_desc,
+                    "Alarm Mode":           sensor.get("AST"),
+                    "Alarm Description":    AST_MAP.get(sensor.get("AST", ""), ""),
+                    "Tamper Mode":          sensor.get("TST"),
+                    "Tamper Description":   TST_MAP.get(sensor.get("TST", ""), ""),
+                    **({"entry_delay": sensor["TIN"]} if sensor.get("TIN") is not None else {}),
+                    **({"exit_delay":  sensor["TOUT"]} if sensor.get("TOUT") is not None else {}),
+                }
+                break
         
         elif self._sensor_type == "powerlines":
             sensors = await self.ws_manager.getSensor("POWER_LINES")
