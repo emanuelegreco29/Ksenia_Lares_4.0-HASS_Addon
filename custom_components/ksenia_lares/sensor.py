@@ -64,7 +64,6 @@ class KseniaSensorEntity(SensorEntity):
     def __init__(self, ws_manager, sensor_data, sensor_type):
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
-        self._attr_unique_id = f"{self.ws_manager}_{self._id}"
         self._sensor_type = sensor_type
         self._name = sensor_data.get("NM") or sensor_data.get("LBL") or sensor_data.get("DES") or f"Sensor {sensor_type.capitalize()} {self._id}"
 
@@ -712,6 +711,11 @@ class KseniaSensorEntity(SensorEntity):
 
             self.async_write_ha_state()
             break
+
+    @property
+    def unique_id(self):
+        """Returns a unique ID for the sensor."""
+        return f"{self._sensor_type}_{self._id}"
 
     @property
     def name(self):
