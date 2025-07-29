@@ -22,7 +22,7 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 | Switches | ✅ |
 | Scenarios | ⚠️ |
 | Sensors | ⚠️ (see below) |
-| Partitions | ⛔ |
+| Partitions | ⚠️ |
 
 #### Legend
 ⛔ - Not Implemented; ⚠️ - Work In Progress; ✅ - Implemented
