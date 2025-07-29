@@ -22,7 +22,7 @@ async def async_setup_entry(hass, entry):
     ip = entry.data[CONF_HOST]
     pin = entry.data[CONF_PIN]
     port = entry.data.get(CONF_PORT, 443)
-    ssl_option = entry.options.get("SSL", True)
+    ssl_option = entry.options.get("SSL", entry.data.get("SSL", True))
 
     # Create WebSocketManager instance
     ws_manager = WebSocketManager(ip, pin, port, _LOGGER)
