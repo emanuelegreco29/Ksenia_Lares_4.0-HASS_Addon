@@ -254,6 +254,34 @@ class KseniaSensorEntity(SensorEntity):
             self._sensor_type = "pmc"
             self._name = f"Perimetral Magnetic Contact Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
 
+        elif sensor_data.get("CAT", "").upper() == "SEISM" or sensor_type == "seism":
+            attributes = {}
+            if "DES" in sensor_data:
+                attributes["Description"] = sensor_data["DES"]
+            if "PRT" in sensor_data:
+                attributes["Partition"] = sensor_data["PRT"]
+            # mappatura dello stato
+            state_mapping = {
+                "R": "Rest",
+                "A": "Seismic Activity",
+                "N": "Normal"
+            }
+            mapped_state = state_mapping.get(sensor_data.get("STA"), sensor_data.get("STA", "unknown"))
+            attributes["State"] = mapped_state
+            if "BYP" in sensor_data:
+                attributes["Bypass"] = "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
+            if "T" in sensor_data:
+                attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
+            if "A" in sensor_data:
+                attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
+            if "FM" in sensor_data:
+                attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
+
+            self._state = mapped_state
+            self._attributes = attributes
+            self._sensor_type = "seism"
+            self._name = f"Seismic Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+
         elif sensor_type == "system":
             arm_data = sensor_data.get("ARM", {})
             state_code = arm_data.get("S")
@@ -402,7 +430,7 @@ class KseniaSensorEntity(SensorEntity):
     `_handle_realtime_update` method when new data is received.
     """
     async def async_added_to_hass(self):
-        if self._sensor_type in ("door", "pmc", "window", "imov", "emov"):
+        if self._sensor_type in ("door", "pmc", "window", "imov", "emov", "seism"):
             key = "zones"
         else:
             key = self._sensor_type if self._sensor_type != "system" else "systems"
@@ -749,6 +777,8 @@ class KseniaSensorEntity(SensorEntity):
             return "mdi:garage-variant"
         elif self._sensor_type == "window":
             return "mdi:window-closed"
+        elif self._sensor_type == "seism":
+            return "mdi:vibrate"
         return None
     
     @property
