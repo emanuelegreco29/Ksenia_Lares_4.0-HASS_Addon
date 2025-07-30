@@ -35,8 +35,8 @@ class WebSocketManager:
         self._command_queue = asyncio.Queue()  # Command queue
         self._pending_commands = {}
 
-        self._max_retries = 5  
-        self._retry_delay = 1
+        self._max_retries = 20
+        self._retry_delay = 30
         self._retries = 0
         self._connSecure = 0    # 0: no SSL, 1: SSL
 

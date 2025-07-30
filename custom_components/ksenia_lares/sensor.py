@@ -260,7 +260,6 @@ class KseniaSensorEntity(SensorEntity):
                 attributes["Description"] = sensor_data["DES"]
             if "PRT" in sensor_data:
                 attributes["Partition"] = sensor_data["PRT"]
-            # mappatura dello stato
             state_mapping = {
                 "R": "Rest",
                 "A": "Seismic Activity",
@@ -728,6 +727,35 @@ class KseniaSensorEntity(SensorEntity):
                             attributes["Label"] = data["LBL"]
 
                         self._state = data.get("STA", "unknown")
+                        self._attributes = attributes
+                        self.async_write_ha_state()
+                        break
+
+            elif self._sensor_type == "seism":
+                for data in data_list:
+                    if str(data.get("ID")) == str(self._id):
+                        state_mapping = {
+                            "R": "Rest",
+                            "A": "Seismic Activity",
+                            "N": "Normal"
+                        }
+                        raw_state = data.get("STA")
+                        mapped_state = state_mapping.get(raw_state, raw_state or "Unknown")
+
+                        attributes = {
+                            "ID": data.get("ID"),
+                            "State": mapped_state,
+                            "Bypass": "Active" if data.get("BYP", "").upper() not in ["NO", "N"] else "Inactive",
+                            "Tamper": "Yes" if data.get("T") == "T" else "No",
+                            "Alarm": "On" if data.get("A") == "T" else "Off",
+                            "Fault Memory": "Yes" if data.get("FM") == "T" else "No",
+                            "Resistance": data.get("OHM") if data.get("OHM") != "NA" else "N/A",
+                            "Voltage Alarm Sensor": "Active" if data.get("VAS") == "T" else "Inactive",
+                        }
+                        if data.get("LBL"):
+                            attributes["Label"] = data.get("LBL")
+
+                        self._state = mapped_state
                         self._attributes = attributes
                         self.async_write_ha_state()
                         break
