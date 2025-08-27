@@ -275,6 +275,22 @@ class WebSocketManager:
         if entity_type in self.listeners:
             self.listeners[entity_type].append(callback)
 
+    """ 
+    Safely converts a value to an integer, returning a default if conversion fails.
+    
+    Args:
+        value: The value to convert to an integer.
+        default: The default value to return if conversion fails.
+    Returns:
+        int: The converted integer value or the default value.
+    """
+    @staticmethod
+    def _safe_int(value, default):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
 
     """
     Processes the command queue in a loop.
@@ -583,7 +599,8 @@ class WebSocketManager:
             state_data = next((state for state in lares_realtime if state.get("ID") == roll_id), None)
             if state_data:
                 state_data["STA"] = state_data.get("STA", "off").lower()
-                state_data["POS"] = int(state_data.get("POS", 255))
+                pos_raw = state_data.get("POS")
+                state_data["POS"] = self._safe_int(pos_raw, 255)
                 rolls_with_states.append({**roll, **state_data})
         return rolls_with_states
 
