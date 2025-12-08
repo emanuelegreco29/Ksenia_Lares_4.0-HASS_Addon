@@ -131,7 +131,7 @@ class KseniaSensorEntity(SensorEntity):
             if "OHM" in sensor_data:
                 attributes["Resistance"] = sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
             if "VAS" in sensor_data:
-                attributes["Voltage Alarm Sensor"] = "Active" if sensor_data["VAS"] == "T" else "Inactive"
+                attributes["Vasistas"] = "Yes" if sensor_data["VAS"] == "T" else "No"
             if "LBL" in sensor_data and sensor_data["LBL"]:
                 attributes["Label"] = sensor_data["LBL"]
 
