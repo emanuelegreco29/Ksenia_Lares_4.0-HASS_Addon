@@ -32,13 +32,23 @@ class WebSocketManager:
         self._realtimeInitialData = None  # Initial realtime data
         self._readData = None             # Static data read
         self._ws_lock = asyncio.Lock()
+        # Prevent concurrent reconnect attempts from listener + command queue
+        self._reconnect_lock = asyncio.Lock()
         self._command_queue = asyncio.Queue()  # Command queue
         self._pending_commands = {}
 
         self._max_retries = 20
         self._retry_delay = 30
         self._retries = 0
+        self._base_retry_delay = self._retry_delay
         self._connSecure = 0    # 0: no SSL, 1: SSL
+
+        # Internal tasks (avoid duplicates on reconnect)
+        self._listener_task = None
+        self._cmd_task = None
+
+        # Sentinel used to unblock the command queue on stop
+        self._STOP_SENTINEL = object()    # 0: no SSL, 1: SSL
 
 
     """
@@ -68,40 +78,61 @@ class WebSocketManager:
     :raises websockets.exceptions.WebSocketException: if the connection fails
     :raises OSError: if the connection fails
     """
-    async def connect(self):
+    async def connect(self, start_tasks: bool = True):
         self._connSecure = 0
-        while self._retries < self._max_retries:
-            try:
-                uri = f"ws://{self._ip}:{self._port}/KseniaWsock"
-                self._logger.info("Connecting to WebSocket...")
-                self._ws = await websockets.connect(uri, subprotocols=['KS_WSOCK'])
-                self._loginId = await ws_login(self._ws, self._pin, self._logger)
-                if self._loginId < 0:
-                    self._logger.error("WebSocket login error, retrying...")
-                    self._retries += 1
-                    await asyncio.sleep(self._retry_delay)
-                    self._retry_delay *= 2 
-                    continue
-                self._logger.info(f"Connected to websocket - ID {self._loginId}")
-                async with self._ws_lock:
-                    self._logger.info("Extracting initial data")
-                    self._readData = await readData(self._ws, self._loginId, self._logger)
-                async with self._ws_lock:
-                    self._logger.info("Realtime connection started")
-                    self._realtimeInitialData = await realtime(self._ws, self._loginId, self._logger)
-                self._logger.debug("Initial data acquired")
-                self._running = True  
-                asyncio.create_task(self.listener())
-                asyncio.create_task(self.process_command_queue())
-                self._retries = 0
-                return
-            except (websockets.exceptions.WebSocketException, OSError) as e:
-                self._logger.error(f"WebSocket connection failed: {e}. Retrying in {self._retry_delay} seconds...")
-                await asyncio.sleep(self._retry_delay)
-                self._retries += 1
-                self._retry_delay *= 2 
+        async with self._reconnect_lock:
+            # Reset backoff for a fresh (re)connect attempt
+            if self._retries == 0:
+                self._retry_delay = self._base_retry_delay
 
-        self._logger.critical("Maximum retries reached. WebSocket connection failed.")
+            while self._retries < self._max_retries:
+                try:
+                    uri = f"ws://{self._ip}:{self._port}/KseniaWsock"
+                    self._logger.info("Connecting to WebSocket...")
+                    self._ws = await websockets.connect(
+                        uri,
+                        subprotocols=['KS_WSOCK'],
+                        ping_interval=None,
+                        open_timeout=10,
+                        close_timeout=5,
+                    )
+                    self._loginId = await ws_login(self._ws, self._pin, self._logger)
+                    if self._loginId < 0:
+                        self._logger.error("WebSocket login error, retrying...")
+                        self._retries += 1
+                        await asyncio.sleep(self._retry_delay)
+                        self._retry_delay *= 2
+                        continue
+
+                    self._logger.info(f"Connected to websocket - ID {self._loginId}")
+                    async with self._ws_lock:
+                        self._logger.info("Extracting initial data")
+                        self._readData = await readData(self._ws, self._loginId, self._logger)
+                    async with self._ws_lock:
+                        self._logger.info("Realtime connection started")
+                        self._realtimeInitialData = await realtime(self._ws, self._loginId, self._logger)
+                    self._logger.info("Initial data acquired")
+
+                    self._running = True
+                    # Start background tasks only once (avoid duplicates on reconnect)
+                    if start_tasks:
+                        if self._listener_task is None or self._listener_task.done():
+                            self._listener_task = asyncio.create_task(self.listener())
+                        if self._cmd_task is None or self._cmd_task.done():
+                            self._cmd_task = asyncio.create_task(self.process_command_queue())
+
+                    self._retries = 0
+                    self._retry_delay = self._base_retry_delay
+                    return
+                except (websockets.exceptions.WebSocketException, OSError) as e:
+                    self._logger.error(
+                        f"WebSocket connection failed: {e}. Retrying in {self._retry_delay} seconds..."
+                    )
+                    await asyncio.sleep(self._retry_delay)
+                    self._retries += 1
+                    self._retry_delay *= 2
+
+            self._logger.critical("Maximum retries reached. WebSocket connection failed.")
 
 
     """
@@ -115,39 +146,86 @@ class WebSocketManager:
     :raises websockets.exceptions.WebSocketException: if the connection fails
     :raises OSError: if the connection fails
     """
-    async def connectSecure(self):
+    async def connectSecure(self, start_tasks: bool = True):
         self._connSecure = 1
-        while self._retries < self._max_retries:
-            try:
-                uri = f"wss://{self._ip}:{self._port}/KseniaWsock"
-                self._logger.info(f"Connecting to WebSocket... {uri}")
-                self._ws = await websockets.connect(uri, ssl=ssl_context, subprotocols=['KS_WSOCK'])
-                self._loginId = await ws_login(self._ws, self._pin, self._logger)
-                if self._loginId < 0:
-                    self._logger.error("WebSocket login error, retrying...")
-                    self._retries += 1
-                    await asyncio.sleep(self._retry_delay)
-                    self._retry_delay *= 2 
-                    continue
-                self._logger.info(f"Connected to websocket - ID {self._loginId}")
-                async with self._ws_lock:
-                    self._logger.info("Extracting initial data")
-                    self._readData = await readData(self._ws, self._loginId, self._logger)
-                async with self._ws_lock:
-                    self._logger.info("Realtime connection started")
-                    self._realtimeInitialData = await realtime(self._ws, self._loginId, self._logger)
-                self._logger.info("Initial data acquired")
-                self._running = True  
-                asyncio.create_task(self.listener())
-                asyncio.create_task(self.process_command_queue())
-                return
-            except (websockets.exceptions.WebSocketException, OSError) as e:
-                self._logger.error(f"WebSocket connection failed: {e}. Retrying in {self._retry_delay} seconds...")
-                await asyncio.sleep(self._retry_delay)
-                self._retries += 1
-                self._retry_delay *= 2 
+        async with self._reconnect_lock:
+            # Reset backoff for a fresh (re)connect attempt
+            if self._retries == 0:
+                self._retry_delay = self._base_retry_delay
 
-        self._logger.critical("Maximum retries reached. WebSocket connection failed.")
+            while self._retries < self._max_retries:
+                try:
+                    uri = f"wss://{self._ip}:{self._port}/KseniaWsock"
+                    self._logger.info(f"Connecting to WebSocket... {uri}")
+                    self._ws = await websockets.connect(
+                        uri,
+                        ssl=ssl_context,
+                        subprotocols=['KS_WSOCK'],
+                        ping_interval=None,
+                        open_timeout=10,
+                        close_timeout=5,
+                    )
+                    self._loginId = await ws_login(self._ws, self._pin, self._logger)
+                    if self._loginId < 0:
+                        self._logger.error("WebSocket login error, retrying...")
+                        self._retries += 1
+                        await asyncio.sleep(self._retry_delay)
+                        self._retry_delay *= 2
+                        continue
+
+                    self._logger.info(f"Connected to websocket - ID {self._loginId}")
+                    async with self._ws_lock:
+                        self._logger.info("Extracting initial data")
+                        self._readData = await readData(self._ws, self._loginId, self._logger)
+                    async with self._ws_lock:
+                        self._logger.info("Realtime connection started")
+                        self._realtimeInitialData = await realtime(self._ws, self._loginId, self._logger)
+                    self._logger.info("Initial data acquired")
+
+                    self._running = True
+                    # Start background tasks only once (avoid duplicates on reconnect)
+                    if start_tasks:
+                        if self._listener_task is None or self._listener_task.done():
+                            self._listener_task = asyncio.create_task(self.listener())
+                        if self._cmd_task is None or self._cmd_task.done():
+                            self._cmd_task = asyncio.create_task(self.process_command_queue())
+
+                    self._retries = 0
+                    self._retry_delay = self._base_retry_delay
+                    return
+                except (websockets.exceptions.WebSocketException, OSError) as e:
+                    self._logger.error(
+                        f"WebSocket connection failed: {e}. Retrying in {self._retry_delay} seconds..."
+                    )
+                    await asyncio.sleep(self._retry_delay)
+                    self._retries += 1
+                    self._retry_delay *= 2
+
+            self._logger.critical("Maximum retries reached. WebSocket connection failed.")
+
+
+    async def _quick_reconnect(self, reason: str = ""):
+        """Fast reconnect used when a command fails due to a closed socket.
+
+        The listener may also detect the close; the reconnect lock prevents
+        concurrent connects.
+        """
+        if reason:
+            self._logger.warning("Quick reconnect requested: %s", reason)
+        # best-effort close
+        try:
+            if self._ws and not getattr(self._ws, 'closed', False):
+                await self._ws.close()
+        except Exception:
+            pass
+        self._ws = None
+        # make next attempt quick
+        self._retries = 0
+        self._retry_delay = 1
+        if self._connSecure == 1:
+            await self.connectSecure(start_tasks=False)
+        else:
+            await self.connect(start_tasks=False)
 
 
     """
@@ -163,53 +241,92 @@ class WebSocketManager:
     """
     async def listener(self):
         self._logger.info("Starting listener")
+        last_rx = time.time()
+        last_resub = time.time()
         while self._running:
+            # If we are not connected yet (or socket was cleared), wait a bit
+            if not self._ws:
+                await asyncio.sleep(1)
+                continue
+
             message = None
+            need_reconnect = False
+
             async with self._ws_lock:
                 try:
                     message = await asyncio.wait_for(self._ws.recv(), timeout=3)
+                    if message:
+                        last_rx = time.time()
                 except asyncio.TimeoutError:
-                    continue
+                    # Watchdog: WS can get "stuck" (NAT/idle) without raising ConnectionClosed.
+                    # If we don't receive anything for a while, send a keepalive ping and/or resubscribe REALTIME.
+                    now = time.time()
+
+                    # Keepalive ping after 60s of silence
+                    if now - last_rx > 60:
+                        try:
+                            pong = await self._ws.ping()
+                            await asyncio.wait_for(pong, timeout=10)
+                            self._logger.debug("WS keepalive ping ok")
+                            # Do not reset last_rx here: we didn't receive data, we just proved the TCP is alive
+                        except Exception as err:
+                            self._logger.warning(f"WS keepalive ping failed ({err}). Forcing reconnect.")
+                            need_reconnect = True
+
+                    # Resubscribe REALTIME after 180s of silence (panel may drop realtime stream silently)
+                    if (not need_reconnect) and (now - last_rx > 180) and (now - last_resub > 180):
+                        try:
+                            self._logger.warning("No realtime data for 180s, resubscribing REALTIME")
+                            await realtime(self._ws, self._loginId, self._logger)
+                            last_resub = now
+                        except Exception as err:
+                            self._logger.warning(f"Realtime resubscribe failed ({err}). Forcing reconnect.")
+                            need_reconnect = True
+
                 except websockets.exceptions.ConnectionClosed:
-                    self._logger.error("WebSocket closed. Trying reconnection")
-                    self._running = False
-                    if self._retries < self._max_retries:
-                        if self._connSecure:
-                            await self.connectSecure()
-                        else:
-                            await self.connect()
-                    else:
-                        self._logger.error("WebSocket closed. Maximum retries reached")
-                    continue
+                    need_reconnect = True
                 except Exception as e:
                     self._logger.error(f"Listener error: {e}")
                     continue
 
+            if need_reconnect:
+                self._logger.error("WebSocket closed. Trying reconnection")
+
+                # Close/clear old socket (best effort)
+                try:
+                    if self._ws:
+                        await self._ws.close()
+                except Exception:
+                    pass
+                self._ws = None
+
+                if not self._running:
+                    break
+
+                # Backoff to avoid reconnect storms
+                delay = self._retry_delay
+                self._logger.debug(f"Reconnecting in {delay}s (retry {self._retries + 1}/{self._max_retries})")
+                await asyncio.sleep(delay)
+                self._retries += 1
+                self._retry_delay = min(self._retry_delay * 2, 600)
+
+                if self._retries < self._max_retries:
+                    if self._connSecure:
+                        await self.connectSecure(start_tasks=False)
+                    else:
+                        await self.connect(start_tasks=False)
+                else:
+                    self._logger.error("WebSocket closed. Maximum retries reached")
+                continue
+
             if message:
                 try:
                     data = json.loads(message)
-                except Exception as e:
-                    self._logger.error(f"Error decoding JSON: {e}")
+                except Exception:
+                    self._logger.debug(f"Non-JSON message received: {message}")
                     continue
                 await self.handle_message(data)
 
-
-    """
-    Handles messages received from the Ksenia Lares WebSocket server.
-
-    This method is called whenever a message is received from the WebSocket
-    server. It checks the type of the message and processes it accordingly.
-    If the message is a result of a command (CMD_USR_RES), it checks if the
-    command is present in the pending commands dictionary, and if so,
-    resolves the associated future with a successful result. If the message
-    is a real-time update (REALTIME), it checks the type of data contained
-    in the message and updates the corresponding real-time data dictionary.
-    It also notifies the registered listeners for the corresponding type of
-    data.
-
-    :param message: the message received from the WebSocket server
-    :type message: dict
-    """
     async def handle_message(self, message):
         payload = message.get("PAYLOAD", {})
         if "HomeAssistant" in payload:
@@ -306,7 +423,20 @@ class WebSocketManager:
     async def process_command_queue(self):
         self._logger.debug("Command queue started")
         while self._running:
-            command_data = await self._command_queue.get()
+            try:
+                command_data = await asyncio.wait_for(self._command_queue.get(), timeout=1)
+            except asyncio.TimeoutError:
+                continue
+
+            if command_data is self._STOP_SENTINEL:
+                break
+
+            # If socket is not connected, postpone the command (avoid losing it)
+            if not self._ws or getattr(self._ws, 'closed', False):
+                await asyncio.sleep(1)
+                await self._command_queue.put(command_data)
+                continue
+
             output_id, command = command_data["output_id"], command_data["command"]
 
             try:
@@ -319,9 +449,9 @@ class WebSocketManager:
                             self._pin,
                             command_data,
                             self._pending_commands,
-                            self._logger
+                            self._logger,
                         )
-                    elif isinstance(command, str):
+                    elif isinstance(command, (str, int)):
                         self._logger.debug(f"Sending command {command} to {output_id}")
                         await setOutput(
                             self._ws,
@@ -329,20 +459,25 @@ class WebSocketManager:
                             self._pin,
                             command_data,
                             self._pending_commands,
-                            self._logger
+                            self._logger,
                         )
-                    elif isinstance(command, int):
-                        self._logger.debug(f"Sending dimmer command {command} to {output_id}")
-                        await setOutput(
-                            self._ws,
-                            self._loginId,
-                            self._pin,
-                            command_data,
-                            self._pending_commands,
-                            self._logger
-                        )
+            except websockets.exceptions.ConnectionClosed as e:
+                # Most important case: socket died mid-command.
+                # Requeue the SAME command_data so the waiting future can still complete.
+                self._logger.error(
+                    "WebSocket closed while processing command %s for %s (%s). Requeueing and reconnecting.",
+                    command,
+                    output_id,
+                    e,
+                )
+                await self._command_queue.put(command_data)
+                await self._quick_reconnect("command_send")
             except Exception as e:
                 self._logger.error(f"Error processing command {command} for {output_id}: {e}")
+                # Avoid leaving callers waiting forever
+                fut = command_data.get("future")
+                if fut is not None and not fut.done():
+                    fut.set_result(False)
 
     
     """
@@ -389,8 +524,25 @@ class WebSocketManager:
     """
     async def stop(self):
         self._running = False
-        if self._ws:
-            await self._ws.close()
+
+        # Unblock command queue
+        try:
+            await self._command_queue.put(self._STOP_SENTINEL)
+        except Exception:
+            pass
+
+        # Close websocket (best effort)
+        try:
+            if self._ws:
+                await self._ws.close()
+        except Exception:
+            pass
+        self._ws = None
+
+        # Cancel background tasks
+        for t in (self._listener_task, self._cmd_task):
+            if t and not t.done():
+                t.cancel()
 
 
     """
