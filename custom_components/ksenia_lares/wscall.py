@@ -17,14 +17,20 @@ from .crc import addCRC
 
 # Protocol configuration
 READ_TYPES = [
+    # Static configuration types
     "OUTPUTS",
     "BUS_HAS",
     "SCENARIOS",
     "POWER_LINES",
     "PARTITIONS",
     "ZONES",
+    # Status types (for polling fallback when REALTIME broadcasts are unreliable)
+    "STATUS_OUTPUTS",
+    "STATUS_BUS_HA_SENSORS",
+    "STATUS_POWER_LINES",
+    "STATUS_PARTITIONS",
+    "STATUS_ZONES",
     "STATUS_SYSTEM",
-    # Include diagnostic data for initial state
     "STATUS_CONNECTION",
     "STATUS_PANEL",
 ]
@@ -158,6 +164,9 @@ async def realtime(websocket, login_id, _LOGGER, ws_lock=None, pending_realtime=
     Registers for real-time updates and returns initial state data
     for all monitored entity types.
 
+    Supports fallback matching: if panel responds with different ID but same
+    CMD+PAYLOAD_TYPE, the response is still matched to this request.
+
     Args:
         websocket: WebSocket connection object
         login_id: Authenticated session ID
@@ -198,9 +207,11 @@ async def realtime(websocket, login_id, _LOGGER, ws_lock=None, pending_realtime=
                 await websocket.send(json_cmd)
 
             # Wait for listener to resolve the future
-            _LOGGER.debug(f"[{datetime.now()}] Waiting for REALTIME {msg_id} response via listener")
+            _LOGGER.debug(
+                f"[{datetime.now()}] Waiting for REALTIME {msg_id} response via listener (supports CMD+PAYLOAD_TYPE fallback matching)"
+            )
             try:
-                response = await asyncio.wait_for(future, timeout=15)
+                response = await asyncio.wait_for(future, timeout=30)
                 _LOGGER.debug(
                     f"[{datetime.now()}] REALTIME {msg_id} response received via listener"
                 )
@@ -209,7 +220,7 @@ async def realtime(websocket, login_id, _LOGGER, ws_lock=None, pending_realtime=
                 # Clean up pending request to prevent "invalid state" if response arrives late
                 pending_realtime.pop(msg_id, None)
                 raise TimeoutError(
-                    "Real-time registration timeout: no response from device within 15s"
+                    "Real-time registration timeout: no response from device within 30s"
                 ) from None
 
         # Listener pattern is required - pending_realtime must be provided
@@ -218,8 +229,8 @@ async def realtime(websocket, login_id, _LOGGER, ws_lock=None, pending_realtime=
                 "realtime() requires pending_realtime dict for listener pattern"
             ) from None
     except TimeoutError:
-        _LOGGER.error(
-            f"[{datetime.now()}] Real-time registration timeout: no response from device within 15s"
+        _LOGGER.warning(
+            f"[{datetime.now()}] Real-time registration timeout: no response from device within 30s"
         )
         raise
     except Exception as e:
@@ -287,14 +298,14 @@ async def readData(
             # Wait for listener to resolve the future
             _LOGGER.debug(f"[{datetime.now()}] Waiting for READ {read_id} response via listener")
             try:
-                response = await asyncio.wait_for(future, timeout=15)
+                response = await asyncio.wait_for(future, timeout=30)
                 _LOGGER.debug(f"[{datetime.now()}] READ {read_id} response received via listener")
                 return response.get("PAYLOAD", {})
             except TimeoutError:
                 # Clean up pending request to prevent "invalid state" if response arrives late
                 pending_reads.pop(read_id, None)
                 raise TimeoutError(
-                    "Read data timeout: no response from device within 15s"
+                    "Read data timeout: no response from device within 30s"
                 ) from None
 
         # Listener pattern is required - pending_reads must be provided
@@ -303,7 +314,7 @@ async def readData(
                 "readData() requires pending_reads dict for listener pattern"
             ) from None
     except TimeoutError:
-        _LOGGER.error(f"[{datetime.now()}] Read data timeout: no response from device within 15s")
+        _LOGGER.error(f"[{datetime.now()}] Read data timeout: no response from device within 30s")
         raise
     except Exception as e:
         _LOGGER.error(f"Read data failed: {e}")

@@ -1,6 +1,6 @@
 """Constants for Ksenia Lares integration."""
 
-from enum import Enum
+from enum import StrEnum
 
 # Domain
 DOMAIN = "ksenia_lares"
@@ -47,7 +47,7 @@ HA_TO_KSENIA_ALARM_STATE = {
 }
 
 
-class ArmState(str, Enum):
+class ArmState(StrEnum):
     """ARM.S field states from device."""
 
     DISARMED = "D"
@@ -59,7 +59,7 @@ class ArmState(str, Enum):
     PARTIALLY_ARMED_ENTRY_DELAY = "P_IN"
 
 
-class AlarmStatus(str, Enum):
+class AlarmStatus(StrEnum):
     """AST field states from device (partition alarm status)."""
 
     OK = "OK"
@@ -67,7 +67,7 @@ class AlarmStatus(str, Enum):
     ALARM_MEMORY = "AM"
 
 
-class PartitionArmStatus(str, Enum):
+class PartitionArmStatus(StrEnum):
     """ARM field states from partition (can include alarm states)."""
 
     DISARMED = "D"
@@ -79,7 +79,7 @@ class PartitionArmStatus(str, Enum):
     ALARM_MEMORY = "AM"
 
 
-class ZoneBypassState(str, Enum):
+class ZoneBypassState(StrEnum):
     """Zone bypass states from BYP field."""
 
     NO = "NO"
@@ -88,7 +88,7 @@ class ZoneBypassState(str, Enum):
     MANUAL_TEST = "MAN_T"
 
 
-class InfoFlag(str, Enum):
+class InfoFlag(StrEnum):
     """INFO field flags indicating system states."""
 
     BYPASS_ZONE = "BYP_ZONE"

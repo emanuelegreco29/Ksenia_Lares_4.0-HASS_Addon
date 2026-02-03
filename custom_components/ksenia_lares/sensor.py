@@ -337,6 +337,7 @@ class KseniaSensorEntity(SensorEntity):
             or sensor_data.get("CAT", "").upper() == "EMOV"
         ):
             attributes = {}
+            mapped_state = "unknown"  # Initialize with default value
             if "DES" in sensor_data:
                 attributes["Description"] = sensor_data["DES"]
             if "PRT" in sensor_data:
@@ -386,6 +387,7 @@ class KseniaSensorEntity(SensorEntity):
 
         elif sensor_data.get("CAT", "").upper() == "PMC":
             attributes = {}
+            mapped_state = "unknown"  # Initialize with default value
             if "DES" in sensor_data:
                 attributes["Description"] = sensor_data["DES"]
             if "PRT" in sensor_data:
@@ -590,12 +592,12 @@ class KseniaSensorEntity(SensorEntity):
                 "TM": "Tampering memory",
             }
             raw_arm = sensor_data.get("ARM", "")
-            arm_desc = ARM_MAP.get(raw_arm, raw_arm)
+            arm_desc = ARM_MAP.get(raw_arm, raw_arm) if raw_arm else "Unknown"
             if raw_arm in ("IT", "OT"):
                 timer = sensor_data.get("T", 0)
                 state = f"{arm_desc} ({timer}s)"
             else:
-                state = arm_desc
+                state = arm_desc if arm_desc else "Unknown"
             self._state = state
 
             attrs = {
@@ -810,12 +812,12 @@ class KseniaSensorEntity(SensorEntity):
                 }
 
                 raw_arm = data.get("ARM", "")
-                arm_desc = ARM_MAP.get(raw_arm, raw_arm)
+                arm_desc = ARM_MAP.get(raw_arm, raw_arm) if raw_arm else "Unknown"
                 if raw_arm in ("IT", "OT"):
                     timer = data.get("T", 0)
                     self._state = f"{arm_desc} ({timer}s)"
                 else:
-                    self._state = arm_desc
+                    self._state = arm_desc if arm_desc else "Unknown"
 
                 attrs = {
                     "Partition": data.get("ID"),
@@ -1192,53 +1194,70 @@ class KseniaSensorEntity(SensorEntity):
                 _LOGGER.debug(f"Error polling system status: {e}")
 
         elif self._sensor_type == "partitions":
-            sensors = await self.ws_manager.getSensor("STATUS_PARTITIONS")
-            for sensor in sensors:
-                if str(sensor.get("ID")) != str(self._id):
-                    continue
+            try:
+                sensors = await self.ws_manager.getSensor("STATUS_PARTITIONS")
+                if not sensors:
+                    _LOGGER.warning(
+                        f"Partition sensor poll: STATUS_PARTITIONS returned empty list for partition {self._id}"
+                    )
+                    return
 
-                # mappa gli stati esattamente come in __init__
-                ARM_MAP = {
-                    "D": "Disarmed",
-                    "DA": "Delayed Arming",
-                    "IA": "Immediate Arming",
-                    "IT": "Input time",
-                    "OT": "Output time",
-                }
-                AST_MAP = {
-                    "OK": "No ongoing alarm",
-                    "AL": "Ongoing alarm",
-                    "AM": "Alarm memory",
-                }
-                TST_MAP = {
-                    "OK": "No ongoing tampering",
-                    "TAM": "Ongoing tampering",
-                    "TM": "Tampering memory",
-                }
+                for sensor in sensors:
+                    if str(sensor.get("ID")) != str(self._id):
+                        continue
 
-                raw_arm = sensor.get("ARM", "")
-                arm_desc = ARM_MAP.get(raw_arm, raw_arm)
-                if raw_arm in ("IT", "OT"):
-                    timer = sensor.get("T", 0)
-                    self._state = f"{arm_desc} ({timer}s)"
+                    # mappa gli stati esattamente come in __init__
+                    ARM_MAP = {
+                        "D": "Disarmed",
+                        "DA": "Delayed Arming",
+                        "IA": "Immediate Arming",
+                        "IT": "Input time",
+                        "OT": "Output time",
+                    }
+                    AST_MAP = {
+                        "OK": "No ongoing alarm",
+                        "AL": "Ongoing alarm",
+                        "AM": "Alarm memory",
+                    }
+                    TST_MAP = {
+                        "OK": "No ongoing tampering",
+                        "TAM": "Ongoing tampering",
+                        "TM": "Tampering memory",
+                    }
+
+                    raw_arm = sensor.get("ARM", "")
+                    arm_desc = ARM_MAP.get(raw_arm, raw_arm) if raw_arm else "Unknown"
+                    if raw_arm in ("IT", "OT"):
+                        timer = sensor.get("T", 0)
+                        self._state = f"{arm_desc} ({timer}s)"
+                    else:
+                        self._state = arm_desc if arm_desc else "Unknown"
+
+                    self._attributes = {
+                        "Partition": sensor.get("ID"),
+                        "Description": sensor.get("DES"),
+                        "Arming Mode": raw_arm,
+                        "Arming Description": arm_desc,
+                        "Alarm Mode": sensor.get("AST"),
+                        "Alarm Description": AST_MAP.get(sensor.get("AST", ""), ""),
+                        "Tamper Mode": sensor.get("TST"),
+                        "Tamper Description": TST_MAP.get(sensor.get("TST", ""), ""),
+                        **({"entry_delay": sensor["TIN"]} if sensor.get("TIN") is not None else {}),
+                        **(
+                            {"exit_delay": sensor["TOUT"]} if sensor.get("TOUT") is not None else {}
+                        ),
+                    }
+                    # Merge update into raw_data to preserve all fields
+                    self._raw_data.update(sensor)
+                    _LOGGER.debug(f"Partition sensor polled: ID={self._id}, state={self._state}")
+                    break
                 else:
-                    self._state = arm_desc
-
-                self._attributes = {
-                    "Partition": sensor.get("ID"),
-                    "Description": sensor.get("DES"),
-                    "Arming Mode": raw_arm,
-                    "Arming Description": arm_desc,
-                    "Alarm Mode": sensor.get("AST"),
-                    "Alarm Description": AST_MAP.get(sensor.get("AST", ""), ""),
-                    "Tamper Mode": sensor.get("TST"),
-                    "Tamper Description": TST_MAP.get(sensor.get("TST", ""), ""),
-                    **({"entry_delay": sensor["TIN"]} if sensor.get("TIN") is not None else {}),
-                    **({"exit_delay": sensor["TOUT"]} if sensor.get("TOUT") is not None else {}),
-                }
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(sensor)
-                break
+                    # No matching partition found in the response
+                    _LOGGER.warning(
+                        f"Partition sensor poll: ID {self._id} not found in STATUS_PARTITIONS response"
+                    )
+            except Exception as e:
+                _LOGGER.warning(f"Error polling partition sensor {self._id}: {e}")
 
         elif self._sensor_type == "powerlines":
             sensors = await self.ws_manager.getSensor("POWER_LINES")

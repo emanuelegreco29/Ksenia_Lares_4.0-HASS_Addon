@@ -286,7 +286,23 @@ Main Connection:
 
 ### READ Command
 
-Retrieves static configuration data from the panel. This command fetches non-real-time configuration information that rarely changes, such as device definitions, descriptions, and timeouts.
+Retrieves configuration and status data from the panel. This command can fetch both:
+- **Static configuration data**: Device definitions, descriptions, timeouts, and other configuration that rarely changes
+- **Real-time status data**: Current device states, partition status, system status - useful as a polling fallback when REALTIME broadcasts are unreliable
+
+**Difference between READ and REALTIME for status data:**
+- **READ**: One-time snapshot request - you ask, panel responds once with current state
+- **REALTIME**: Continuous broadcast stream - panel automatically sends updates whenever state changes
+
+**When to use READ for status data:**
+- Initial state synchronization at startup
+- Periodic polling as fallback (e.g., every 60 seconds) for panels with unreliable REALTIME broadcasts
+- On-demand state verification
+
+**When to use REALTIME for status data:**
+- Continuous monitoring for instant updates
+- Preferred method for panels with reliable firmware
+- Lower latency than polling
 
 **Request:**
 ```json
@@ -312,13 +328,14 @@ Retrieves static configuration data from the panel. This command fetches non-rea
 - `TYPES`: Array of data types to retrieve (can be single-item array for specific type or multi-item for multiple types)
 
 **Available TYPES:**
+
+**Static Configuration Types:**
 - `"OUTPUTS"`: Output device definitions and initial states
 - `"BUS_HAS"`: Bus HA sensor definitions
 - `"SCENARIOS"`: Scenario definitions
 - `"POWER_LINES"`: Power line definitions
-- `"PARTITIONS"`: **Static** security partition configuration (names, delays, timeouts) - use this for configuration data only. For real-time partition state, use `"STATUS_PARTITIONS"` via REALTIME command instead.
+- `"PARTITIONS"`: Security partition configuration (names, delays, timeouts)
 - `"ZONES"`: Security zone definitions with category types and partition assignment (see zone configuration below)
-- `"STATUS_SYSTEM"`: System status information (note: READ returns static system config, use REALTIME for live system state)
 - `"FAULTS"`: Fault status definitions
 - `"TAMPERS"`: Tamper status definitions
 - `"SERVICES"`: Service status definitions
@@ -328,6 +345,26 @@ Retrieves static configuration data from the panel. This command fetches non-rea
 - `"ROOMS"`: Room configurations
 - `"MAPS"`: Map/floor plan configurations
 - `"COUNTERS"`: Counter/meter configurations
+- `"CFG_ACCOUNTS"`: User account configurations
+- `"BUS_UIS"`: Bus UI device configurations
+- `"PROFILES"`: User profile configurations
+
+**Real-Time Status Types (can be requested via READ for polling or via REALTIME for broadcasts):**
+- `"STATUS_OUTPUTS"`: Current output device states (ON/OFF/dimmer values)
+- `"STATUS_BUS_HA_SENSORS"`: Current bus HA sensor readings
+- `"STATUS_POWER_LINES"`: Current power line status
+- `"STATUS_PARTITIONS"`: Current partition state (arming mode, alarm status, timers)
+- `"STATUS_ZONES"`: Current zone alarm status
+- `"STATUS_SYSTEM"`: Current system status (overall arming state, events)
+- `"STATUS_PANEL"`: Panel voltage and current monitoring
+- `"STATUS_CONNECTION"`: Network and communication connection status
+- `"STATUS_UPDATE"`: Firmware update status and available versions
+- `"STATUS_FAULTS"`: Current system fault status
+- `"STATUS_TAMPERS"`: Current tamper detection status
+- `"STATUS_SERVICES"`: Current service status
+- `"STATUS_TEMPERATURES"`: Current temperature sensor readings
+- `"STATUS_HUMIDITY"`: Current humidity sensor readings
+- `"STATUS_COUNTERS"`: Current counter/meter readings
 - `"CFG_ACCOUNTS"`: User account configurations
 - `"BUS_UIS"`: Bus UI device configurations
 - `"PROFILES"`: User profile configurations

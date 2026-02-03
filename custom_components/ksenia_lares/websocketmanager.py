@@ -1086,7 +1086,7 @@ class WebSocketManager:
         # Only use fallback if exactly one candidate exists (avoid ambiguity)
         if len(candidates) == 1:
             msg_id, req_data = candidates[0]
-            self._logger.info(
+            self._logger.debug(
                 f"Fallback match: Response {response_cmd} ID={message.get('ID')} "
                 f"matched to pending request ID={msg_id} via CMD+PAYLOAD_TYPE"
             )

@@ -1,9 +1,9 @@
 # Linting and Code Quality
-black
-isort
-ruff
-bandit
-radon
+black==26.1.0
+isort==7.0.0
+ruff==0.15.0
+bandit==1.9.3
+radon==6.0.1
 
 # Testing
 pytest>=7.0.0
