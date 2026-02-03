@@ -1,0 +1,38 @@
+---
+repos:
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        language_version: python3.12
+        exclude: ^(tests/|tool_simulator_mockup/)
+
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: [--profile=black, --line-length=100]
+        exclude: ^(tests/|tool_simulator_mockup/)
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.2.0
+    hooks:
+      - id: ruff
+        args: [--config=pyproject.toml]
+        exclude: ^(tests/|tool_simulator_mockup/)
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: [--configfile=pyproject.toml, -r, custom_components/ksenia_lares/]
+        exclude: ^(tests/|tool_simulator_mockup/)
+        additional_dependencies: [pbr]
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: ["--config-data={extends: default, rules: {line-length: {max: 120}}}"]
+        types: [yaml]
+        exclude: ^(tests/|\.github/workflows/)
