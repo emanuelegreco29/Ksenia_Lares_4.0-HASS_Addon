@@ -1,0 +1,22 @@
+# Linting and Code Quality
+black
+isort
+ruff
+bandit
+radon
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# Simulator
+fastapi==0.109.1
+uvicorn[standard]==0.27.0
+
+# Dependencies
+voluptuous>=0.13.0
+websockets>=11.0.0
+pyyaml>=6.0
+homeassistant>=2024.1.0
