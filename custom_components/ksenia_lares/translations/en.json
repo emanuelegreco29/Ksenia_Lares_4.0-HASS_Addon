@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ksenia Lares Configuration",
+        "description": "Enter your Ksenia Lares device connection details"
+      },
+      "reconfigure": {
+        "title": "Reconfigure Ksenia Lares"
+      }
+    },
+    "error": {
+      "invalid_host": "Invalid IP address format",
+      "cannot_connect": "Failed to connect to device. Check host, port, and SSL settings",
+      "invalid_pin": "Invalid PIN code"
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "reconfigure_successful": "Ksenia Lares configuration updated successfully"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ksenia Lares Options"
+      }
+    }
+  },
+  "entity": {
+    "alarm_control_panel": {
+      "alarm_control_panel": {
+        "name": "Alarm Control Panel"
+      }
+    }
+  }
+}

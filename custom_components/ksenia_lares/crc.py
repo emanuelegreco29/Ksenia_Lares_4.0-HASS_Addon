@@ -1,67 +1,107 @@
+"""CRC calculation for Ksenia Lares WebSocket protocol.
+
+Credit to @gvisconti1983 for these functions.
 """
-Given a string, returns an array of bytes representing the string in UTF-8 encoding.
-Each byte is represented as an integer, with the high bits set to indicate the type of the byte.
-The first byte in a sequence is always a 0xxxxxxx byte, the second is always a 10xxxxxx byte, and the third is always a 10xxxxxx byte.
-When the function encounters a byte that is not a UTF-8 byte, it will read the next byte as well and return a 4-byte sequence.
-The function will throw an exception if the string contains a non-UTF-8 byte.
-
-Huge thanks to @gvisconti1983 for these functions!
-"""
-def u(e):
-	t = []
-	for n in range(0, len(e)):
-		r = ord(e[n])
-		if (r < 128):
-			t.append(r)
-		else:
-			if (r < 2048):
-				t.append(192 | r >> 6, 128 | 63 & r)
-			else:
-				if (r < 55296 or r >= 57344):
-					t.append(224 | r >> 12, 128 | r >> 6 & 63, 128 | 63 & r)
-				else:
-					n = n + 1; 
-					r = 65536 + ((1023 & r) << 10 | 1023 & ord(e[n]))
-					t.append(240 | r >> 18, 128 | r >> 12 & 63, 128 | r >> 6 & 63, 128 | 63 & r)
-		n = n+1
-	return t
 
 
-"""
-Calculates the 16-bit CRC for a given string of characters in the format used by the Lares 4 device.
+def _utf8_bytes(string):
+    """Convert string to UTF-8 byte array.
 
-Args:
-	e (str): Input string
+    Handles multi-byte Unicode characters and surrogate pairs.
 
-Returns:
-	str: CRC value as a hexadecimal number in the format "0xXXXX"
-"""
-def CRC(e):
-	i = u(e)
-	l = e.rfind('"CRC_16"') + len('"CRC_16"') + (len(i) - len(e))
-	r = 65535
-	s = 0
-	while s < l:
-		t = 128
-		o = i[s]
-		while t:	
-			if(32768& r):
-				n = 1
-			else:
-				n = 0
-			r <<= 1
-			r &= 65535
-			if(o & t):
-				r = r + 1
-			if(n):
-				r = r^4129
-			t >>= 1
-		s=s+1
-	return ("0x"+format(r,'04x'))
+    Args:
+        string: Input string to convert
+
+    Returns:
+        List of integers representing UTF-8 bytes
+    """
+    bytes_array = []
+    index = 0
+
+    while index < len(string):
+        char_code = ord(string[index])
+
+        if char_code < 128:
+            # Single-byte character (ASCII)
+            bytes_array.append(char_code)
+        elif char_code < 2048:
+            # Two-byte character
+            bytes_array.append(192 | char_code >> 6)
+            bytes_array.append(128 | 63 & char_code)
+        elif char_code < 55296 or char_code >= 57344:
+            # Three-byte character
+            bytes_array.append(224 | char_code >> 12)
+            bytes_array.append(128 | char_code >> 6 & 63)
+            bytes_array.append(128 | 63 & char_code)
+        else:
+            # Four-byte character (surrogate pair)
+            index += 1
+            next_char = ord(string[index])
+            char_code = 65536 + ((1023 & char_code) << 10 | 1023 & next_char)
+            bytes_array.append(240 | char_code >> 18)
+            bytes_array.append(128 | char_code >> 12 & 63)
+            bytes_array.append(128 | char_code >> 6 & 63)
+            bytes_array.append(128 | 63 & char_code)
+
+        index += 1
+
+    return bytes_array
+
+
+def CRC(message):
+    """Calculate 16-bit CRC for Ksenia Lares protocol.
+
+    Computes CRC-16 checksum up to the CRC_16 field position
+    using the polynomial 0x1021 (x^16 + x^12 + x^5 + 1).
+
+    Args:
+        message: JSON message string containing "CRC_16" field
+
+    Returns:
+        CRC value as hexadecimal string (e.g., "0x1A2B")
+    """
+    # Convert to UTF-8 bytes
+    byte_array = _utf8_bytes(message)
+
+    # Find CRC field position (calculate CRC up to this point)
+    crc_position = message.rfind('"CRC_16"') + len('"CRC_16"')
+    crc_position += len(byte_array) - len(message)
+
+    # CRC-16 calculation
+    crc_value = 0xFFFF  # Initial value
+
+    for byte_index in range(crc_position):
+        bit_mask = 0x80
+        byte = byte_array[byte_index]
+
+        while bit_mask:
+            # Check if MSB is set
+            high_bit = bool(crc_value & 0x8000)
+
+            # Shift CRC left and add byte bit
+            crc_value = (crc_value << 1) & 0xFFFF
+            if byte & bit_mask:
+                crc_value += 1
+
+            # XOR with polynomial if high bit was set
+            if high_bit:
+                crc_value ^= 0x1021
+
+            bit_mask >>= 1
+
+    return f"0x{crc_value:04x}"
+
+
+# Legacy function name for backward compatibility
+u = _utf8_bytes
 
 
 """
 Adds a CRC_16 checksum to a json string
 """
+
+
 def addCRC(json_string):
-	return json_string[:json_string.rfind('"CRC_16"')+len('"CRC_16":"')] + CRC(json_string) + '"}'
+    return (
+        json_string[: json_string.rfind('"CRC_16"') + len('"CRC_16":"')] + CRC(json_string) + '"}'
+    )

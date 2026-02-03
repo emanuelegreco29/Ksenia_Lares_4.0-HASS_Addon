@@ -1,38 +1,46 @@
+"""Cover entities for Ksenia Lares integration."""
+
 import logging
 import time
+
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
+
 from .const import DOMAIN
+from .websocketmanager import ConnectionState
 
 _LOGGER = logging.getLogger(__name__)
 
-"""
-Configures Ksenia roller blinds in Home Assistant.
 
-Retrieves a list of roller blinds (rolls) from the WebSocket manager, creates a 
-`KseniaRollEntity` for each roller blind, and adds them to the system.
-"""
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    ws_manager = hass.data[DOMAIN]["ws_manager"]
+    """Set up Ksenia Lares cover entities.
 
-    # Retrieve the list of roller blinds using the new getRolls function.
-    rolls = await ws_manager.getRolls()
-    _LOGGER.debug("Received rolls data: %s", rolls)
-    entities = []
-    for roll in rolls:
-        name = roll.get("DES") or roll.get("LBL") or roll.get("NM") or f"Roll {roll.get('ID')}"
-        entities.append(KseniaRollEntity(ws_manager, roll.get("ID"), name, roll))
-    async_add_entities(entities, update_before_add=True)
+    Creates cover (roller blind/shutter) entities with:
+    - Open/close control
+    - Stop command
+    - Position setting (0-100%)
+    """
+    try:
+        ws_manager = hass.data[DOMAIN]["ws_manager"]
+        device_info = hass.data[DOMAIN].get("device_info")
+
+        rolls = await ws_manager.getRolls()
+        _LOGGER.debug("Found %d roller blinds", len(rolls))
+
+        entities = []
+        for roll in rolls:
+            roll_id = roll.get("ID")
+            name = roll.get("DES") or roll.get("LBL") or roll.get("NM") or f"Roller Blind {roll_id}"
+            entities.append(KseniaRollEntity(ws_manager, roll_id, name, roll, device_info))
+
+        async_add_entities(entities, update_before_add=True)
+    except Exception as e:
+        _LOGGER.error("Error setting up covers: %s", e, exc_info=True)
+
 
 class KseniaRollEntity(CoverEntity):
-    """
-    Initializes a KseniaRollEntity.
+    """Cover entity for Ksenia roller blinds/shutters."""
 
-    :param ws_manager: WebSocketManager instance to command Ksenia
-    :param roll_id: ID of the roller blind
-    :param name: Name of the roller blind
-    :param roll_data: Dictionary with the roller blind data
-    """
-    def __init__(self, ws_manager, roll_id, name, roll_data):
+    def __init__(self, ws_manager, roll_id, name, roll_data, device_info=None):
         self.ws_manager = ws_manager
         self._roll_id = roll_id
         self._name = name
@@ -40,11 +48,19 @@ class KseniaRollEntity(CoverEntity):
         self._position = roll_data.get("POS", 0)
         self._available = True
         self._pending_command = None
+        self._device_info = device_info
+        # Store complete raw data for debugging and transparency
+        self._raw_data = dict(roll_data)
 
     @property
     def unique_id(self):
         """Returns a unique ID for the roller blind."""
         return f"{self.ws_manager._ip}_{self._roll_id}"
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
 
     @property
     def name(self):
@@ -65,36 +81,63 @@ class KseniaRollEntity(CoverEntity):
     def supported_features(self):
         """Returns the supported features of the roller blind."""
         return (
-            CoverEntityFeature.OPEN |
-            CoverEntityFeature.CLOSE |
-            CoverEntityFeature.STOP |
-            CoverEntityFeature.SET_POSITION
+            CoverEntityFeature.OPEN
+            | CoverEntityFeature.CLOSE
+            | CoverEntityFeature.STOP
+            | CoverEntityFeature.SET_POSITION
         )
 
+    @property
+    def extra_state_attributes(self):
+        """Returns the extra state attributes of the cover."""
+        return {"raw_data": self._raw_data}
 
     """Opens the roller blind."""
+
     async def async_open_cover(self, **kwargs):
+        """Open the roller blind."""
+        state = self.ws_manager.get_connection_state()
+        if state != ConnectionState.CONNECTED:
+            _LOGGER.error("WebSocket not connected, cannot open cover %s", self._roll_id)
+            self._available = False
+            return
+
         await self.ws_manager.raiseCover(self._roll_id)
         self._pending_command = ("open", time.time())
         self.async_write_ha_state()
 
-
-    """Closes the roller blind."""
     async def async_close_cover(self, **kwargs):
+        """Close the roller blind."""
+        state = self.ws_manager.get_connection_state()
+        if state != ConnectionState.CONNECTED:
+            _LOGGER.error("WebSocket not connected, cannot close cover %s", self._roll_id)
+            self._available = False
+            return
+
         await self.ws_manager.lowerCover(self._roll_id)
         self._pending_command = ("close", time.time())
         self.async_write_ha_state()
 
-
-    """Stops the roller blind."""
     async def async_stop_cover(self, **kwargs):
+        """Stop the roller blind."""
+        state = self.ws_manager.get_connection_state()
+        if state != ConnectionState.CONNECTED:
+            _LOGGER.error("WebSocket not connected, cannot stop cover %s", self._roll_id)
+            self._available = False
+            return
+
         await self.ws_manager.stopCover(self._roll_id)
         self._pending_command = ("stop", time.time())
         self.async_write_ha_state()
 
-
-    """Sets the position of the roller blind."""
     async def async_set_cover_position(self, **kwargs):
+        """Set the position of the roller blind."""
+        state = self.ws_manager.get_connection_state()
+        if state != ConnectionState.CONNECTED:
+            _LOGGER.error("WebSocket not connected, cannot set cover position %s", self._roll_id)
+            self._available = False
+            return
+
         position = kwargs.get("position")
         if position is None:
             return
@@ -102,13 +145,13 @@ class KseniaRollEntity(CoverEntity):
         self._pending_command = ("set", time.time())
         self.async_write_ha_state()
 
-
     """
     Updates the state of the roller blind by retrieving the full list of
     roller blinds and finding the one with the matching ID.
 
     If a recent command is pending (< 2 seconds), it keeps the local state.
     """
+
     async def async_update(self):
         rolls = await self.ws_manager.getRolls()
         _LOGGER.debug("async_update: full rolls data: %s", rolls)
@@ -125,4 +168,11 @@ class KseniaRollEntity(CoverEntity):
                     else:
                         self._pending_command = None
                 self._position = new_pos
+                # Merge update into raw_data to preserve all fields
+                self._raw_data.update(roll)
                 break
+
+    @property
+    def should_poll(self) -> bool:
+        """Covers use periodic polling for multi-client reconciliation."""
+        return True

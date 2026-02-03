@@ -1,51 +1,90 @@
+"""Button entities for Ksenia Lares integration."""
+
 import logging
+
 from homeassistant.components.button import ButtonEntity
+
 from .const import DOMAIN
+from .websocketmanager import ConnectionState
 
 _LOGGER = logging.getLogger(__name__)
 
-"""
-Configures Ksenia scenarios in Home Assistant.
+# Clear command types
+CLEAR_COMMUNICATIONS = "communications"
+CLEAR_ALARMS = "cycles_or_memories"
+CLEAR_FAULTS = "faults_memory"
 
-Retrieves a list of scenarios from the WebSocket manager, creates a `KseniaScenarioButtonEntity` for each scenario,
-and adds them to the system.
 
-Args:
-    hass: The Home Assistant instance.
-    config_entry: The configuration entry for the Ksenia scenarios.
-    async_add_entities: A callback to add entities to the system.
-"""
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    ws_manager = hass.data[DOMAIN]["ws_manager"]
+    """Set up Ksenia Lares button entities.
 
+    Creates buttons for:
+    - Scenarios (automation triggers)
+    - Clear commands (communications, alarms, faults)
+    """
+    try:
+        ws_manager = hass.data[DOMAIN]["ws_manager"]
+        device_info = hass.data[DOMAIN].get("device_info")
+        entities = []
+
+        # Add scenario execution buttons
+        await _add_scenario_buttons(ws_manager, device_info, entities)
+
+        # Add system clear command buttons
+        _add_clear_buttons(ws_manager, device_info, entities)
+
+        async_add_entities(entities, update_before_add=True)
+    except Exception as e:
+        _LOGGER.error("Error setting up buttons: %s", e, exc_info=True)
+
+
+async def _add_scenario_buttons(ws_manager, device_info, entities):
+    """Add scenario execution buttons."""
     scenarios = await ws_manager.getScenarios()
-    _LOGGER.debug("Received scenarios data: %s", scenarios)
-    entities = []
+    _LOGGER.debug("Found %d scenarios", len(scenarios))
+
     for scenario in scenarios:
-        name = scenario.get("DES") or scenario.get("LBL") or scenario.get("NM") or f"Button {scenario.get('ID')}"
-        entities.append(KseniaScenarioButtonEntity(ws_manager, scenario.get("ID"), name))
-    async_add_entities(entities, update_before_add=True)
+        scenario_id = scenario.get("ID")
+        name = (
+            scenario.get("DES")
+            or scenario.get("LBL")
+            or scenario.get("NM")
+            or f"Scenario {scenario_id}"
+        )
+        entities.append(KseniaScenarioButtonEntity(ws_manager, scenario_id, name, device_info))
+
+
+def _add_clear_buttons(ws_manager, device_info, entities):
+    """Add system clear command buttons."""
+    clear_buttons = [
+        (CLEAR_COMMUNICATIONS, "Clear Communications"),
+        (CLEAR_ALARMS, "Clear Alarms"),
+        (CLEAR_FAULTS, "Clear Faults Memory"),
+    ]
+
+    for clear_type, name in clear_buttons:
+        entities.append(KseniaClearButtonEntity(ws_manager, clear_type, name, device_info))
+
 
 class KseniaScenarioButtonEntity(ButtonEntity):
-    """
-    Initialize the scenario button entity.
+    """Button entity for executing Ksenia scenarios."""
 
-    Args:
-        ws_manager: The WebSocket manager instance.
-        scenario_id: The ID of the scenario.
-        name: The name of the scenario.
-        scenario_data: Additional data for the scenario.
-    """
-    def __init__(self, ws_manager, scenario_id, name):
+    def __init__(self, ws_manager, scenario_id, name, device_info=None):
         self.ws_manager = ws_manager
         self._scenario_id = scenario_id
         self._name = name
         self._available = True
+        self._device_info = device_info
 
     @property
     def unique_id(self):
         """Returns a unique ID for the button."""
         return f"{self.ws_manager._ip}_{self._scenario_id}"
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
 
     @property
     def name(self):
@@ -54,4 +93,51 @@ class KseniaScenarioButtonEntity(ButtonEntity):
 
     async def async_press(self):
         """Execute the scenario when the button is pressed."""
+        state = self.ws_manager.get_connection_state()
+        if state != ConnectionState.CONNECTED:
+            _LOGGER.error("WebSocket not connected, cannot execute scenario %s", self._scenario_id)
+            return
+
         await self.ws_manager.executeScenario(self._scenario_id)
+
+
+class KseniaClearButtonEntity(ButtonEntity):
+    """Button entity for system clear commands."""
+
+    def __init__(self, ws_manager, clear_type, name, device_info=None):
+        self.ws_manager = ws_manager
+        self._clear_type = clear_type
+        self._name = name
+        self._available = True
+        self._device_info = device_info
+
+    @property
+    def unique_id(self):
+        """Returns a unique ID for the button."""
+        return f"{self.ws_manager._ip}_clear_{self._clear_type}"
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
+    def name(self):
+        """Returns the name of the button."""
+        return self._name
+
+    async def async_press(self):
+        """Execute the clear command when the button is pressed."""
+        state = self.ws_manager.get_connection_state()
+        if state != ConnectionState.CONNECTED:
+            _LOGGER.error(
+                "WebSocket not connected, cannot execute clear command %s", self._clear_type
+            )
+            return
+
+        if self._clear_type == "communications":
+            await self.ws_manager.clearCommunications()
+        elif self._clear_type == "cycles_or_memories":
+            await self.ws_manager.clearCyclesOrMemories()
+        elif self._clear_type == "faults_memory":
+            await self.ws_manager.clearFaultsMemory()

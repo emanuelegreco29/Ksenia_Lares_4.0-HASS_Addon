@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ksenia Lares Konfiguration",
+        "description": "Ange anslutningsuppgifter för din Ksenia Lares-enhet"
+      },
+      "reconfigure": {
+        "title": "Omkonfigurera Ksenia Lares"
+      }
+    },
+    "error": {
+      "invalid_host": "Ogiltigt IP-adressformat",
+      "cannot_connect": "Det gick inte att ansluta till enheten. Kontrollera värd, port och SSL-inställningar",
+      "invalid_pin": "Ogiltigt PIN-kod"
+    },
+    "abort": {
+      "already_configured": "Enheten är redan konfigurerad",
+      "reconfigure_successful": "Ksenia Lares-konfigurationen uppdaterades"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ksenia Lares Alternativ"
+      }
+    }
+  },
+  "entity": {
+    "alarm_control_panel": {
+      "alarm_control_panel": {
+        "name": "Alarmkontrollpanel"
+      }
+    },
+    "sensor": {
+      "fault_memory": {
+        "name": "Felminne"
+      }
+    }
+  }
+}
