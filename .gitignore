@@ -1,0 +1,13 @@
+.venv
+bin
+lib64
+lib
+logs
+
+pyvenv.cfg
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+tool_simulator_mockup/__pycache__
+.coverage

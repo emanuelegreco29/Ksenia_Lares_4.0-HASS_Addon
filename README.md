@@ -75,5 +75,46 @@ When prompted, insert:
 
 ![jklkljkl](https://github.com/user-attachments/assets/6e3cf343-bf33-4c72-9523-4f04dc99f18e)
 
+## Troubleshooting
+
+### Download Diagnostics
+
+The easiest way to get a complete snapshot of your integration's state:
+
+1. Go to **Settings** > **Devices & Services**
+2. Find the **Ksenia Lares 4.0** integration and click on it
+3. Click on the device (e.g., "Ksenia Lares")
+4. Click the **three dots** (⋮) in the top right corner
+5. Select **Download diagnostics**
+
+This downloads a JSON file containing:
+- All entities with their current states and attributes (including `raw_data`)
+- WebSocket connection status
+- System information from your Ksenia panel
+- Complete data for all device types
+- Configuration settings
+
+This file is perfect for sharing when reporting issues, as it contains everything needed to understand your setup without exposing sensitive credentials.
+
+### Enable Debug Logging
+
+For real-time troubleshooting and to capture dynamic behavior:
+
+1. Go to **Settings** > **Devices & Services**
+2. Find the **Ksenia Lares 4.0** integration
+3. Click the **three dots** (⋮) in the top right corner
+4. Select **Enable debug logging**
+5. Reproduce the issue
+6. Click the three dots again and select **Disable debug logging**
+7. Download the logs to share when reporting issues
+
+Debug logs will show detailed WebSocket communication, including:
+- All incoming/outgoing messages
+- Initial data acquisition
+- Status updates for all device types
+- Command responses
+
+This information is helpful when reporting issues or troubleshooting connection problems.
+
 ## Credits
 Big thanks to [@gvisconti1983](https://github.com/gvisconti1983) for the crc functions and to [@realnot16](https://github.com/realnot16) for the WebSocket library, which has been reworked and updated by me.

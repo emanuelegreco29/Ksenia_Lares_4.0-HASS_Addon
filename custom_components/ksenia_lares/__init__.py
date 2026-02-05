@@ -1,74 +1,218 @@
+"""Ksenia Lares Home Assistant Integration."""
+
 import asyncio
+import contextlib
 import logging
-from .const import DOMAIN, CONF_HOST, CONF_PIN, CONF_PORT
+
+from homeassistant.config_entries import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
+
+from .const import (
+    CONF_HOST,
+    CONF_PIN,
+    CONF_PLATFORMS,
+    CONF_PORT,
+    CONF_SSL,
+    DEFAULT_PLATFORMS,
+    DOMAIN,
+)
 from .websocketmanager import WebSocketManager
 
 _LOGGER = logging.getLogger(__name__)
+SETUP_TIMEOUT = 60  # Increased to allow for device startup delays and initial data fetch retries
+# Track setup tasks to allow cancellation during removal
+_SETUP_TASKS = {}
 
-"""
-Set up the Ksenia integration from a config entry.
 
-This function is responsible for establishing a connection to the Ksenia device,
-retrieving initial data, and configuring the integration for use with Home Assistant.
+def _build_device_info(ip, port, use_ssl, system_info):
+    """Build device information dictionary for Home Assistant entities."""
+    protocol = "https" if use_ssl else "http"
+    return {
+        "identifiers": {(DOMAIN, ip)},
+        "name": "Ksenia Lares",
+        "manufacturer": system_info.get("BRAND", "Ksenia"),
+        "model": system_info.get("MODEL", "Lares 4.0"),
+        "sw_version": system_info.get("VER_LITE", {}).get("FW", "Unknown"),
+        "configuration_url": f"{protocol}://{ip}:{port}",
+    }
 
-Args:
-    hass (HomeAssistant): The Home Assistant instance.
-    entry (ConfigEntry): The config entry containing the integration settings.
 
-Returns:
-    bool: True if the setup is successful, False otherwise.
-"""
+def _register_device(hass, entry, ip, use_ssl, port, system_info):
+    """Register device in Home Assistant device registry."""
+    device_registry = dr.async_get(hass)
+
+    # Prepare device connections (MAC address if available)
+    connections = set()
+    mac_address = system_info.get("MAC")
+    if mac_address:
+        connections.add((CONNECTION_NETWORK_MAC, mac_address))
+
+    protocol = "https" if use_ssl else "http"
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, ip)},
+        connections=connections if connections else None,
+        manufacturer=system_info.get("BRAND", "Ksenia"),
+        model=system_info.get("MODEL", "Lares 4.0"),
+        name="Ksenia Lares",
+        sw_version=system_info.get("VER_LITE", {}).get("FW", "Unknown"),
+        configuration_url=f"{protocol}://{ip}:{port}",
+    )
+
+
 async def async_setup_entry(hass, entry):
-    ip = entry.data[CONF_HOST]
-    pin = entry.data[CONF_PIN]
-    port = entry.data.get(CONF_PORT, 443)
-    ssl_option = entry.options.get("SSL", entry.data.get("SSL", True))
+    """Set up Ksenia Lares integration from a config entry.
 
-    # Create WebSocketManager instance
-    ws_manager = WebSocketManager(ip, pin, port, _LOGGER)
-    hass.data.setdefault(DOMAIN, {})["ws_manager"] = ws_manager
+    Establishes WebSocket connection, retrieves system information,
+    registers the device, and forwards setup to all platforms.
 
-    # Wait that the connection is established and that the initial data is received.
-    if ssl_option:
-        await ws_manager.connectSecure()
-    else:
-        await ws_manager.connect()
-    # Wait up to 10 seconds for the initial data to be received.
-    await ws_manager.wait_for_initial_data(timeout=10)
+    During normal HA startup, this will keep retrying indefinitely with exponential
+    backoff to handle temporary network issues or device unavailability.
 
-    # Forward the setup for each platform
-    platforms = entry.data.get("Platforms", ["light", "cover", "switch", "sensor", "button"])
-    _LOGGER.debug("Forwarding entry setup for platforms: %s", platforms)
-    await hass.config_entries.async_forward_entry_setups(entry, platforms)
+    Note: Connection validation during initial setup/reconfiguration is handled by
+    the config flow, which uses limited retries for quick user feedback.
 
-    return True
+    Raises:
+        ConfigEntryNotReady: On connection errors (will trigger HA retry with backoff)
+    """
+    # Track this setup task so it can be cancelled if removal is requested
+    current_task = asyncio.current_task()
+    if current_task:
+        _SETUP_TASKS[entry.entry_id] = current_task
+
+    try:
+        # Extract configuration with fallback to old capitalized keys for backward compatibility
+        # Try lowercase keys first (new format), then capitalized keys (old format)
+        ip = entry.data.get(CONF_HOST) or entry.data.get("Host")
+        pin = entry.data.get(CONF_PIN) or entry.data.get("Pin")
+        port = entry.data.get(CONF_PORT) or entry.data.get("Port", 443)
+
+        if not ip or not pin:
+            _LOGGER.error(
+                "Missing required configuration: host and/or pin not found in config entry"
+            )
+            return False
+        # Respect legacy capitalized key "SSL" if present (backward compatibility)
+        use_ssl = entry.options.get(CONF_SSL, entry.data.get(CONF_SSL, entry.data.get("SSL", True)))
+
+        # Initialize WebSocket manager with limited retries during setup
+        # This allows ConfigEntryNotReady to be raised so HA can manage retry schedule
+        # After successful connection, internal reconnection logic handles transient issues
+        ws_manager = WebSocketManager(ip, pin, port, _LOGGER, max_retries=3)
+        hass.data.setdefault(DOMAIN, {})["ws_manager"] = ws_manager
+
+        # Connect to device
+        try:
+            connection_method = ws_manager.connectSecure if use_ssl else ws_manager.connect
+            _LOGGER.info(f"Starting connection to {ip}:{port}")
+            await connection_method()
+            _LOGGER.info(
+                f"Connection method returned, waiting for initial data (timeout: {SETUP_TIMEOUT}s)"
+            )
+            await ws_manager.wait_for_initial_data(timeout=SETUP_TIMEOUT)
+            _LOGGER.info("Initial data available, setup continuing")
+        except asyncio.CancelledError:
+            _LOGGER.info("Setup cancelled - config entry removal requested")
+            if DOMAIN in hass.data and "ws_manager" in hass.data[DOMAIN]:
+                hass.data[DOMAIN].pop("ws_manager", None)
+            raise
+        except Exception as e:
+            # Clean up ws_manager from hass.data since connection failed
+            if DOMAIN in hass.data and "ws_manager" in hass.data[DOMAIN]:
+                hass.data[DOMAIN].pop("ws_manager", None)
+
+            # Raise ConfigEntryNotReady to trigger HA's retry mechanism with exponential backoff
+            # This allows the integration to keep retrying during HA restarts when device is down
+            error_msg = f"Failed to connect to Ksenia Lares at {ip}:{port}: {e}"
+            _LOGGER.warning("%s - HA will retry with backoff", error_msg)
+            raise ConfigEntryNotReady(error_msg) from e
+
+        # Get device information (gracefully handles errors)
+        system_info = await ws_manager.getSystemVersion()
+        device_info = _build_device_info(ip, port, use_ssl, system_info)
+
+        # Register device in Home Assistant
+        _register_device(hass, entry, ip, use_ssl, port, system_info)
+
+        # Store device info for entities
+        hass.data[DOMAIN]["device_info"] = device_info
+
+        # Forward setup to platforms
+        platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
+        _LOGGER.debug("Setting up platforms: %s", platforms)
+        await hass.config_entries.async_forward_entry_setups(entry, platforms)
+
+        _SETUP_TASKS.pop(entry.entry_id, None)  # Clean up task tracking
+        return True
+    except asyncio.CancelledError:
+        # Setup was cancelled - likely due to deletion request
+        _LOGGER.info("Setup task cancelled for entry %s", entry.title)
+        _SETUP_TASKS.pop(entry.entry_id, None)
+        if DOMAIN in hass.data and "ws_manager" in hass.data[DOMAIN]:
+            hass.data[DOMAIN].pop("ws_manager", None)
+        raise
+    except ConfigEntryNotReady:
+        _SETUP_TASKS.pop(entry.entry_id, None)
+        raise
+    except Exception as e:
+        _LOGGER.error("Error setting up Ksenia Lares integration: %s", e, exc_info=True)
+        _SETUP_TASKS.pop(entry.entry_id, None)
+        return False
 
 
-"""
-Disable Ksenia integration.
-
-Stops the WebSocket manager and unloads all platforms associated with the integration.
-
-Args:
-    hass: The Home Assistant instance.
-    entry: The config entry to unload.
-
-Returns:
-    bool: True if the unload is successful, False otherwise.
-"""
 async def async_unload_entry(hass, entry):
-    ws_manager = hass.data[DOMAIN]["ws_manager"]
-    await ws_manager.stop()
+    """Unload Ksenia Lares integration.
 
-    platforms = entry.data.get("Platforms", ["light", "cover", "switch", "sensor", "button"])
-    unload_ok = all(
-        await asyncio.gather(
+    Stops the WebSocket connection and unloads all platforms.
+    Gracefully handles cases where setup failed during initialization.
+    """
+    _LOGGER.info("Unloading config entry: %s", entry.title)
+
+    try:
+        # Cancel setup task if it's still running
+        if entry.entry_id in _SETUP_TASKS:
+            task = _SETUP_TASKS.pop(entry.entry_id)
+            if not task.done():
+                _LOGGER.info("Cancelling setup task during unload for %s", entry.title)
+                task.cancel()
+                with contextlib.suppress(Exception):
+                    await asyncio.sleep(0)  # Allow task to process cancellation
+
+        # Gracefully handle cases where setup failed and ws_manager wasn't created
+        ws_manager = hass.data.get(DOMAIN, {}).get("ws_manager")
+        if ws_manager:
+            try:
+                await ws_manager.stop()
+                _LOGGER.info("WebSocket manager stopped successfully")
+            except Exception as e:
+                _LOGGER.warning("Error stopping WebSocket manager during unload: %s", e)
+
+        platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
+
+        # Only unload platforms if any were actually set up
+        # If setup failed early, platforms may not have been forwarded
+        unload_results = await asyncio.gather(
             *[
                 hass.config_entries.async_forward_entry_unload(entry, platform)
                 for platform in platforms
-            ]
+            ],
+            return_exceptions=True,  # Don't fail if a platform wasn't set up
         )
-    )
-    if unload_ok:
-        hass.data[DOMAIN].pop("ws_manager")
-    return unload_ok
+
+        # Check if unload was successful (filter out exceptions for platforms that weren't set up)
+        unload_ok = all(
+            result is True or isinstance(result, Exception) for result in unload_results
+        )
+
+        if unload_ok and ws_manager:
+            hass.data[DOMAIN].pop("ws_manager", None)
+
+        _LOGGER.debug(
+            "Integration unload complete: unload_ok=%s, platforms=%s", unload_ok, platforms
+        )
+        return True  # Always return True to allow deletion
+
+    except Exception as e:
+        _LOGGER.exception("Exception in async_unload_entry: %s", e)
+        return True  # Return True even on exception to allow deletion

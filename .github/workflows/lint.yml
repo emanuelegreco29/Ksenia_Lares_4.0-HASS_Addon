@@ -1,0 +1,51 @@
+---
+name: Lint Integration Code
+# yamllint disable rule:truthy
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  lint:
+    name: Lint & Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install black==26.1.0 isort==7.0.0 ruff==0.15.0 bandit==1.9.3 pyyaml radon==6.0.1
+
+      - name: Run Black
+        run: black custom_components/ksenia_lares/ --check --line-length=100
+
+      - name: Run isort
+        run: isort custom_components/ksenia_lares/ --check-only --profile=black --line-length=100
+
+      - name: Run Ruff
+        run: ruff check custom_components/ksenia_lares/ --config=pyproject.toml
+
+      - name: Run Bandit
+        run: bandit -r custom_components/ksenia_lares/ --configfile=pyproject.toml -q
+
+      - name: Calculate Complexity
+        run: |
+          echo "### Cyclomatic Complexity ###"
+          radon cc custom_components/ksenia_lares/ -a
+          echo ""
+          echo "### Maintainability Index ###"
+          radon mi custom_components/ksenia_lares/ -s
