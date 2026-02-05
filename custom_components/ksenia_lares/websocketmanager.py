@@ -481,7 +481,7 @@ class WebSocketManager:
             f"[WS] Registering listener for type '{entity_type}', now {len(self.listeners[entity_type]) + 1} listener(s)"
         )
         self.listeners[entity_type].append(callback)
-        self._logger.info(
+        self._logger.debug(
             f"[WS] Listener for '{entity_type}' registered successfully. Total listeners: {len(self.listeners[entity_type])}"
         )
 
@@ -1794,7 +1794,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=5)
+            await self.wait_for_initial_data(timeout=60)
             if not self._realtimeInitialData or not self._readData:
                 self._logger.warning(
                     "Initial data not available for getLights, returning empty list"
@@ -1821,7 +1821,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=5)
+            await self.wait_for_initial_data(timeout=60)
             if not self._readData or not self._realtimeInitialData:
                 self._logger.warning(
                     "Initial data not available for getRolls, returning empty list"
@@ -1859,7 +1859,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=5)
+            await self.wait_for_initial_data(timeout=60)
             if not self._realtimeInitialData or not self._readData:
                 self._logger.warning(
                     "Initial data not available for getSwitches, returning empty list"
@@ -1912,7 +1912,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=5)
+            await self.wait_for_initial_data(timeout=60)
             if not self._readData or not self._realtimeInitialData:
                 self._logger.warning("Initial data not available for getDom, returning empty list")
                 return []
@@ -1943,7 +1943,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=5)
+            await self.wait_for_initial_data(timeout=60)
             if not self._readData or not self._realtimeInitialData:
                 self._logger.warning(
                     f"Initial data not available for getSensor({sName}), returning empty list"
@@ -2018,7 +2018,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=5)
+            await self.wait_for_initial_data(timeout=60)
             if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getSystem, returning empty list"

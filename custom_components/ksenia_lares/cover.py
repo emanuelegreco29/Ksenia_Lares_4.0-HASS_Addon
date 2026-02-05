@@ -33,6 +33,43 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entities.append(KseniaRollEntity(ws_manager, roll_id, name, roll, device_info))
 
         async_add_entities(entities, update_before_add=True)
+
+        # Track discovered cover IDs and set up listener-based discovery
+        discovered_cover_ids = {e._roll_id for e in entities}
+
+        async def discover_via_covers_listener(data_list):
+            """Listener-based discovery for covers.
+
+            Calls getRolls() which already filters by CAT==ROLL and merges state.
+            """
+            try:
+                # Get complete list of covers (already filtered and merged with state)
+                rolls = await ws_manager.getRolls()
+
+                new_entities = []
+                for roll in rolls:
+                    roll_id = roll.get("ID")
+                    if roll_id not in discovered_cover_ids:
+                        name = (
+                            roll.get("DES")
+                            or roll.get("LBL")
+                            or roll.get("NM")
+                            or f"Roller Blind {roll_id}"
+                        )
+                        new_entities.append(
+                            KseniaRollEntity(ws_manager, roll_id, name, roll, device_info)
+                        )
+                        discovered_cover_ids.add(roll_id)
+
+                if new_entities:
+                    _LOGGER.info(f"Discovery found {len(new_entities)} new cover(s)")
+                    await async_add_entities(new_entities, update_before_add=True)
+            except Exception as e:
+                _LOGGER.debug(f"Error during cover discovery: {e}")
+
+        # Register discovery listener
+        ws_manager.register_listener("covers", discover_via_covers_listener)
+
     except Exception as e:
         _LOGGER.error("Error setting up covers: %s", e, exc_info=True)
 

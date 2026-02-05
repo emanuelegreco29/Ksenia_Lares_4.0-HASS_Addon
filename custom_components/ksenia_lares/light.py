@@ -26,6 +26,35 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
         entities = [KseniaLightEntity(ws_manager, light, device_info) for light in lights]
         async_add_entities(entities, update_before_add=True)
+
+        # Track discovered light IDs and set up listener-based discovery
+        discovered_light_ids = {e._id for e in entities}
+
+        async def discover_via_lights_listener(data_list):
+            """Listener-based discovery for lights.
+
+            Calls getLights() which already filters by CAT==LIGHT and merges state.
+            """
+            try:
+                # Get complete list of lights (already filtered and merged with state)
+                lights = await ws_manager.getLights()
+
+                new_entities = []
+                for light in lights:
+                    light_id = light.get("ID")
+                    if light_id not in discovered_light_ids:
+                        new_entities.append(KseniaLightEntity(ws_manager, light, device_info))
+                        discovered_light_ids.add(light_id)
+
+                if new_entities:
+                    _LOGGER.info(f"Discovery found {len(new_entities)} new light(s)")
+                    await async_add_entities(new_entities, update_before_add=True)
+            except Exception as e:
+                _LOGGER.debug(f"Error during light discovery: {e}")
+
+        # Register discovery listener
+        ws_manager.register_listener("lights", discover_via_lights_listener)
+
     except Exception as e:
         _LOGGER.error("Error setting up lights: %s", e, exc_info=True)
 

@@ -67,21 +67,115 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         device_info = hass.data[DOMAIN].get("device_info")
         entities = []
 
-        # Add standard sensors from device data
-        await _add_domus_sensors(ws_manager, device_info, entities)
-        await _add_powerline_sensors(ws_manager, device_info, entities)
-        await _add_partition_sensors(ws_manager, device_info, entities)
-        await _add_zone_sensors(ws_manager, device_info, entities)
-        await _add_system_sensors(ws_manager, device_info, entities)
-        await _add_siren_sensors(ws_manager, device_info, entities)
+        # Track initial entity counts for delayed discovery
+        initial_counts = {}
 
-        # Add aggregated status sensors
+        # Add standard sensors from device data
+        domus_count = len(entities)
+        await _add_domus_sensors(ws_manager, device_info, entities)
+        initial_counts["domus"] = len(entities) - domus_count
+
+        powerline_count = len(entities)
+        await _add_powerline_sensors(ws_manager, device_info, entities)
+        initial_counts["powerlines"] = len(entities) - powerline_count
+
+        partition_count = len(entities)
+        await _add_partition_sensors(ws_manager, device_info, entities)
+        initial_counts["partitions"] = len(entities) - partition_count
+
+        zone_count = len(entities)
+        await _add_zone_sensors(ws_manager, device_info, entities)
+        initial_counts["zones"] = len(entities) - zone_count
+
+        system_count = len(entities)
+        await _add_system_sensors(ws_manager, device_info, entities)
+        initial_counts["systems"] = len(entities) - system_count
+
+        siren_count = len(entities)
+        await _add_siren_sensors(ws_manager, device_info, entities)
+        initial_counts["sirens"] = len(entities) - siren_count
+
+        # Add aggregated status sensors (always available)
         _add_status_sensors(ws_manager, device_info, entities)
 
-        # Add diagnostic sensors
+        # Add diagnostic sensors (always available)
         _add_diagnostic_sensors(ws_manager, device_info, entities)
 
         async_add_entities(entities, update_before_add=True)
+
+        # Log initial setup summary
+        _LOGGER.info(
+            f"Initial sensor setup complete: "
+            f"{initial_counts['domus']} domus, "
+            f"{initial_counts['powerlines']} powerlines, "
+            f"{initial_counts['partitions']} partitions, "
+            f"{initial_counts['zones']} zones, "
+            f"{initial_counts['systems']} systems, "
+            f"{initial_counts['sirens']} sirens"
+        )
+
+        # Track discovered IDs for all sensor types to prevent duplicates
+        discovered_ids = {
+            "domus": {
+                f"domus_{s._id}"
+                for s in entities
+                if hasattr(s, "_sensor_type") and s._sensor_type in ("domus", "door")
+            },
+            "powerlines": {
+                f"powerlines_{s._id}"
+                for s in entities
+                if hasattr(s, "_sensor_type") and s._sensor_type == "powerlines"
+            },
+            "partitions": {
+                f"partitions_{s._id}"
+                for s in entities
+                if hasattr(s, "_sensor_type") and s._sensor_type == "partitions"
+            },
+            "zones": {
+                f"zones_{s._id}"
+                for s in entities
+                if hasattr(s, "_sensor_type") and s._sensor_type == "zones"
+            },
+            "systems": {
+                f"system_{s._id}"
+                for s in entities
+                if hasattr(s, "_sensor_type") and s._sensor_type == "system"
+            },
+            "sirens": {
+                f"siren_{s._id}"
+                for s in entities
+                if hasattr(s, "_sensor_type") and s._sensor_type == "siren"
+            },
+        }
+
+        async def discover_via_switches_listener(data_list):
+            """Listener-based discovery for sirens - checks switches data."""
+            try:
+                new_entities = []
+                for switch in data_list:
+                    unique_id = f"siren_{switch.get('ID')}"
+                    if unique_id not in discovered_ids["sirens"]:
+                        name = (
+                            switch.get("DES")
+                            or switch.get("LBL")
+                            or switch.get("NM")
+                            or f"Switch {switch.get('ID')}"
+                        )
+                        if "siren" in name.lower() or "sirena" in name.lower():
+                            new_entities.append(
+                                KseniaSensorEntity(ws_manager, switch, "siren", device_info)
+                            )
+                            discovered_ids["sirens"].add(unique_id)
+
+                if new_entities:
+                    _LOGGER.info(f"Discovery found {len(new_entities)} new siren sensor(s)")
+                    await async_add_entities(new_entities, update_before_add=True)
+            except Exception as e:
+                _LOGGER.debug(f"Error during siren sensor discovery: {e}")
+
+        # Register discovery listener for switches (for siren sensors)
+        ws_manager.register_listener("switches", discover_via_switches_listener)
+
     except Exception as e:
         _LOGGER.error("Error setting up sensors: %s", e, exc_info=True)
 
@@ -129,7 +223,17 @@ async def _add_system_sensors(ws_manager, device_info, entities):
 
 async def _add_siren_sensors(ws_manager, device_info, entities):
     """Add siren status sensors (read-only)."""
+    # Wait for initial data to be ready before fetching switches
+    # Use longer timeout to handle slow system startup after reboot
+    await ws_manager.wait_for_initial_data(timeout=60)
     switches = await ws_manager.getSwitches()
+
+    if not switches:
+        _LOGGER.warning(
+            "No switches data available for siren sensors after waiting for initial data"
+        )
+        return
+
     for switch in switches:
         name = (
             switch.get("DES")
@@ -661,6 +765,13 @@ class KseniaSensorEntity(SensorEntity):
         elif self._sensor_type == "siren":
             # Siren status comes from STATUS_OUTPUTS
             self.ws_manager.register_listener("switches", self._handle_realtime_update)
+            # Load initial state from cached realtime data if available
+            if self.ws_manager._realtimeInitialData:
+                cached = self.ws_manager._realtimeInitialData.get("PAYLOAD", {}).get(
+                    "STATUS_OUTPUTS", []
+                )
+                if cached:
+                    await self._handle_realtime_update(cached)
         else:
             key = self._sensor_type if self._sensor_type != "system" else "systems"
             self.ws_manager.register_listener(key, self._handle_realtime_update)
@@ -1066,18 +1177,22 @@ class KseniaSensorEntity(SensorEntity):
 
             elif self._sensor_type == "siren":
                 # Siren status from real-time switch updates with proper state mapping
-                state_mapping = {"ON": "On", "OFF": "Off", "on": "On", "off": "Off"}
-                sta = data.get("STA", "OFF")
-                self._state = state_mapping.get(sta, sta)
-                self._attributes = {
-                    "ID": data.get("ID"),
-                    "Description": data.get("DES") or data.get("LBL") or data.get("NM"),
-                    "Category": data.get("CAT"),
-                }
-                if "MOD" in data:
-                    self._attributes["Mode"] = data["MOD"]
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(data)
+                # Only update if the ID matches this specific siren sensor
+                if str(data.get("ID")) == str(self._id):
+                    state_mapping = {"ON": "On", "OFF": "Off", "on": "On", "off": "Off"}
+                    sta = data.get("STA", "OFF")
+                    self._state = state_mapping.get(sta, sta)
+                    self._attributes = {
+                        "ID": data.get("ID"),
+                        "Description": data.get("DES") or data.get("LBL") or data.get("NM"),
+                        "Category": data.get("CAT"),
+                    }
+                    if "MOD" in data:
+                        self._attributes["Mode"] = data["MOD"]
+                    # Merge update into raw_data to preserve all fields
+                    self._raw_data.update(data)
+                    self.async_write_ha_state()
+                    break
 
             else:
                 self._state = data.get("STA", "unknown")
@@ -2173,6 +2288,8 @@ class KseniaConnectionStatusSensor(SensorEntity):
             )
             if cached:
                 await self._handle_connection_update(cached)
+        # Always write state after initialization to ensure entity is not Unknown
+        self.async_write_ha_state()
 
     async def _handle_connection_update(self, data_list):
         """Handle realtime connection updates."""
@@ -2391,7 +2508,7 @@ class KseniaPowerSupplySensor(SensorEntity):
             )
 
             if m_val is None or b_val is None:
-                _LOGGER.warning("[PowerSupply] Missing voltage fields: M=%s, B=%s", m_val, b_val)
+                _LOGGER.debug("[PowerSupply] Missing voltage fields: M=%s, B=%s", m_val, b_val)
                 self._state = "Unknown"
                 self._main_voltage = None
                 self._battery_voltage = None

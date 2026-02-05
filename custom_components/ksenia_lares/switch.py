@@ -24,12 +24,53 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         entities = []
 
         # Add output switches
+        output_count = len(entities)
         await _add_output_switches(ws_manager, device_info, entities)
+        initial_output_count = len(entities) - output_count
 
         # Add zone bypass switches
         await _add_zone_bypass_switches(ws_manager, device_info, entities)
 
         async_add_entities(entities, update_before_add=True)
+        _LOGGER.info(f"Initial switch setup: {initial_output_count} output switches")
+
+        # Track discovered switch IDs and set up listener-based discovery
+        # Only track switch_id from KseniaSwitchEntity objects, not zone bypass switches
+        discovered_switch_ids = {e.switch_id for e in entities if hasattr(e, "switch_id")}
+
+        async def discover_via_switches_listener(data_list):
+            """Listener-based discovery for switches.
+
+            Calls getSwitches() which already filters by CAT!=LIGHT and merges state.
+            """
+            try:
+                # Get complete list of switches (already filtered and merged with state)
+                switches = await ws_manager.getSwitches()
+
+                new_entities = []
+                for switch in switches:
+                    switch_id = switch.get("ID")
+                    if switch_id not in discovered_switch_ids:
+                        name = (
+                            switch.get("DES")
+                            or switch.get("LBL")
+                            or switch.get("NM")
+                            or f"Switch {switch_id}"
+                        )
+                        new_entities.append(
+                            KseniaSwitchEntity(ws_manager, switch_id, name, switch, device_info)
+                        )
+                        discovered_switch_ids.add(switch_id)
+
+                if new_entities:
+                    _LOGGER.info(f"Discovery found {len(new_entities)} new switch(es)")
+                    await async_add_entities(new_entities, update_before_add=True)
+            except Exception as e:
+                _LOGGER.debug(f"Error during switch discovery: {e}")
+
+        # Register discovery listener
+        ws_manager.register_listener("switches", discover_via_switches_listener)
+
     except Exception as e:
         _LOGGER.error("Error setting up switches: %s", e, exc_info=True)
 
