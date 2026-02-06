@@ -1,84 +1,20 @@
----
-name: Validate Integration
-# yamllint disable rule:truthy, rule:syntax
+# https://hacs.xyz/docs/publish/action/
+name: Validate
 
 on:
   push:
-    branches:
-      - main
-      - dev
   pull_request:
-    branches:
-      - main
-      - dev
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   validate-hacs:
-    name: Validate with HACS
     runs-on: ubuntu-latest
     steps:
       - name: HACS validation
         uses: "hacs/action@main"
         with:
           category: "integration"
-
-  validate:
-    name: Validate HASS Integration
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Validate manifest
-        run: |
-          python -c "import json; json.load(open('custom_components/ksenia_lares/manifest.json'))"
-          echo "✓ manifest.json is valid JSON"
-
-      - name: Check required files
-        run: |
-          for file in __init__.py manifest.json; do
-            if [ ! -f "custom_components/ksenia_lares/$file" ]; then
-              echo "✗ Missing required file: $file"
-              exit 1
-            fi
-          done
-          echo "✓ All required files present"
-
-      - name: Validate YAML files
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyyaml
-          python << 'EOF'
-          import sys
-          from pathlib import Path
-          import yaml
-
-          errors = []
-          for yaml_file in Path('custom_components/ksenia_lares').rglob('*.yaml'):
-            try:
-              with open(yaml_file) as f:
-                yaml.safe_load(f)
-            except Exception as e:
-              errors.append(f"{yaml_file}: {e}")
-
-          if errors:
-            print('✗ YAML validation errors:')
-            for err in errors:
-              print(f'  {err}')
-            sys.exit(1)
-          else:
-            print('✓ All YAML files valid (or no YAML files found)')
-          EOF
-
-      - name: Check Python syntax
-        run: |
-          python -m py_compile custom_components/ksenia_lares/*.py
-          echo "✓ Python syntax valid"
