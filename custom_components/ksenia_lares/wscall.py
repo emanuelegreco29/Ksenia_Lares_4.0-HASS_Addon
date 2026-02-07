@@ -197,6 +197,7 @@ async def realtime(websocket, login_id, _LOGGER, ws_lock=None, pending_realtime=
             pending_realtime[msg_id] = {
                 "future": future,
                 "message": {"CMD": "REALTIME", "PAYLOAD_TYPE": "REGISTER"},
+                "created_at": time.monotonic(),
             }
 
             if ws_lock:
@@ -286,6 +287,7 @@ async def readData(
             pending_reads[read_id] = {
                 "future": future,
                 "message": {"CMD": "READ", "PAYLOAD_TYPE": "MULTI_TYPES"},
+                "created_at": time.monotonic(),
             }
 
             if ws_lock:
@@ -395,6 +397,7 @@ async def setOutput(websocket, login_id, pin, command_data, queue, logger):
 
         command_data["command_id"] = command_id
         command_data["message"] = {"CMD": "CMD_USR", "PAYLOAD_TYPE": "CMD_SET_OUTPUT"}
+        command_data["created_at"] = time.monotonic()
         queue[command_id] = command_data
         logger.debug(f"CMD_SET_OUTPUT request: {json_cmd}")
         await websocket.send(json_cmd)
@@ -435,6 +438,7 @@ async def exeScenario(websocket, login_id, pin, command_data, queue, logger):
 
         command_data["command_id"] = command_id
         command_data["message"] = {"CMD": "CMD_USR", "PAYLOAD_TYPE": "CMD_EXE_SCENARIO"}
+        command_data["created_at"] = time.monotonic()
         queue[command_id] = command_data
         logger.debug(
             f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] CMD_EXE_SCENARIO queued: ID={command_id}, scenario={command_data['output_id']}"
@@ -500,6 +504,7 @@ async def bypassZone(websocket, login_id, pin, command_data, queue, logger):
 
         command_data["command_id"] = command_id
         command_data["message"] = {"CMD": "CMD_USR", "PAYLOAD_TYPE": "CMD_BYP_ZONE"}
+        command_data["created_at"] = time.monotonic()
         queue[command_id] = command_data
         logger.debug(f"CMD_BYP_ZONE request: {json_cmd}")
         await websocket.send(json_cmd)
@@ -551,6 +556,7 @@ async def readSensorData(
             pending_reads[msg_id] = {
                 "future": future,
                 "message": {"CMD": "READ", "PAYLOAD_TYPE": "MULTI_TYPES"},
+                "created_at": time.monotonic(),
             }
 
             if ws_lock:
@@ -708,6 +714,7 @@ async def getLastLogs(websocket, login_id, items, _LOGGER, ws_lock=None, pending
                     "CMD": "LOGS",
                     "PAYLOAD_TYPE": "LAST_LOGS",
                 },  # Response type, not request type
+                "created_at": time.monotonic(),
             }
 
             if ws_lock:
@@ -768,6 +775,7 @@ async def _execute_clear_command(
     try:
         command_data["command_id"] = command_id
         command_data["message"] = {"CMD": "CLEAR", "PAYLOAD_TYPE": payload_type}
+        command_data["created_at"] = time.monotonic()
         queue[command_id] = command_data
         logger.debug(f"CLEAR {payload_type} request: {json_cmd}")
         await websocket.send(json_cmd)

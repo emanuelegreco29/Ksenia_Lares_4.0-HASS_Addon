@@ -299,7 +299,9 @@ class WebSocketManager:
 
         # Command management and ID counter
         self._command_queue = asyncio.Queue()
-        self._pending_commands = {}
+        self._pending_commands = (
+            {}
+        )  # {msg_id: {"future": future, "message": msg, "created_at": time}}
         self._pending_reads = {}  # Track READ operations (periodic + sensor polling)
         self._pending_log_requests = {}  # Track LOGS requests
         self._pending_realtime = {}  # Track REALTIME registration requests
@@ -409,6 +411,69 @@ class WebSocketManager:
             ConnectionState enum value
         """
         return self._connection_state
+
+    def _purge_all_stale_requests(self):
+        """Purge all stale pending requests across all dictionaries.
+
+        This is called once per incoming message to clean up orphaned requests
+        that have exceeded their timeout. Prevents accumulation of stale entries
+        after reconnects or failed operations.
+        """
+        now = time.monotonic()
+
+        # Purge each dictionary with its specific timeout
+        for pending_dict, timeout, dict_name in [
+            (self._pending_reads, 30, "reads"),  # READ_TIMEOUT
+            (self._pending_commands, 60, "commands"),  # COMMAND_TIMEOUT
+            (self._pending_log_requests, 5, "logs"),  # LOGS_TIMEOUT
+            (self._pending_realtime, 30, "realtime"),  # REALTIME_TIMEOUT
+        ]:
+            stale_ids = [
+                msg_id
+                for msg_id, entry in pending_dict.items()
+                if now - entry.get("created_at", now) > timeout
+            ]
+
+            for msg_id in stale_ids:
+                entry = pending_dict.pop(msg_id)
+                future = entry.get("future")
+                if future and not future.done():
+                    future.cancel()
+
+            if stale_ids:
+                self._logger.debug(
+                    f"Purged {len(stale_ids)} stale {dict_name} "
+                    f"(remaining: {len(pending_dict)})"
+                )
+
+    def _clear_all_pending_requests(self):
+        """Clear all pending requests immediately (called on disconnect).
+
+        When the socket closes, all pending requests become invalid regardless
+        of their age. This cancels their futures and clears all dictionaries.
+        """
+        total_cleared = 0
+
+        for pending_dict, dict_name in [
+            (self._pending_reads, "reads"),
+            (self._pending_commands, "commands"),
+            (self._pending_log_requests, "logs"),
+            (self._pending_realtime, "realtime"),
+        ]:
+            count = len(pending_dict)
+            if count > 0:
+                # Cancel all futures before clearing
+                for entry in pending_dict.values():
+                    future = entry.get("future")
+                    if future and not future.done():
+                        future.cancel()
+
+                pending_dict.clear()
+                total_cleared += count
+                self._logger.debug(f"Cleared {count} pending {dict_name}")
+
+        if total_cleared > 0:
+            self._logger.info(f"Cleared all {total_cleared} pending requests on disconnect")
 
     def _set_cache_timestamp(self, key):
         """Update cache timestamp.
@@ -894,6 +959,10 @@ class WebSocketManager:
         self._readData = None
         self._realtimeInitialData = None
 
+        # Clear ALL pending requests immediately (regardless of timeout)
+        # Any requests in flight are now invalid since the socket is closed
+        self._clear_all_pending_requests()
+
         # Cancel old background tasks to prevent duplicate recv() calls
         await self._cancel_background_tasks()
 
@@ -1009,6 +1078,9 @@ class WebSocketManager:
         Args:
             message: Decoded JSON message dictionary
         """
+        # Purge stale pending requests before processing any message
+        self._purge_all_stale_requests()
+
         cmd = message.get("CMD")
 
         if self._debug_mode:
