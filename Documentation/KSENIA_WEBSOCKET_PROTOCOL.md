@@ -413,7 +413,7 @@ When requesting `ZONES` type, response includes full zone configuration:
 - `PRT`: Partition assignment (string) - which partition this zone belongs to ("1", "2", etc.)
 - `CMD`: Command enabled (string) - `"T"` or `"F"` (typically `"F"`)
 - `BYP_EN`: Bypass enabled (string) - `"T"` if zone can be bypassed, `"F"` if not (life safety zones may not be bypassable)
-- `CAT`: Zone category (string) - `"PMC"` (magnetic contact), `"GEN"` (generic/motion), `"SMOKE"` (smoke detector), or others
+- `CAT`: Zone category (string) - `"PMC"` (magnetic contact), `"GEN"` (generic/motion), `"SMOKE"` (smoke detector), `"DOOR"`, `"WINDOW"`, `"IMOV"`, `"EMOV"`, `"SEISM"`, `"CMD"`, or possibly others
 - `AN`: Auto-notification (string) - `"T"` or `"F"`
 - `LBL`: Display label (string, optional) - user-assigned label for zone, may be empty
 
@@ -1141,7 +1141,7 @@ Retrieves system event logs and audit trail.
   "RECEIVER": "HomeAssistant",
   "CMD": "LOGS_RES",
   "ID": "12",
-  "PAYLOAD_TYPE": "LAST_LOGS",
+  "PAYLOAD_TYPE": "GET_LAST_LOGS",
   "PAYLOAD": {
     "RESULT": "OK",
     "RESULT_DETAIL": "GET_LAST_LOGS_OK",
@@ -1160,6 +1160,13 @@ Retrieves system event logs and audit trail.
   }
 }
 ```
+
+**Note on Firmware Variations:**  
+Different firmware versions use different `PAYLOAD_TYPE` values in the response:
+- Firmware (e.g., v1.100.19) responds with `"PAYLOAD_TYPE": "LAST_LOGS"` (fixed response type)
+- Some other firmware responds with `"PAYLOAD_TYPE": "GET_LAST_LOGS"` (echoes the request type)
+
+The integration handles both variants via fallback matching for compatibility across firmware versions.
 
 **Response Fields (Per Log Entry):**
 - `ID`: Log entry ID (sequential)
@@ -1469,6 +1476,30 @@ Zones are categorized by sensor type and function. This affects how they behave 
   - High priority alarms
   - May have restrictions on bypass operations (check `BYP_EN` field)
   - Often monitored in volume partition
+
+- `DOOR` - Door contact zones
+  - Explicit door contact category (open/closed)
+  - Similar behavior to `PMC` but labeled as doors
+
+- `WINDOW` - Window contact zones
+  - Explicit window contact category (open/closed)
+  - May include `VAS` flag for vasistas (tilt) state
+
+- `IMOV` - Internal movement/motion zones
+  - Interior motion detectors
+  - Similar behavior to `GEN`
+
+- `EMOV` - External movement/motion zones
+  - Exterior motion detectors
+  - Similar behavior to `GEN`
+
+- `SEISM` - Seismic/vibration zones
+  - Vibration or shock detectors
+  - Observed states: `R` (rest), `A` (seismic activity), `N` (normal)
+
+- `CMD` - Command/control zones
+  - Command input zones (legacy category in some installs)
+  - Observed states: `R` (released), `A` (armed), `D` (disarmed)
 
 ### Partition Structure
 
