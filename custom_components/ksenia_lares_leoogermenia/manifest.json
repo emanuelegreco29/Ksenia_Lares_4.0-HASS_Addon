@@ -1,0 +1,7 @@
+{
+    "domain": "ksenia_lares",
+    "name": "Ksenia Lares 4.0",
+    "codeowners": ["@leoogermenia"],
+    "config_flow": true,
+    "version":"0.0.0"
+}
