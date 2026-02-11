@@ -1055,7 +1055,10 @@ class WebSocketManager:
         if not message:
             return
 
-        self._logger.debug(f"Raw message received: {message}")
+        # Import sanitization function from wscall
+        from .wscall import _sanitize_logmessage
+
+        self._logger.debug(f"Raw message received: {_sanitize_logmessage(message)}")
 
         try:
             data = json.loads(message)
@@ -1126,7 +1129,7 @@ class WebSocketManager:
 
         Fallback strategy when device doesn't echo message ID:
         1. Match response CMD to expected type (READ → READ_RES, CMD_USR → CMD_USR_RES)
-        2. Match PAYLOAD_TYPE between request and response
+        2. Match PAYLOAD_TYPE between request and response (with firmware variation handling)
         3. Ensure only one pending request of that type (avoid wrong correlation)
 
         Args:
@@ -1152,7 +1155,19 @@ class WebSocketManager:
             original_msg = req_data.get("message", {})
             req_payload_type = original_msg.get("PAYLOAD_TYPE", "")
 
+            # Check for direct match or known firmware variations
+            payload_match = False
             if req_payload_type == response_payload_type:
+                payload_match = True
+            elif (
+                expected_cmd_prefix == "LOGS"
+                and req_payload_type == "GET_LAST_LOGS"
+                and response_payload_type in ("GET_LAST_LOGS", "LAST_LOGS")
+            ):
+                # LOGS command: older firmware responds with LAST_LOGS, newer with GET_LAST_LOGS
+                payload_match = True
+
+            if payload_match:
                 candidates.append((msg_id, req_data))
 
         # Only use fallback if exactly one candidate exists (avoid ambiguity)
@@ -1166,7 +1181,7 @@ class WebSocketManager:
         elif len(candidates) > 1:
             self._logger.warning(
                 f"Fallback match failed: {len(candidates)} pending requests with "
-                f"PAYLOAD_TYPE={response_payload_type}, cannot determine correct match"
+                f"compatible PAYLOAD_TYPE for {response_payload_type}, cannot determine correct match"
             )
 
         return None, None
