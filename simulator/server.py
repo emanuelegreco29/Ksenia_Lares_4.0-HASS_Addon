@@ -872,7 +872,7 @@ def system_version_payload() -> Dict[str, Any]:
         "MODEL": "lares 4.0 40IP wls",
         "BRAND": "KSENIA",
         "CUST": "KSENIA",
-        "MAC": "A4-58-0F-94-1B-25",
+        "MAC": "00-00-00-00-00-01",  # Unique MAC for simulator (different from real device)
         "BOOT": "1.1.175",
         "IP": "3.14.0",
         "FS": "4.4.2",
@@ -1636,7 +1636,19 @@ async def handle_websocket_cmd_byp_zone(ws: WebSocket, msg_id: str, payload: Dic
                 )
                 await ws.send_text(response)
             else:
+                old_byp = state.zones[zid].get("BYP", "NO")
                 state.zones[zid]["BYP"] = byp_val
+                
+                # Log bypass status changes
+                if old_byp != byp_val:
+                    zone_label = state.zones[zid].get("DES", f"Zone {zid}")
+                    if byp_val in ["YES", "Y", "MAN_M", "AUTO"]:
+                        logger.info(f"[WEBSOCKET] ZONE BYPASSED: Zone {zid} is now bypassed (BYP={byp_val})")
+                        state.logs.append(create_log_entry("ZESCL", LOG_EVENT_ZONE_BYPASSED, zone_label))
+                    else:
+                        logger.info(f"[WEBSOCKET] ZONE UNBYPASSED: Zone {zid} is now active (BYP={byp_val})")
+                        state.logs.append(create_log_entry("ZINCL", LOG_EVENT_ZONE_RESTORED, zone_label))
+                
                 await state.broadcast_realtime(
                     {"STATUS_ZONES": [{**state.zones[zid]}]}
                 )
@@ -1659,10 +1671,16 @@ async def handle_websocket_logs(ws: WebSocket, msg_id: str, payload: Dict[str, A
         "RESULT_DETAIL": "GET_LAST_LOGS_OK",
         "LOGS": list(reversed(state.logs[-limit:])) if state.logs else [],
     }
+    
+    # Alternate between two firmware behaviors to test compatibility:
+    # - Even msg_id: "GET_LAST_LOGS" (newer firmware echoes request type)
+    # - Odd msg_id: "LAST_LOGS" (older firmware uses fixed response type)
+    payload_type = "GET_LAST_LOGS" if int(msg_id) % 2 == 0 else "LAST_LOGS"
+    
     response = build_message(
         cmd="LOGS_RES",
         msg_id=msg_id,
-        payload_type="LAST_LOGS",
+        payload_type=payload_type,
         payload=logs_payload,
     )
     await ws.send_text(response)
