@@ -47,7 +47,8 @@ REALTIME_TYPES = [
     "STATUS_PANEL",
 ]
 
-# Command ID counter
+# Command ID counter (max 65535 to fit in 2 bytes)
+_CMD_ID_MAX = 65535
 _cmd_id = 1
 
 # Timeouts
@@ -56,14 +57,67 @@ RECV_TIMEOUT = 5
 COMMAND_TIMEOUT = 60
 
 
-def _get_next_cmd_id():
-    """Get next command ID and increment counter.
+def _sanitize_logmessage(message):
+    """Sanitize WebSocket message for logging by hiding sensitive data.
+
+    Redacts:
+    - PIN codes (replaces with "****")
+    - MAC addresses in SENDER/RECEIVER fields (shows only last 4 chars)
+    - MAC field values
+
+    Args:
+        message: JSON string or dictionary
 
     Returns:
-        Unique command ID string
+        Sanitized string safe for logging
+    """
+    try:
+        # Parse if string
+        if isinstance(message, str):
+            data = json.loads(message)
+        else:
+            data = message.copy() if isinstance(message, dict) else message
+
+        # Redact PIN in PAYLOAD
+        if isinstance(data, dict) and "PAYLOAD" in data:
+            payload = data["PAYLOAD"]
+            if isinstance(payload, dict) and "PIN" in payload:
+                payload["PIN"] = "****"
+
+        # Sanitize MAC addresses in SENDER/RECEIVER (show only last 4 chars)
+        if isinstance(data, dict):
+            for field in ["SENDER", "RECEIVER"]:
+                if field in data and data[field]:
+                    mac = data[field]
+                    # If it looks like a MAC address (12 hex chars)
+                    if isinstance(mac, str) and len(mac) >= 8:
+                        data[field] = "****" + mac[-4:]
+
+            # Sanitize MAC field if present
+            if "MAC" in data and data["MAC"]:
+                mac = data["MAC"]
+                if isinstance(mac, str) and len(mac) >= 8:
+                    data["MAC"] = "****" + mac[-4:]
+
+        # Return as formatted JSON string
+        return json.dumps(data, separators=(",", ":"))
+    except Exception:
+        # If sanitization fails, return a safe generic message
+        return "<message sanitization failed>"
+
+
+def _get_next_cmd_id():
+    """Generate next command ID for message tracking.
+
+    Uses sequential numbering with wraparound at 65535 to prevent overflow.
+
+    Returns:
+        Unique command ID as string
     """
     global _cmd_id
-    _cmd_id += 1
+    _cmd_id = _cmd_id + 1
+    if _cmd_id > _CMD_ID_MAX:
+        _cmd_id = 1
     return str(_cmd_id)
 
 
@@ -200,6 +254,7 @@ async def realtime(websocket, login_id, _LOGGER, ws_lock=None, pending_realtime=
                 "created_at": time.monotonic(),
             }
 
+            _LOGGER.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
             if ws_lock:
                 async with ws_lock:
                     await websocket.send(json_cmd)
@@ -290,6 +345,7 @@ async def readData(
                 "created_at": time.monotonic(),
             }
 
+            _LOGGER.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
             if ws_lock:
                 async with ws_lock:
                     await websocket.send(json_cmd)
@@ -399,7 +455,8 @@ async def setOutput(websocket, login_id, pin, command_data, queue, logger):
         command_data["message"] = {"CMD": "CMD_USR", "PAYLOAD_TYPE": "CMD_SET_OUTPUT"}
         command_data["created_at"] = time.monotonic()
         queue[command_id] = command_data
-        logger.debug(f"CMD_SET_OUTPUT request: {json_cmd}")
+        logger.debug(f"CMD_SET_OUTPUT request: {_sanitize_logmessage(json_cmd)}")
+        logger.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
         await websocket.send(json_cmd)
         logger.debug(
             f"Output command sent: ID={command_id}, output={command_data['output_id']}, "
@@ -443,7 +500,8 @@ async def exeScenario(websocket, login_id, pin, command_data, queue, logger):
         logger.debug(
             f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] CMD_EXE_SCENARIO queued: ID={command_id}, scenario={command_data['output_id']}"
         )
-        logger.debug(f"CMD_EXE_SCENARIO request: {json_cmd}")
+        logger.debug(f"CMD_EXE_SCENARIO request: {_sanitize_logmessage(json_cmd)}")
+        logger.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
         await websocket.send(json_cmd)
         logger.debug(
             f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Scenario command sent: ID={command_id}, scenario={command_data['output_id']}"
@@ -506,7 +564,8 @@ async def bypassZone(websocket, login_id, pin, command_data, queue, logger):
         command_data["message"] = {"CMD": "CMD_USR", "PAYLOAD_TYPE": "CMD_BYP_ZONE"}
         command_data["created_at"] = time.monotonic()
         queue[command_id] = command_data
-        logger.debug(f"CMD_BYP_ZONE request: {json_cmd}")
+        logger.debug(f"CMD_BYP_ZONE request: {_sanitize_logmessage(json_cmd)}")
+        logger.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
         await websocket.send(json_cmd)
         logger.debug(
             f"Bypass command sent: ID={command_id}, zone={command_data['zone_id']}, "
@@ -559,6 +618,7 @@ async def readSensorData(
                 "created_at": time.monotonic(),
             }
 
+            _LOGGER.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
             if ws_lock:
                 async with ws_lock:
                     await websocket.send(json_cmd)
@@ -575,6 +635,7 @@ async def readSensorData(
                 return []
         else:
             # Fallback to direct recv pattern (for backward compatibility)
+            _LOGGER.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
             if ws_lock:
                 async with ws_lock:
                     await websocket.send(json_cmd)
@@ -626,6 +687,7 @@ async def getSystemVersion(websocket, login_id, _LOGGER):
         payload = {"ID_LOGIN": str(login_id)}
         json_cmd = _build_message("SYSTEM_VERSION", "REQUEST", payload, msg_id=command_id)
 
+        _LOGGER.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
         await websocket.send(json_cmd)
         _LOGGER.debug("Waiting for system version response")
 
@@ -692,10 +754,9 @@ async def getLastLogs(websocket, login_id, items, _LOGGER, ws_lock=None, pending
     Returns:
         List of log entry dictionaries, or empty list on error
     """
-    _LOGGER.debug(f"Requesting last {items} log entries")
-
-    # Generate unique message ID
-    msg_id = str(int(time.time() * 1000) % 100000)
+    # Generate unique message ID (sequential, max 65535)
+    msg_id = str(_get_next_cmd_id())
+    _LOGGER.debug(f"Requesting last {items} log entries with ID {msg_id}")
 
     payload = {
         "ID_LOGIN": str(login_id),
@@ -712,16 +773,19 @@ async def getLastLogs(websocket, login_id, items, _LOGGER, ws_lock=None, pending
                 "future": future,
                 "message": {
                     "CMD": "LOGS",
-                    "PAYLOAD_TYPE": "LAST_LOGS",
-                },  # Response type, not request type
-                "created_at": time.monotonic(),
+                    "PAYLOAD_TYPE": "GET_LAST_LOGS",  # Store request type for consistency
+                },
             }
+            _LOGGER.debug(f"LOGS request {msg_id} stored in pending_log_requests")
 
+            _LOGGER.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
             if ws_lock:
                 async with ws_lock:
                     await websocket.send(json_cmd)
             else:
                 await websocket.send(json_cmd)
+
+            _LOGGER.debug(f"LOGS request {msg_id} sent, waiting for response")
 
             # Wait for listener to resolve the future
             try:
@@ -734,8 +798,15 @@ async def getLastLogs(websocket, login_id, items, _LOGGER, ws_lock=None, pending
                     return []
             except TimeoutError:
                 # Clean up pending request to prevent "invalid state" if response arrives late
-                pending_log_requests.pop(msg_id, None)
-                _LOGGER.error("Timeout waiting for LOGS_RES")
+                removed = pending_log_requests.pop(msg_id, None)
+                if removed:
+                    _LOGGER.error(
+                        f"Timeout waiting for LOGS_RES (ID {msg_id}), removed from pending requests"
+                    )
+                else:
+                    _LOGGER.error(
+                        f"Timeout waiting for LOGS_RES (ID {msg_id}), no matching pending request found to remove"
+                    )
                 return []
         else:
             # Listener pattern is required - pending_log_requests must be provided
