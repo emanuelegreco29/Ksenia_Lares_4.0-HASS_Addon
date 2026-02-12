@@ -18,7 +18,7 @@ from .const import (
     DEFAULT_SSL,
     DOMAIN,
 )
-from .websocketmanager import WebSocketManager
+from .websocketmanager import AuthenticationError, WebSocketManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,14 +73,12 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     title = f"Ksenia @ {user_input[CONF_HOST]}"
                     return self.async_create_entry(title=title, data=user_input)
 
+                except AuthenticationError as e:
+                    _LOGGER.error(f"Authentication failed: {e}")
+                    errors[CONF_PIN] = "invalid_pin"
                 except Exception as e:
                     _LOGGER.error(f"Connection test failed: {e}")
-                    # Try to determine specific error
-                    error_msg = str(e).lower()
-                    if "login" in error_msg or "pin" in error_msg or "invalid" in error_msg:
-                        errors[CONF_PIN] = "invalid_pin"
-                    else:
-                        errors["base"] = "cannot_connect"
+                    errors["base"] = "cannot_connect"
                 finally:
                     # Clean up test connection
                     if ws_manager:
@@ -149,14 +147,12 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await self.hass.config_entries.async_reload(config_entry.entry_id)
                     return self.async_abort(reason="reconfigure_successful")
 
+                except AuthenticationError as e:
+                    _LOGGER.error(f"Authentication failed: {e}")
+                    errors[CONF_PIN] = "invalid_pin"
                 except Exception as e:
                     _LOGGER.error(f"Connection test failed: {e}")
-                    # Try to determine specific error
-                    error_msg = str(e).lower()
-                    if "login" in error_msg or "pin" in error_msg or "invalid" in error_msg:
-                        errors[CONF_PIN] = "invalid_pin"
-                    else:
-                        errors["base"] = "cannot_connect"
+                    errors["base"] = "cannot_connect"
                 finally:
                     # Clean up test connection
                     if ws_manager:

@@ -32,10 +32,12 @@ from .wscall import (
     ws_logout,
 )
 
-# SSL configuration for secure connections
-ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
-ssl_context.verify_mode = ssl.CERT_NONE
-ssl_context.options |= 0x4
+
+class AuthenticationError(Exception):
+    """Exception raised for authentication failures (wrong PIN, invalid credentials)."""
+
+    pass
+
 
 # Connection constants
 MAX_RETRIES = 100
@@ -129,7 +131,13 @@ class WebSocketManager:
                 if self._connSecure
                 else f"ws://{self._ip}:{self._port}/KseniaWsock"
             )
-            ssl_ctx = ssl_context if self._connSecure else None
+            # Create fresh SSL context if secure connection is used
+            if self._connSecure:
+                ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+                ssl_ctx.options |= 0x4  # ssl.OP_LEGACY_SERVER_CONNECT
+            else:
+                ssl_ctx = None
 
             self._logger.debug(f"Opening temporary connection for scenario {scenario_id} execution")
 
@@ -360,6 +368,32 @@ class WebSocketManager:
         self._cmd_id_counter += 1
         return str(self._cmd_id_counter)
 
+    def _is_ws_closed(self) -> bool:
+        """Safely determine if the WebSocket connection is closed."""
+        if not self._ws:
+            return True
+
+        closed_attr = getattr(self._ws, "closed", None)
+        if isinstance(closed_attr, bool):
+            return closed_attr
+
+        if callable(closed_attr):
+            try:
+                return bool(closed_attr())
+            except Exception:
+                return False
+
+        state = getattr(self._ws, "state", None)
+        if state is not None:
+            try:
+                from websockets.protocol import State
+
+                return state == State.CLOSED
+            except Exception:
+                return str(state).upper().endswith("CLOSED")
+
+        return False
+
     def _validate_message(self, message):
         """Validate message has required fields.
 
@@ -558,7 +592,11 @@ class WebSocketManager:
         Raises:
             Logs critical error if maximum retries exceeded.
         """
-        await self._connect_with_uri(f"wss://{self._ip}:{self._port}/KseniaWsock", ssl=ssl_context)
+        # Create fresh SSL context for each connection attempt to avoid state corruption
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        ssl_ctx.options |= 0x4  # ssl.OP_LEGACY_SERVER_CONNECT
+        await self._connect_with_uri(f"wss://{self._ip}:{self._port}/KseniaWsock", ssl=ssl_ctx)
 
     async def _connect_with_uri(self, uri, ssl):
         """Establish WebSocket connection with specified URI and SSL settings.
@@ -586,9 +624,13 @@ class WebSocketManager:
                     )
                 if self._loginId < 0:
                     self._logger.error(f"WebSocket login failed: {login_error_detail}")
-                    self._retries += 1
-                    await self._apply_backoff_with_jitter()
-                    continue
+                    # Close websocket before raising exception
+                    await self._ws.close()
+                    self._ws = None
+                    # Raise AuthenticationError (not ConnectionError) so it won't be retried
+                    raise AuthenticationError(
+                        f"Authentication failed: {login_error_detail or 'Invalid PIN'}"
+                    )
 
                 self._logger.info(
                     f"[{time.time():.3f}] Connected to WebSocket - Login ID: {self._loginId}"
@@ -624,6 +666,11 @@ class WebSocketManager:
                 self._metrics["reconnects"] += 1 if self._metrics["reconnects"] > 0 else 0
                 return
 
+            except AuthenticationError:
+                # Authentication errors (wrong PIN) should not be retried
+                # Let them propagate immediately for config flow to handle
+                self._connection_state = ConnectionState.ERROR
+                raise
             except websockets.exceptions.WebSocketException as e:
                 self._connection_state = ConnectionState.ERROR
                 self._logger.error(
@@ -677,9 +724,7 @@ class WebSocketManager:
 
         Used by polling to ensure data can be fetched even after connection loss.
         """
-        if self._connection_state == ConnectionState.CONNECTED and (
-            not self._ws or not self._ws.closed
-        ):
+        if self._connection_state == ConnectionState.CONNECTED and (not self._is_ws_closed()):
             return  # Already connected
 
         self._logger.info("Attempting reconnection from polling request")
@@ -701,9 +746,17 @@ class WebSocketManager:
                 if time_since_message > CONNECTION_HEALTH_CHECK:
                     self._logger.warning(
                         f"No messages received for {time_since_message:.0f}s, "
-                        "connection may be stale"
+                        "connection appears stale - triggering reconnect"
                     )
-                    # Could trigger reconnect here if needed
+                    # Connection is stale - force reconnection
+                    if self._ws and not self._is_ws_closed():
+                        self._logger.info("Closing stale WebSocket connection")
+                        await self._ws.close()
+                    # Trigger reconnection flow
+                    await self._handle_connection_closed()
+            except asyncio.CancelledError:
+                # Task is being cancelled during shutdown
+                break
             except Exception as e:
                 self._logger.debug(f"Health check error: {e}")
 
@@ -716,13 +769,22 @@ class WebSocketManager:
                 if time_since_last >= PERIODIC_READ_INTERVAL:
                     await self._refresh_all_state()
                     self._last_periodic_read = time.time()
+            except asyncio.CancelledError:
+                # Task is being cancelled during shutdown
+                break
             except Exception as e:
                 self._logger.debug(f"Periodic read error: {e}")
 
     async def _refresh_all_state(self):
         """Refresh all primary state from panel (zones, partitions, outputs, system, etc)."""
         try:
-            if not self._ws or self._connection_state != ConnectionState.CONNECTED:
+            # Validate connection state more thoroughly
+            if (
+                not self._ws
+                or self._is_ws_closed()
+                or self._connection_state != ConnectionState.CONNECTED
+            ):
+                self._logger.debug("Skipping state refresh - connection not ready")
                 return
 
             self._logger.debug("Running periodic state refresh")
@@ -744,13 +806,22 @@ class WebSocketManager:
                 # readData() already returns unwrapped payload, so pass it directly
                 await self._handle_realtime_update(updated_data)
                 self._logger.debug("State refresh complete")
+            else:
+                self._logger.warning("State refresh returned no data - connection may be degraded")
         except websockets.exceptions.ConnectionClosed as e:
             self._logger.error(f"Connection lost during state refresh: {e}")
             self._connection_state = ConnectionState.DISCONNECTED
             self._running = False
             asyncio.create_task(self._handle_connection_closed())
+        except TimeoutError:
+            self._logger.warning("State refresh timeout - connection may be stale")
+            # Don't trigger reconnect on single timeout, health monitor will catch persistent issues
         except Exception as e:
-            self._logger.debug(f"Error during state refresh: {e}")
+            self._logger.warning(f"Error during state refresh: {type(e).__name__}: {e}")
+            # Check if connection is actually broken
+            if self._ws and self._is_ws_closed():
+                self._logger.error("Connection closed during state refresh - triggering reconnect")
+                asyncio.create_task(self._handle_connection_closed())
 
     async def _fetch_initial_data(self):
         """Retrieve static configuration and real-time data from panel.
@@ -867,10 +938,20 @@ class WebSocketManager:
         """
         self._logger.info("WebSocket listener started")
 
-        while self._running:
-            message = await self._receive_message()
-            if message:
-                await self._process_received_message(message)
+        try:
+            while self._running:
+                message = await self._receive_message()
+                if message:
+                    await self._process_received_message(message)
+        except asyncio.CancelledError:
+            self._logger.debug("Listener task cancelled")
+            raise
+        except Exception as e:
+            self._logger.error(f"Fatal listener error: {e}", exc_info=True)
+            # Fatal error in listener loop - trigger reconnection
+            await self._handle_connection_closed()
+        finally:
+            self._logger.info("WebSocket listener stopped")
 
     async def _receive_message(self):
         """Receive and return next WebSocket message, handling errors.
@@ -900,10 +981,20 @@ class WebSocketManager:
                 await self._handle_connection_closed()
                 return None
             except websockets.exceptions.WebSocketException as e:
-                self._logger.error(f"WebSocket error: {e.__class__.__name__}: {e}")
+                # WebSocket protocol errors indicate broken connection
+                self._logger.error(
+                    f"WebSocket protocol error: {e.__class__.__name__}: {e} - triggering reconnect"
+                )
+                await self._handle_connection_closed()
                 return None
             except Exception as e:
                 self._logger.error(f"Unexpected listener error: {e}", exc_info=True)
+                # Unknown error - assume connection might be broken
+                self._logger.warning("Unexpected error in listener - verifying connection state")
+                if self._ws and (
+                    self._is_ws_closed() or self._connection_state != ConnectionState.CONNECTED
+                ):
+                    await self._handle_connection_closed()
                 return None
 
     async def _handle_connection_closed(self):
