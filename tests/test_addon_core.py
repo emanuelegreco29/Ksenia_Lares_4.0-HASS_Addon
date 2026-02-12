@@ -988,7 +988,7 @@ async def test_alarm_control_panel_initialization():
     ws_manager = MagicMock()
     ws_manager._ip = "192.168.1.50"
     ws_manager.register_listener = MagicMock()
-    ws_manager._realtimeInitialData = {}
+    ws_manager._realtime_registered = True
     
     scenario_map = {"DISARM": "1", "ARM": "2"}
     device_info = {"name": "Device"}

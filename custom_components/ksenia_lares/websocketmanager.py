@@ -294,8 +294,7 @@ class WebSocketManager:
         # Data caches with TTL
         self._readData = None
         self._readData_timestamp = 0
-        self._realtimeInitialData = None
-        self._realtimeInitialData_timestamp = 0
+        self._realtime_registered = False  # Flag indicating REALTIME registration complete
 
         # Command management and ID counter
         self._command_queue = asyncio.Queue()
@@ -376,25 +375,6 @@ class WebSocketManager:
         missing = [k for k in required if k not in message]
         if missing:
             raise ValueError(f"Missing required fields: {missing}")
-
-    def _is_cache_valid(self, key="readData", ttl=CACHE_TTL):
-        """Check if cached data is still fresh.
-
-        Args:
-            key: Cache key ("readData" or "realtimeData")
-            ttl: Time-to-live in seconds
-
-        Returns:
-            True if cache is valid, False if stale or missing
-        """
-        if key == "readData":
-            return self._readData is not None and (time.time() - self._readData_timestamp) < ttl
-        elif key == "realtimeData":
-            return (
-                self._realtimeInitialData is not None
-                and (time.time() - self._realtimeInitialData_timestamp) < ttl
-            )
-        return False
 
     def get_metrics(self):
         """Get connection and command statistics.
@@ -479,53 +459,33 @@ class WebSocketManager:
         """Update cache timestamp.
 
         Args:
-            key: Cache key ("readData" or "realtimeData")
+            key: Cache key ("readData")
         """
         if key == "readData":
             self._readData_timestamp = time.time()
-        elif key == "realtimeData":
-            self._realtimeInitialData_timestamp = time.time()
 
-    def _invalidate_cache(self, key="realtimeData"):
-        """Invalidate cached data to force refresh on next read.
+    def get_cached_data(self, payload_type: str) -> list:
+        """Get cached data by payload type.
+
+        Works for both status types (STATUS_ZONES, STATUS_OUTPUTS, etc.) and
+        configuration types (ZONES, OUTPUTS, SCENARIOS, etc.).
 
         Args:
-            key: Cache key ("readData" or "realtimeData")
-        """
-        if key == "readData":
-            self._readData_timestamp = 0
-        elif key == "realtimeData":
-            self._realtimeInitialData_timestamp = 0
-
-    def get_realtime_zones(self):
-        """Get zone status from realtime data.
+            payload_type: Payload type key (e.g., "STATUS_ZONES", "OUTPUTS")
 
         Returns:
-            List of zone status dictionaries, or empty list if data unavailable
+            List of entities, or empty list if unavailable
         """
-        if self._realtimeInitialData:
-            return self._realtimeInitialData.get("PAYLOAD", {}).get("STATUS_ZONES", [])
-        return []
+        return self._readData.get(payload_type, []) if self._readData else []
 
-    def get_realtime_partitions(self):
-        """Get partition status from realtime data.
+    @property
+    def has_cached_data(self) -> bool:
+        """Check if initial data cache is available.
 
         Returns:
-            List of partition status dictionaries, or empty list if data unavailable
+            True if cache is populated, False otherwise
         """
-        if self._realtimeInitialData:
-            return self._realtimeInitialData.get("PAYLOAD", {}).get("STATUS_PARTITIONS", [])
-        return []
-
-    def get_realtime_system(self):
-        """Get system status from realtime data.
-
-        Returns:
-            List of system status dictionaries, or empty list if data unavailable
-        """
-        if self._realtimeInitialData:
-            return self._realtimeInitialData.get("PAYLOAD", {}).get("STATUS_SYSTEM", [])
-        return []
+        return self._readData is not None
 
     def register_listener(self, entity_type, callback):
         """Register callback for entity type real-time updates.
@@ -573,9 +533,9 @@ class WebSocketManager:
             Does not raise TimeoutError; caller should check if data is available.
         """
         start_time = time.time()
-        while self._readData is None or self._realtimeInitialData is None:
+        while self._readData is None or not self._realtime_registered:
             if time.time() - start_time >= timeout:
-                break
+                self._logger.warning(f"Initial data wait timeout after {timeout}s")
             await asyncio.sleep(0.5)
 
     async def connect(self):
@@ -842,15 +802,17 @@ class WebSocketManager:
                     )
 
                 self._logger.debug(
-                    f"[{time.time():.3f}] Starting real-time data stream (attempt {retry_count + 1}/{max_retries})"
+                    f"[{time.time():.3f}] Starting real-time data subscription (attempt {retry_count + 1}/{max_retries})"
                 )
-                self._realtimeInitialData = await realtime(
+                realtime_response = await realtime(
                     self._ws, self._loginId, self._logger, self._ws_lock, self._pending_realtime
                 )
-                self._set_cache_timestamp("realtimeData")
-                self._logger.debug(f"[{time.time():.3f}] Real-time data received successfully")
+                self._realtime_registered = True
+                self._logger.debug(
+                    f"[{time.time():.3f}] Real-time data subscription registered successfully"
+                )
                 if self._debug_mode:
-                    self._logger.debug(f"Real-time data received: {self._realtimeInitialData}")
+                    self._logger.debug(f"REALTIME registration response: {realtime_response}")
 
                 self._logger.info(f"[{time.time():.3f}] Initial data acquisition complete")
                 # Success - exit retry loop
@@ -957,7 +919,7 @@ class WebSocketManager:
 
         # Clear cached data so wait_for_initial_data() knows to wait for fresh data
         self._readData = None
-        self._realtimeInitialData = None
+        self._realtime_registered = False
 
         # Clear ALL pending requests immediately (regardless of timeout)
         # Any requests in flight are now invalid since the socket is closed
@@ -1357,40 +1319,104 @@ class WebSocketManager:
             "STATUS_FAULTS": ["faults"],
         }
 
-        for status_key, listener_types in status_handlers.items():
-            if status_key in data:
-                self._logger.debug(f"[WS] Updating {status_key}: {data[status_key]}")
-                self._logger.debug(f"[WS] Notifying listeners for {status_key}: {listener_types}")
-                self._update_realtime_cache(status_key, data[status_key])
+        for status_payload_type, listener_types in status_handlers.items():
+            if status_payload_type in data:
+                self._logger.debug(
+                    f"[WS] Updating {status_payload_type}: {data[status_payload_type]}"
+                )
+                self._logger.debug(
+                    f"[WS] Notifying listeners for {status_payload_type}: {listener_types}"
+                )
+                self._update_realtime_cache(status_payload_type, data[status_payload_type])
                 try:
-                    await self._notify_listeners(listener_types, data[status_key])
+                    await self._notify_listeners(listener_types, data[status_payload_type])
                 except Exception as e:
                     self._logger.error(
-                        f"[WS] Error notifying listeners for {status_key}: {e}", exc_info=True
+                        f"[WS] Error notifying listeners for {status_payload_type}: {e}",
+                        exc_info=True,
                     )
 
-    def _update_realtime_cache(self, status_key, status_data):
-        """Update cached real-time data for given status key.
+    def _update_realtime_cache(self, status_payload_type: str, status_entities: Any) -> None:
+        """Update unified cache with real-time data.
+
+        REALTIME broadcasts often contain partial data, only a subset of entities for a
+        given status payload type. This method merges incoming entity updates into the
+        unified _readData cache at the entity level, preserving cached entities not
+        included in the broadcast.
+
+        Both READ responses and REALTIME broadcasts update the same cache, ensuring
+        the cache always contains the most recent data regardless of source.
 
         Args:
-            status_key: Status type key (e.g., "STATUS_OUTPUTS")
-            status_data: New status data to cache
+            status_payload_type: Status payload type key (e.g., "STATUS_OUTPUTS", "STATUS_ZONES")
+            status_entities: List of status entities to cache (may be partial subset)
         """
-        self._logger.debug(f"[WS] _update_realtime_cache: Updating {status_key} with {status_data}")
-        if self._realtimeInitialData is None:
-            self._logger.debug("[WS] _update_realtime_cache: Initializing _realtimeInitialData")
-            self._realtimeInitialData = {}
-        if "PAYLOAD" not in self._realtimeInitialData:
-            self._logger.debug(
-                "[WS] _update_realtime_cache: Creating PAYLOAD in _realtimeInitialData"
-            )
-            self._realtimeInitialData["PAYLOAD"] = {}
-        self._realtimeInitialData["PAYLOAD"][status_key] = status_data
         self._logger.debug(
-            f"[WS] _update_realtime_cache: Cache now has PAYLOAD keys: {list(self._realtimeInitialData['PAYLOAD'].keys())}"
+            f"[WS] _update_realtime_cache: Updating {status_payload_type} with {status_entities}"
         )
-        # Invalidate cache on realtime update to force periodic read to refresh
-        self._invalidate_cache("readData")
+
+        # Mark that we've received REALTIME broadcast (for wait_for_initial_data)
+        if not self._realtime_registered:
+            self._logger.debug("[WS] _update_realtime_cache: Marking REALTIME as registered")
+            self._realtime_registered = True
+
+        # Ensure _readData exists
+        if self._readData is None:
+            self._logger.debug("[WS] _update_realtime_cache: Initializing _readData")
+            self._readData = {}
+
+        # Handle partial REALTIME broadcasts by merging at entity level
+        # All status payload types contain entity arrays (even singletons like STATUS_PANEL with 1 entity)
+        if not isinstance(status_entities, list):
+            # Protocol violation - all status payload types should contain entity arrays
+            self._logger.info(
+                f"[WS] _update_realtime_cache: Received non-list data for {status_payload_type}. "
+                f"Type: {type(status_entities).__name__}. Converting to list."
+            )
+            # Defensive: wrap in list to maintain consistency
+            status_entities = [status_entities] if status_entities else []
+
+        # Get existing cached entities for this status payload type from unified cache
+        existing_entities = self._readData.get(status_payload_type, [])
+
+        if not existing_entities:
+            # No existing cache - store incoming entities as-is (initial seed or first update)
+            self._readData[status_payload_type] = status_entities
+            self._logger.debug(
+                f"[WS] _update_realtime_cache: Initialized {status_payload_type} with {len(status_entities)} entities"
+            )
+        else:
+            # Merge incoming partial entity updates with existing cache
+            # Build dict for fast lookup by entity ID: {entity_id: entity}
+            existing_dict = {
+                str(entity.get("ID")): entity for entity in existing_entities if "ID" in entity
+            }
+
+            # Update/add entities from incoming broadcast
+            updates_count = 0
+            for new_entity in status_entities:
+                entity_id = str(new_entity.get("ID", ""))
+                if entity_id and entity_id != "":
+                    if entity_id in existing_dict:
+                        # Update existing entity - merge fields (new field values overwrite old)
+                        existing_dict[entity_id].update(new_entity)
+                        updates_count += 1
+                    else:
+                        # New entity not previously cached
+                        existing_dict[entity_id] = new_entity
+                        updates_count += 1
+                else:
+                    # Entity without ID field - shouldn't happen but handle gracefully
+                    self._logger.warning(
+                        f"[WS] _update_realtime_cache: Entity without ID field in {status_payload_type}: {new_entity}"
+                    )
+
+            # Convert back to entity list and store in unified cache
+            self._readData[status_payload_type] = list(existing_dict.values())
+            self._logger.debug(
+                f"[WS] _update_realtime_cache: Merged {updates_count} entity updates into {status_payload_type} "
+                f"(total cached entities: {len(existing_dict)})"
+            )
 
     async def _notify_listeners(self, listener_types, data):
         """Notify all registered listeners of data update.
@@ -1877,25 +1903,27 @@ class WebSocketManager:
         """Get all lights with current states.
 
         Returns:
-            List of light dictionaries with static config and real-time state.
+            List of light entities with config and status fields merged.
             Empty list if data unavailable.
         """
         try:
             await self.wait_for_initial_data(timeout=60)
-            if not self._realtimeInitialData or not self._readData:
+            if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getLights, returning empty list"
                 )
                 return []
 
-            lares_realtime = self._realtimeInitialData.get("PAYLOAD", {}).get("STATUS_OUTPUTS", [])
-            lights = [
-                output
-                for output in self._readData.get("OUTPUTS", [])
-                if output.get("CAT") == "LIGHT"
+            # Get entities from status payload type
+            status_entities = self._readData.get("STATUS_OUTPUTS", [])
+            # Get light entities from config payload type
+            light_config_entities = [
+                entity
+                for entity in self._readData.get("OUTPUTS", [])
+                if entity.get("CAT") == "LIGHT"
             ]
 
-            return self._merge_state_data(lights, lares_realtime)
+            return self._merge_state_data(light_config_entities, status_entities)
         except Exception as e:
             self._logger.error(f"Error retrieving lights: {e}", exc_info=True)
             return []  # Graceful degradation
@@ -1904,36 +1932,35 @@ class WebSocketManager:
         """Get all covers/roller blinds with current states.
 
         Returns:
-            List of cover dictionaries with static config and real-time state.
+            List of cover entities with config and status fields merged.
             Empty list if data unavailable.
         """
         try:
             await self.wait_for_initial_data(timeout=60)
-            if not self._readData or not self._realtimeInitialData:
+            if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getRolls, returning empty list"
                 )
                 return []
 
-            lares_realtime = self._realtimeInitialData.get("PAYLOAD", {}).get("STATUS_OUTPUTS", [])
-            rolls = [
-                output
-                for output in self._readData.get("OUTPUTS", [])
-                if output.get("CAT") == "ROLL"
+            # Get entities from status payload type
+            status_entities = self._readData.get("STATUS_OUTPUTS", [])
+            # Get cover entities from config payload type
+            cover_config_entities = [
+                entity
+                for entity in self._readData.get("OUTPUTS", [])
+                if entity.get("CAT") == "ROLL"
             ]
 
-            rolls_with_states = []
-            for roll in rolls:
-                roll_id = roll.get("ID")
-                state_data = next(
-                    (state for state in lares_realtime if state.get("ID") == roll_id), None
-                )
-                if state_data:
-                    state_data["STA"] = state_data.get("STA", "off").lower()
-                    state_data["POS"] = self._safe_int(state_data.get("POS"), 255)
-                    rolls_with_states.append({**roll, **state_data})
+            # Merge config with current status, then normalize cover-specific fields
+            merged_covers = self._merge_state_data(cover_config_entities, status_entities)
 
-            return rolls_with_states
+            # Additional cover-specific normalization for POS field
+            for cover_entity in merged_covers:
+                if "POS" in cover_entity:
+                    cover_entity["POS"] = self._safe_int(cover_entity.get("POS"), 255)
+
+            return merged_covers
         except Exception as e:
             self._logger.error(f"Error retrieving rolls: {e}", exc_info=True)
             return []  # Graceful degradation
@@ -1942,78 +1969,86 @@ class WebSocketManager:
         """Get all switches with current states.
 
         Returns:
-            List of switch dictionaries with static config and real-time state.
+            List of switch entities with config and status fields merged.
             Empty list if data unavailable.
         """
         try:
             await self.wait_for_initial_data(timeout=60)
-            if not self._realtimeInitialData or not self._readData:
+            if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getSwitches, returning empty list"
                 )
                 return []
 
-            lares_realtime = self._realtimeInitialData.get("PAYLOAD", {}).get("STATUS_OUTPUTS", [])
-            switches = [
-                output
-                for output in self._readData.get("OUTPUTS", [])
-                if output.get("CAT") != "LIGHT"
+            # Get entities from status payload type
+            status_entities = self._readData.get("STATUS_OUTPUTS", [])
+            # Get switch entities from config payload type (non-LIGHT outputs)
+            switch_config_entities = [
+                entity
+                for entity in self._readData.get("OUTPUTS", [])
+                if entity.get("CAT") != "LIGHT"
             ]
 
-            return self._merge_state_data(switches, lares_realtime)
+            return self._merge_state_data(switch_config_entities, status_entities)
         except Exception as e:
             self._logger.error(f"Error retrieving switches: {e}", exc_info=True)
             return []  # Graceful degradation
 
-    def _merge_state_data(self, entities, realtime_states):
-        """Merge static entity config with real-time state.
+    def _merge_state_data(self, config_entities, status_entities):
+        """Merge static entity config with current entity status from unified cache.
+
+        Both READ responses and REALTIME broadcasts update the unified _readData cache,
+        so it always contains the most recent entity status regardless of source.
 
         Args:
-            entities: List of static entity configurations
-            realtime_states: List of real-time state data
+            config_entities: List of entities from config payload type (e.g., OUTPUTS, ZONES, BUS_HAS)
+            status_entities: List of entities from status payload type (e.g., STATUS_OUTPUTS, STATUS_ZONES)
 
         Returns:
-            List of entities with merged state data
+            List of entities with merged config and status fields
         """
-        entities_with_states = []
-        for entity in entities:
-            entity_id = entity.get("ID")
-            state_data = next(
-                (state for state in realtime_states if state.get("ID") == entity_id),
+        merged_entities = []
+        for config_entity in config_entities:
+            entity_id = config_entity.get("ID")
+
+            # Get current status entity from unified cache
+            status_entity = next(
+                (entity for entity in status_entities if entity.get("ID") == entity_id),
                 None,
             )
-            if state_data:
-                # Normalize state values
-                state_data["STA"] = state_data.get("STA", "off").lower()
-                if "POS" in state_data:
-                    state_data["POS"] = int(state_data.get("POS", 255))
-                entities_with_states.append({**entity, **state_data})
 
-        return entities_with_states
+            if status_entity:
+                # Normalize status field values
+                status_entity["STA"] = status_entity.get("STA", "off").lower()
+                if "POS" in status_entity:
+                    status_entity["POS"] = int(status_entity.get("POS", 255))
+                merged_entities.append({**config_entity, **status_entity})
+
+        return merged_entities
 
     async def getDom(self):
         """Get all domus (domotic) sensors with current states.
 
         Returns:
-            List of domus sensor dictionaries with config and real-time state.
+            List of domus sensor entities with config and status fields merged.
             Empty list if data unavailable.
         """
         try:
             await self.wait_for_initial_data(timeout=60)
-            if not self._readData or not self._realtimeInitialData:
+            if not self._readData:
                 self._logger.warning("Initial data not available for getDom, returning empty list")
                 return []
 
-            domus = [
-                output
-                for output in self._readData.get("BUS_HAS", [])
-                if output.get("TYP") == "DOMUS"
+            # Get domus entities from config payload type
+            domus_config_entities = [
+                entity
+                for entity in self._readData.get("BUS_HAS", [])
+                if entity.get("TYP") == "DOMUS"
             ]
-            lares_realtime = self._realtimeInitialData.get("PAYLOAD", {}).get(
-                "STATUS_BUS_HA_SENSORS", []
-            )
+            # Get entities from status payload type
+            status_entities = self._readData.get("STATUS_BUS_HA_SENSORS", [])
 
-            return self._merge_state_data(domus, lares_realtime)
+            return self._merge_state_data(domus_config_entities, status_entities)
         except Exception as e:
             self._logger.error(f"Error retrieving domus sensors: {e}", exc_info=True)
             return []  # Graceful degradation
@@ -2022,59 +2057,58 @@ class WebSocketManager:
         """Get sensors of specific type with current states.
 
         Args:
-            sName: Sensor type name (e.g., "ZONES", "PARTITIONS", "STATUS_PARTITIONS", "POWER_LINES")
-                   Special handling for STATUS_SYSTEM which only exists in realtime data
+            sName: Payload type name (e.g., "ZONES", "PARTITIONS", "STATUS_PARTITIONS", "POWER_LINES")
+                   Can be config payload type or status payload type.
+                   Special handling for STATUS_SYSTEM which only exists as status payload type.
 
         Returns:
-            List of sensor dictionaries with config and real-time state.
+            List of sensor entities with config and status fields merged.
             Empty list if data unavailable.
         """
         try:
             await self.wait_for_initial_data(timeout=60)
-            if not self._readData or not self._realtimeInitialData:
+            if not self._readData:
                 self._logger.warning(
                     f"Initial data not available for getSensor({sName}), returning empty list"
                 )
                 return []
 
-            # Special case: STATUS_SYSTEM only exists in realtime, not in READ config
+            # Special case: STATUS_SYSTEM only exists as status payload type, no config payload type
             if sName == "STATUS_SYSTEM":
-                lares_realtime = self._realtimeInitialData.get("PAYLOAD", {}).get(
-                    "STATUS_SYSTEM", []
-                )
-                return lares_realtime if lares_realtime else []
+                status_entities = self._readData.get("STATUS_SYSTEM", [])
+                return status_entities if status_entities else []
 
-            # Normalize the sensor name - strip "STATUS_" prefix if present
+            # Normalize the payload type name - strip "STATUS_" prefix if present
             if sName.startswith("STATUS_"):
-                config_name = sName[7:]  # Remove "STATUS_" prefix
-                status_name = sName
+                config_payload_type = sName[7:]  # Remove "STATUS_" prefix
+                status_payload_type = sName
             else:
-                config_name = sName
-                status_name = f"STATUS_{sName}"
+                config_payload_type = sName
+                status_payload_type = f"STATUS_{sName}"
 
             # Use cached data from periodic refresh (every 60s) - no redundant network calls
-            # Periodic refresh already populates _readData with all config types
-            sensorList = self._readData.get(config_name, [])
+            # Periodic refresh already populates _readData with all config payload types
+            config_entities = self._readData.get(config_payload_type, [])
 
-            # Merge with real-time state from STATUS_* endpoint
-            # Check if realtime data is available (connection might be closed during restart)
-            lares_realtime = []
-            if self._realtimeInitialData is not None:
-                lares_realtime = self._realtimeInitialData.get("PAYLOAD", {}).get(status_name, [])
+            # Get current status entities from unified cache (updated by both READ and REALTIME)
+            status_entities = self._readData.get(status_payload_type, [])
 
-            sensor_with_states = []
-            for sensor in sensorList:
-                sensor_id = sensor.get("ID")
-                state_data = next(
-                    (state for state in lares_realtime if state.get("ID") == sensor_id),
+            merged_sensors = []
+            for config_entity in config_entities:
+                entity_id = config_entity.get("ID")
+
+                # Get current status entity from unified cache
+                status_entity = next(
+                    (entity for entity in status_entities if entity.get("ID") == entity_id),
                     None,
                 )
-                if state_data:
-                    sensor_with_states.append({**sensor, **state_data})
-                else:
-                    sensor_with_states.append(sensor)
 
-            return sensor_with_states
+                if status_entity:
+                    merged_sensors.append({**config_entity, **status_entity})
+                else:
+                    merged_sensors.append(config_entity)
+
+            return merged_sensors
         except Exception as e:
             self._logger.error(f"Error retrieving sensors for {sName}: {e}", exc_info=True)
             return []  # Graceful degradation

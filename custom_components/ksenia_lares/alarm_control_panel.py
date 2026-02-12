@@ -103,12 +103,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
 
         # Load initial partition data from cache if available
         try:
-            realtime_payload = (
-                self.ws_manager._realtimeInitialData.get("PAYLOAD", {})
-                if self.ws_manager._realtimeInitialData
-                else {}
-            )
-            partitions = realtime_payload.get("STATUS_PARTITIONS", [])
+            partitions = self.ws_manager.get_cached_data("STATUS_PARTITIONS")
             if partitions:
                 self._partitions_status = partitions
                 _LOGGER.debug(f"[KseniaACP] Loaded initial partition data from cache: {partitions}")
@@ -267,7 +262,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             return True
 
         # Check individual zone bypass status
-        zones = self.ws_manager.get_realtime_zones()
+        zones = self.ws_manager.get_cached_data("STATUS_ZONES")
         for zone in zones:
             zone_byp = zone.get("BYP", "NO")
             if zone_byp in ("AUTO", "MAN_M", "MAN_T"):
@@ -354,12 +349,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             # Also fetch partition status to detect alarm states
             # Partition alarm status is only available in STATUS_PARTITIONS
             try:
-                realtime_payload = (
-                    self.ws_manager._realtimeInitialData.get("PAYLOAD", {})
-                    if self.ws_manager._realtimeInitialData
-                    else {}
-                )
-                partitions = realtime_payload.get("STATUS_PARTITIONS", [])
+                partitions = self.ws_manager.get_cached_data("STATUS_PARTITIONS")
                 if partitions:
                     self._partitions_status = partitions
             except Exception as partition_err:
@@ -530,12 +520,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         # Get bypassed zones from realtime data
         bypassed_zones = []
         try:
-            realtime_payload = (
-                self.ws_manager._realtimeInitialData.get("PAYLOAD", {})
-                if self.ws_manager._realtimeInitialData
-                else {}
-            )
-            zones = realtime_payload.get("STATUS_ZONES", [])
+            zones = self.ws_manager.get_cached_data("STATUS_ZONES")
             for zone in zones:
                 zone_byp = zone.get("BYP", "NO")
                 if zone_byp != "NO":  # Zone is bypassed
@@ -549,12 +534,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         # Get partition status from realtime data
         partition_status = {}
         try:
-            realtime_payload = (
-                self.ws_manager._realtimeInitialData.get("PAYLOAD", {})
-                if self.ws_manager._realtimeInitialData
-                else {}
-            )
-            partitions = realtime_payload.get("STATUS_PARTITIONS", [])
+            partitions = self.ws_manager.get_cached_data("STATUS_PARTITIONS")
             for part in partitions:
                 part_id = part.get("ID", "Unknown")
                 part_arm = part.get("ARM", "Unknown")

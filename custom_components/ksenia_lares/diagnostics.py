@@ -112,8 +112,8 @@ def _collect_entity_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict
 def _collect_websocket_data(ws_manager) -> dict[str, Any]:
     """Collect snapshots of WebSocket manager data."""
     return {
-        "has_read_data": ws_manager._readData is not None,
-        "has_realtime_data": ws_manager._realtimeInitialData is not None,
+        "has_read_data": ws_manager.has_cached_data,
+        "has_realtime_subscription_registered": ws_manager._realtime_registered,
         "listeners_count": {
             listener_type: len(callbacks)
             for listener_type, callbacks in ws_manager.listeners.items()

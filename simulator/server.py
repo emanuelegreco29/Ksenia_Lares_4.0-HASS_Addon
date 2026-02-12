@@ -896,6 +896,7 @@ def connection_status_payload() -> List[Dict[str, Any]]:
     """Return a static STATUS_CONNECTION payload."""
     return [
         {
+            "ID": "1",  # Required: Entity ID for cache merging
             "INET": "ETH",
             "ETH": {
                 "LINK": "OK",
@@ -922,6 +923,7 @@ def panel_status_payload() -> List[Dict[str, Any]]:
     """Return a static STATUS_PANEL payload with voltages/currents."""
     return [
         {
+            "ID": "1",  # Required: Entity ID for cache merging
             "M": "13.8",  # Main PSU voltage
             "B": "13.0",  # Battery voltage
             "I": {"P": "0.8", "B1": "0.2", "B2": "0.0", "BCHG": "0.3"},

@@ -764,12 +764,9 @@ class KseniaSensorEntity(SensorEntity):
             # Siren status comes from STATUS_OUTPUTS
             self.ws_manager.register_listener("switches", self._handle_realtime_update)
             # Load initial state from cached realtime data if available
-            if self.ws_manager._realtimeInitialData:
-                cached = self.ws_manager._realtimeInitialData.get("PAYLOAD", {}).get(
-                    "STATUS_OUTPUTS", []
-                )
-                if cached:
-                    await self._handle_realtime_update(cached)
+            cached = self.ws_manager.get_cached_data("STATUS_OUTPUTS")
+            if cached:
+                await self._handle_realtime_update(cached)
         else:
             key = self._sensor_type if self._sensor_type != "system" else "systems"
             self.ws_manager.register_listener(key, self._handle_realtime_update)
@@ -2280,12 +2277,9 @@ class KseniaConnectionStatusSensor(SensorEntity):
         """Subscribe to connection realtime updates and read cached initial data."""
         self.ws_manager.register_listener("connection", self._handle_connection_update)
         # Populate with cached initial data if available
-        if self.ws_manager._realtimeInitialData:
-            cached = self.ws_manager._realtimeInitialData.get("PAYLOAD", {}).get(
-                "STATUS_CONNECTION", []
-            )
-            if cached:
-                await self._handle_connection_update(cached)
+        cached = self.ws_manager.get_cached_data("STATUS_CONNECTION")
+        if cached:
+            await self._handle_connection_update(cached)
         # Always write state after initialization to ensure entity is not Unknown
         self.async_write_ha_state()
 
@@ -2442,17 +2436,16 @@ class KseniaPowerSupplySensor(SensorEntity):
 
             # Populate with cached initial data if available
             _LOGGER.debug("[PowerSupply] Attempting to read cached realtime data")
-            if self.ws_manager._realtimeInitialData:
-                cached_payload = self.ws_manager._realtimeInitialData.get("PAYLOAD", {})
-                _LOGGER.debug("[PowerSupply] Cached PAYLOAD keys: %s", list(cached_payload.keys()))
-                cached = cached_payload.get("STATUS_PANEL", [])
-                if cached:
-                    _LOGGER.debug("[PowerSupply] Using cached STATUS_PANEL: %s", cached)
-                    await self._handle_panel_update(cached)
-                else:
-                    _LOGGER.debug("[PowerSupply] No STATUS_PANEL in cached payload")
+            if self.ws_manager.has_cached_data:
+                _LOGGER.debug(
+                    "[PowerSupply] Cached data keys: %s", list(self.ws_manager._readData.keys())
+                )
+            cached = self.ws_manager.get_cached_data("STATUS_PANEL")
+            if cached:
+                _LOGGER.debug("[PowerSupply] Using cached STATUS_PANEL: %s", cached)
+                await self._handle_panel_update(cached)
             else:
-                _LOGGER.debug("[PowerSupply] No realtime cache available yet")
+                _LOGGER.debug("[PowerSupply] No STATUS_PANEL in cached payload")
         except Exception as e:
             _LOGGER.error("[PowerSupply] Error during registration: %s", e, exc_info=True)
             self._listener_registered = False
@@ -2822,17 +2815,16 @@ class KseniaFaultMemorySensor(SensorEntity):
 
             # Populate with cached initial data if available
             _LOGGER.debug("[FaultMemory] Attempting to read cached realtime data")
-            if self.ws_manager._realtimeInitialData:
-                cached_payload = self.ws_manager._realtimeInitialData.get("PAYLOAD", {})
-                _LOGGER.debug("[FaultMemory] Cached PAYLOAD keys: %s", list(cached_payload.keys()))
-                cached = cached_payload.get("STATUS_SYSTEM", [])
-                if cached:
-                    _LOGGER.debug("[FaultMemory] Using cached STATUS_SYSTEM: %s", cached)
-                    await self._handle_system_update(cached)
-                else:
-                    _LOGGER.debug("[FaultMemory] No STATUS_SYSTEM in cached payload")
+            if self.ws_manager.has_cached_data:
+                _LOGGER.debug(
+                    "[FaultMemory] Cached data keys: %s", list(self.ws_manager._readData.keys())
+                )
+            cached = self.ws_manager.get_cached_data("STATUS_SYSTEM")
+            if cached:
+                _LOGGER.debug("[FaultMemory] Using cached STATUS_SYSTEM: %s", cached)
+                await self._handle_system_update(cached)
             else:
-                _LOGGER.debug("[FaultMemory] No realtime cache available yet")
+                _LOGGER.debug("[FaultMemory] No STATUS_SYSTEM in cached payload")
         except Exception as e:
             _LOGGER.error("[FaultMemory] Error during registration: %s", e, exc_info=True)
             self._listener_registered = False

@@ -305,10 +305,10 @@ class KseniaZoneBypassSwitch(SwitchEntity):
 
     async def async_update(self):
         """Refresh zone bypass state from cached data."""
-        if not self.ws_manager._readData:
+        # Get cached zone configuration data
+        zones = self.ws_manager.get_cached_data("ZONES")
+        if not zones:
             return
-        # readData() returns unwrapped payload directly
-        zones = self.ws_manager._readData.get("ZONES", [])
         for zone in zones:
             if str(zone.get("ID")) == str(self.zone_id):
                 if "BYP" in zone:
