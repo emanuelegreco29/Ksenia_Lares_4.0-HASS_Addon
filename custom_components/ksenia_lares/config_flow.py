@@ -18,7 +18,7 @@ from .const import (
     DEFAULT_SSL,
     DOMAIN,
 )
-from .websocketmanager import WebSocketManager, AuthenticationError
+from .websocketmanager import AuthenticationError, WebSocketManager
 
 _LOGGER = logging.getLogger(__name__)
 

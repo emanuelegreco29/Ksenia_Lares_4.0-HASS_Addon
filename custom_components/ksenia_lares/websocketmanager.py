@@ -764,9 +764,7 @@ class WebSocketManager:
 
         Used by polling to ensure data can be fetched even after connection loss.
         """
-        if self._connection_state == ConnectionState.CONNECTED and (
-            not self._is_ws_closed()
-        ):
+        if self._connection_state == ConnectionState.CONNECTED and (not self._is_ws_closed()):
             return  # Already connected
 
         self._logger.info("Attempting reconnection from polling request")
