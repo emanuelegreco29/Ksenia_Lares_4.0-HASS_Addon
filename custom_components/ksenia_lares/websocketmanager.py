@@ -359,19 +359,11 @@ class WebSocketManager:
             # Handle test mocks or non-standard loggers
             self._debug_mode = False
 
-    def _get_next_cmd_id(self):
-        """Get next command ID and increment counter.
-
-        Returns:
-            Unique command ID string
-        """
-        self._cmd_id_counter += 1
-        return str(self._cmd_id_counter)
-
     def _is_ws_closed(self) -> bool:
         """Safely determine if the WebSocket connection is closed."""
         if not self._ws:
             return True
+        return self._ws.state == websockets.State.CLOSED
 
         closed_attr = getattr(self._ws, "closed", None)
         if isinstance(closed_attr, bool):
@@ -756,6 +748,7 @@ class WebSocketManager:
                     await self._handle_connection_closed()
             except asyncio.CancelledError:
                 # Task is being cancelled during shutdown
+                self._logger.debug("monitor_connection_health task cancelled due to shutdown")
                 break
             except Exception as e:
                 self._logger.debug(f"Health check error: {e}")
@@ -771,9 +764,10 @@ class WebSocketManager:
                     self._last_periodic_read = time.time()
             except asyncio.CancelledError:
                 # Task is being cancelled during shutdown
+                self._logger.debug("Periodic read task cancelled due to shutdown")
                 break
             except Exception as e:
-                self._logger.debug(f"Periodic read error: {e}")
+                self._logger.warning(f"Periodic read error: {e}")
 
     async def _refresh_all_state(self):
         """Refresh all primary state from panel (zones, partitions, outputs, system, etc)."""
@@ -1167,15 +1161,12 @@ class WebSocketManager:
         elif cmd == "LOGS_RES":
             # LOGS_RES is a different CMD type, keep separate
             await self._handle_logs_response(message)
-        elif cmd in ("REALTIME", "REALTIME_RES"):
+        elif cmd == "REALTIME_RES":
             # REALTIME_RES is registration response, REALTIME is for updates
-            # Check if this is a registration response by seeing if we have a pending request
-            message_id = str(message.get("ID", ""))
-            if message_id and message_id in self._pending_realtime:
-                await self._handle_realtime_registration_response(message)
-            else:
-                # This is a realtime update, not a registration response
-                await self._handle_realtime_update(data)
+            await self._handle_realtime_registration_response(message)
+        elif cmd == "REALTIME":
+            # REALTIME is for updates, REALTIME_RES is registration response
+            await self._handle_realtime_update(data)
 
     def _find_pending_by_fallback(self, pending_dict, message, expected_cmd_prefix):
         """Find pending request using fallback matching when ID doesn't match.
@@ -1218,6 +1209,13 @@ class WebSocketManager:
                 and response_payload_type in ("GET_LAST_LOGS", "LAST_LOGS")
             ):
                 # LOGS command: older firmware responds with LAST_LOGS, newer with GET_LAST_LOGS
+                payload_match = True
+            elif (
+                expected_cmd_prefix == "REALTIME"
+                and req_payload_type == "REGISTER"
+                and response_payload_type == "REGISTER_ACK"
+            ):
+                # REALTIME registration ack
                 payload_match = True
 
             if payload_match:
@@ -1309,12 +1307,14 @@ class WebSocketManager:
                 message_id = fallback_id  # Use matched ID for logging and cleanup
 
         if read_data:
-            self._logger.debug(f"Resolving READ {message_id}")
+            self._logger.debug(
+                f"[FUTURE-DEBUG] Resolving READ {message_id} (future={id(read_data['future'])}) at {time.time():.6f}"
+            )
             try:
                 read_data["future"].set_result(message)
             except asyncio.InvalidStateError:
                 self._logger.debug(
-                    f"READ {message_id} future already resolved (response arrived after timeout)"
+                    f"[FUTURE-DEBUG] READ {message_id} future already resolved (response arrived after timeout) (future={id(read_data['future'])}) at {time.time():.6f}"
                 )
             finally:
                 self._pending_reads.pop(message_id, None)
@@ -1367,10 +1367,32 @@ class WebSocketManager:
         self._logger.debug(f"REALTIME registration response received for ID {message_id}")
 
         realtime_data = self._pending_realtime.get(message_id)
+        fallback_used = False
+
+        # Try fallback matching if exact ID doesn't match
+        if not realtime_data:
+            fallback_id, realtime_data = self._find_pending_by_fallback(
+                self._pending_realtime, message, "REALTIME"
+            )
+            if realtime_data:
+                self._logger.debug(
+                    f"[FALLBACK] REALTIME response fallback matched: Response ID={message.get('ID')} matched to pending request ID={fallback_id} via CMD+PAYLOAD_TYPE"
+                )
+                message_id = fallback_id  # Use matched ID for logging and cleanup
+                fallback_used = True
+
         if realtime_data:
-            self._logger.debug(f"Resolving REALTIME registration {message_id}")
+            fut_state = "done" if realtime_data["future"].done() else "pending"
+            self._logger.debug(
+                f"Resolving REALTIME registration {message_id}, future state before set_result: {fut_state} (fallback_used={fallback_used})"
+            )
             try:
-                realtime_data["future"].set_result(message)
+                if not realtime_data["future"].done():
+                    realtime_data["future"].set_result(message)
+                else:
+                    self._logger.debug(
+                        f"REALTIME {message_id} future already done before set_result (response may have arrived after timeout)"
+                    )
             except asyncio.InvalidStateError:
                 self._logger.debug(
                     f"REALTIME {message_id} future already resolved (response arrived after timeout)"
@@ -1379,7 +1401,7 @@ class WebSocketManager:
                 self._pending_realtime.pop(message_id, None)
         else:
             self._logger.debug(
-                f"Received REALTIME response for ID {message_id} but no matching pending request (likely timed out)"
+                f"Received REALTIME response for ID {message_id} but no matching pending request (likely timed out). Current pending_realtime keys: {list(self._pending_realtime.keys())}"
             )
 
     async def _handle_realtime_update(self, data):
