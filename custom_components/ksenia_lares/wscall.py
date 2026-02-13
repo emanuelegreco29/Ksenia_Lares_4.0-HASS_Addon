@@ -186,30 +186,38 @@ async def ws_login(websocket, pin, _LOGGER):
         - result_detail: Error detail string (e.g., "LOGIN_KO") on failure, None on success
     """
     payload = {"PIN": pin}
-    json_cmd = _build_message("LOGIN", "USER", payload, msg_id="1")
+    json_cmd = _build_message("LOGIN", "USER", payload)
 
-    try:
-        _LOGGER.debug(f"[{datetime.now()}] Sending LOGIN request")
-        await websocket.send(json_cmd)
-        _LOGGER.debug(f"[{datetime.now()}] LOGIN sent, waiting for response (5s timeout)")
-        json_resp = await asyncio.wait_for(websocket.recv(), timeout=5)
-        _LOGGER.debug(f"[{datetime.now()}] LOGIN response received")
+    _LOGGER.debug(f"[{datetime.now()}] Sending LOGIN request")
+    await websocket.send(json_cmd)
+    _LOGGER.debug(f"[{datetime.now()}] LOGIN sent, waiting for LOGIN_RES response (5s timeout)")
+    deadline = time.monotonic() + 5
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _LOGGER.error(f"[{datetime.now()}] LOGIN timeout: no LOGIN_RES received within 5s")
+            raise TimeoutError("LOGIN timeout: no LOGIN_RES received within 5s")
+        try:
+            json_resp = await asyncio.wait_for(websocket.recv(), timeout=remaining)
+        except TimeoutError:
+            _LOGGER.error(f"[{datetime.now()}] LOGIN timeout: no LOGIN_RES received within 5s")
+            raise
+        _LOGGER.debug(f"[{datetime.now()}] LOGIN response received: {json_resp}")
         response = json.loads(json_resp)
-
-        if response.get("PAYLOAD", {}).get("RESULT") == "OK":
-            login_id = int(response["PAYLOAD"]["ID_LOGIN"])
-            _LOGGER.info(f"Login successful, session ID: {login_id}")
-            return login_id, None
+        # Response CMD field should be LOGIN_RES, but to be safe in case of FW differences also accept LOGIN
+        if response.get("CMD") in ("LOGIN", "LOGIN_RES"):
+            if response.get("PAYLOAD", {}).get("RESULT") == "OK":
+                login_id = int(response["PAYLOAD"]["ID_LOGIN"])
+                _LOGGER.info(f"Login successful, session ID: {login_id}")
+                return login_id, None
+            else:
+                result_detail = response.get("PAYLOAD", {}).get("RESULT_DETAIL", "UNKNOWN")
+                _LOGGER.error(f"Login failed: {response}")
+                return -1, result_detail
         else:
-            result_detail = response.get("PAYLOAD", {}).get("RESULT_DETAIL", "UNKNOWN")
-            _LOGGER.error(f"Login failed: {response}")
-            return -1, result_detail
-    except TimeoutError:
-        _LOGGER.error(f"[{datetime.now()}] LOGIN timeout: no response from device within 5s")
-        raise
-    except Exception as e:
-        _LOGGER.error(f"Login error: {e}")
-        raise
+            _LOGGER.debug(
+                f"[{datetime.now()}] Ignoring non-LOGIN_RES message: {response.get('CMD')}"
+            )
 
 
 async def realtime(websocket, login_id, _LOGGER, ws_lock=None, pending_realtime=None):
@@ -234,7 +242,7 @@ async def realtime(websocket, login_id, _LOGGER, ws_lock=None, pending_realtime=
     _LOGGER.debug(f"[{datetime.now()}] Starting real-time monitoring")
 
     # Generate unique message ID
-    msg_id = str(int(time.time() * 1000) % 100000)
+    msg_id = _get_next_cmd_id()
 
     payload = {
         "ID_LOGIN": str(login_id),
@@ -324,11 +332,11 @@ async def readData(
 
     # Generate unique message ID if not provided
     if read_id is None:
-        read_id = str(int(time.time() * 1000) % 100000)
+        read_id = _get_next_cmd_id()
 
     payload = {
         "ID_LOGIN": str(login_id),
-        "ID_READ": "1",
+        "ID_READ": read_id,
         "TYPES": READ_TYPES,
     }
     json_cmd = _build_message("READ", "MULTI_TYPES", payload, msg_id=read_id)
@@ -600,11 +608,11 @@ async def readSensorData(
 
     try:
         # Generate unique message ID
-        msg_id = str(int(time.time() * 1000) % 100000)
+        msg_id = _get_next_cmd_id()
 
         payload = {
             "ID_LOGIN": str(login_id),
-            "ID_READ": "1",
+            "ID_READ": msg_id,
             "TYPES": [sensor_type],
         }
         json_cmd = _build_message("READ", "MULTI_TYPES", payload, msg_id=msg_id)

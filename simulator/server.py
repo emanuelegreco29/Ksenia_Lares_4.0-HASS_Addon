@@ -1486,10 +1486,10 @@ async def set_delays(request: Request) -> Dict[str, Any]:
 async def handle_websocket_login(ws: WebSocket, msg_id: str) -> None:
     """Handle LOGIN command."""
     response = build_message(
-        cmd="LOGIN",
+        cmd="LOGIN_RES",
         msg_id=msg_id,
         payload_type="USER",
-        payload={"RESULT": "OK", "ID_LOGIN": state.session_id},
+        payload={"RESULT": "OK", "RESULT_DETAIL": "LOGIN_OK", "ID_LOGIN": state.session_id},
     )
     await ws.send_text(response)
 
@@ -1743,14 +1743,16 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         state.connections.append(ws)
         logger.info(f"[WEBSOCKET] WebSocket connected from {ws.client} (total connections: {len(state.connections)})")
         logger.debug(f"[WEBSOCKET] Connection accepted with subprotocol KS_WSOCK")
-        
-        # CRITICAL: Flush any pending broadcasts that were queued while disconnected
+
+        # Always clear pending broadcasts on connect
         if state.pending_broadcasts:
             logger.info(f"[WEBSOCKET] Flushing {len(state.pending_broadcasts)} pending broadcasts after reconnection")
             for pending_payload in state.pending_broadcasts:
                 await state.broadcast_realtime(pending_payload)
             state.pending_broadcasts.clear()
             logger.info(f"[WEBSOCKET] Pending broadcasts flushed")
+        # Also clear any remaining pending broadcasts (defensive)
+        state.pending_broadcasts.clear()
     except Exception as e:
         logger.warning(
             f"WebSocket connection failed: {e}. "
@@ -1826,6 +1828,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     finally:
         if ws in state.connections:
             state.connections.remove(ws)
+        # Clear pending broadcasts on disconnect
+        if state.pending_broadcasts:
+            logger.info(f"[WEBSOCKET] Clearing {len(state.pending_broadcasts)} pending broadcasts on disconnect")
+            state.pending_broadcasts.clear()
 
 
 class ColoredFormatter(logging.Formatter):
