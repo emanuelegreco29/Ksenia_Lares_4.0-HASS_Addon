@@ -273,6 +273,8 @@ def _add_diagnostic_sensors(ws_manager, device_info, entities):
 class KseniaSensorEntity(SensorEntity):
     """Base sensor entity for Ksenia Lares devices."""
 
+    _attr_has_entity_name = True
+
     """
     Initializes a Ksenia sensor entity.
 
@@ -305,7 +307,7 @@ class KseniaSensorEntity(SensorEntity):
                 attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
             if "AN" in sensor_data:
                 attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            state_mapping = {"R": "Closed", "A": "Open"}
+            state_mapping = {"R": "closed", "A": "open"}
             mapped_state = state_mapping.get(
                 sensor_data.get("STA"), sensor_data.get("STA", "unknown")
             )
@@ -335,7 +337,14 @@ class KseniaSensorEntity(SensorEntity):
             self._state = mapped_state
             self._attributes = attributes
             self._sensor_type = "door"
-            self._name = f"Door Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            sensor_name = (
+                sensor_data.get("NM")
+                or sensor_data.get("LBL")
+                or sensor_data.get("DES")
+                or str(self._id)
+            )
+            self._attr_translation_key = "magnetic_sensor"
+            self._attr_translation_placeholders = {"sensor_name": sensor_name}
             # Store complete raw data for debugging and transparency
             self._raw_data = dict(sensor_data)
 
@@ -351,7 +360,7 @@ class KseniaSensorEntity(SensorEntity):
                 attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
             if "AN" in sensor_data:
                 attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            state_mapping = {"R": "Closed", "A": "Open"}
+            state_mapping = {"R": "closed", "A": "open"}
             mapped_state = state_mapping.get(
                 sensor_data.get("STA"), sensor_data.get("STA", "unknown")
             )
@@ -379,7 +388,14 @@ class KseniaSensorEntity(SensorEntity):
             self._state = mapped_state
             self._attributes = attributes
             self._sensor_type = "window"
-            self._name = f"Window Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            sensor_name = (
+                sensor_data.get("NM")
+                or sensor_data.get("LBL")
+                or sensor_data.get("DES")
+                or str(self._id)
+            )
+            self._attr_translation_key = "magnetic_sensor"
+            self._attr_translation_placeholders = {"sensor_name": sensor_name}
             # Store complete raw data for debugging and transparency
             self._raw_data = dict(sensor_data)
 
@@ -399,7 +415,7 @@ class KseniaSensorEntity(SensorEntity):
             if "AN" in sensor_data:
                 attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
             if "STA" in sensor_data:
-                state_mapping = {"R": "Released", "A": "Armed", "D": "Disarmed"}
+                state_mapping = {"R": "released", "A": "armed", "D": "disarmed"}
                 attributes["State"] = state_mapping.get(sensor_data["STA"], sensor_data["STA"])
             if "BYP" in sensor_data:
                 attributes["Bypass"] = (
@@ -449,7 +465,7 @@ class KseniaSensorEntity(SensorEntity):
             if "AN" in sensor_data:
                 attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
             if "STA" in sensor_data:
-                state_mapping = {"R": "Off", "A": "On"}
+                state_mapping = {"R": "off", "A": "on"}
                 mapped_state = state_mapping.get(
                     sensor_data.get("STA"), sensor_data.get("STA", "unknown")
                 )
@@ -478,12 +494,20 @@ class KseniaSensorEntity(SensorEntity):
 
             self._state = mapped_state
             self._attributes = attributes
+            sensor_name = (
+                sensor_data.get("NM")
+                or sensor_data.get("LBL")
+                or sensor_data.get("DES")
+                or str(self._id)
+            )
             if sensor_data.get("CAT", "").upper() == "EMOV":
                 self._sensor_type = "emov"
-                self._name = f"External Movement Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+                self._attr_translation_key = "movement_sensor"
+                self._attr_translation_placeholders = {"sensor_name": sensor_name}
             else:
                 self._sensor_type = "imov"
-                self._name = f"Internal Movement Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+                self._attr_translation_key = "movement_sensor"
+                self._attr_translation_placeholders = {"sensor_name": sensor_name}
             # Store complete raw data for debugging and transparency
             self._raw_data = dict(sensor_data)
 
@@ -501,7 +525,7 @@ class KseniaSensorEntity(SensorEntity):
             if "AN" in sensor_data:
                 attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
             if "STA" in sensor_data:
-                state_mapping = {"R": "Closed", "A": "Open"}
+                state_mapping = {"R": "closed", "A": "open"}
                 mapped_state = state_mapping.get(sensor_data["STA"], sensor_data["STA"])
                 attributes["State"] = mapped_state
             if "BYP" in sensor_data:
@@ -528,7 +552,14 @@ class KseniaSensorEntity(SensorEntity):
             self._state = mapped_state
             self._attributes = attributes
             self._sensor_type = "pmc"
-            self._name = f"{sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            sensor_name = (
+                sensor_data.get("NM")
+                or sensor_data.get("LBL")
+                or sensor_data.get("DES")
+                or str(self._id)
+            )
+            self._attr_translation_key = "magnetic_sensor"
+            self._attr_translation_placeholders = {"sensor_name": sensor_name}
             # Store complete raw data for debugging and transparency
             self._raw_data = dict(sensor_data)
 
@@ -538,7 +569,7 @@ class KseniaSensorEntity(SensorEntity):
                 attributes["Description"] = sensor_data["DES"]
             if "PRT" in sensor_data:
                 attributes["Partition"] = sensor_data["PRT"]
-            state_mapping = {"R": "Rest", "A": "Seismic Activity", "N": "Normal"}
+            state_mapping = {"R": "rest", "A": "seismic_activity", "N": "normal"}
             mapped_state = state_mapping.get(
                 sensor_data.get("STA"), sensor_data.get("STA", "unknown")
             )
@@ -559,7 +590,14 @@ class KseniaSensorEntity(SensorEntity):
             # Store complete raw data for debugging and transparency
             self._raw_data = dict(sensor_data)
             self._sensor_type = "seism"
-            self._name = f"Seismic Sensor {sensor_data.get('NM') or sensor_data.get('LBL') or sensor_data.get('DES') or self._id}"
+            sensor_name = (
+                sensor_data.get("NM")
+                or sensor_data.get("LBL")
+                or sensor_data.get("DES")
+                or str(self._id)
+            )
+            self._attr_translation_key = "seismic_sensor"
+            self._attr_translation_placeholders = {"sensor_name": sensor_name}
 
         elif sensor_type == "system":
             arm_data = sensor_data.get("ARM", {})
@@ -573,13 +611,13 @@ class KseniaSensorEntity(SensorEntity):
                 )
                 state_code = ""
             state_mapping = {
-                "T": "Fully Armed",
-                "T_IN": "Fully Armed with Entry Delay Active",
-                "T_OUT": "Fully Armed with Exit Delay Active",
-                "P": "Partially Armed",
-                "P_IN": "Partially Armed with Entry Delay Active",
-                "P_OUT": "Partially Armed with Exit Delay Active",
-                "D": "Disarmed",
+                "T": "fully_armed",
+                "T_IN": "fully_armed_entry_delay",
+                "T_OUT": "fully_armed_exit_delay",
+                "P": "partially_armed",
+                "P_IN": "partially_armed_entry_delay",
+                "P_OUT": "partially_armed_exit_delay",
+                "D": "disarmed",
             }
             readable_state = state_mapping.get(state_code, state_code)
             if state_code not in state_mapping:
@@ -592,11 +630,13 @@ class KseniaSensorEntity(SensorEntity):
             self._state = readable_state
             # Store complete raw data for debugging and transparency
             self._raw_data = dict(sensor_data)
-            # Only add ID suffix if not the first/default system
-            self._name = (
-                "Alarm System Status" if self._id == "1" else f"Alarm System Status {self._id}"
-            )
             self._attributes = {}
+            self._name = None
+            self._attr_has_entity_name = True
+            self._attr_translation_key = "alarm_system_status"
+            # Only add ID suffix if not the first/default system
+            suffix = "" if str(self._id) == "1" else f" {self._id}"
+            self._attr_translation_placeholders = {"suffix": suffix}
 
         elif sensor_type == "powerlines":
             # Extract consumption and production
@@ -725,19 +765,21 @@ class KseniaSensorEntity(SensorEntity):
 
         elif sensor_type == "siren":
             # Siren sensor (read-only status)
-            state_mapping = {"ON": "On", "OFF": "Off", "on": "On", "off": "Off"}
+            state_mapping = {"ON": "on", "OFF": "off", "on": "on", "off": "off"}
             sta = sensor_data.get("STA", "OFF")
             self._state = state_mapping.get(sta, sta)
+            label = sensor_data.get("DES") or sensor_data.get("LBL") or sensor_data.get("NM")
             self._attributes = {
                 "ID": sensor_data.get("ID"),
-                "Description": sensor_data.get("DES")
-                or sensor_data.get("LBL")
-                or sensor_data.get("NM"),
+                "Description": label,
                 "Category": sensor_data.get("CAT"),
             }
             if "MOD" in sensor_data:
                 self._attributes["Mode"] = sensor_data["MOD"]
-            self._name = f"Siren Status: {self._name}"
+            self._name = None
+            self._attr_has_entity_name = True
+            self._attr_translation_key = "siren_status"
+            self._attr_translation_placeholders = {"label": label or str(self._id)}
             # Store complete raw data for debugging and transparency
             self._raw_data = dict(sensor_data)
 
@@ -795,24 +837,18 @@ class KseniaSensorEntity(SensorEntity):
                     state_code = arm_data.get("S")
                     _LOGGER.debug(f"System sensor update: ID={self._id}, ARM code={state_code}")
                     state_mapping = {
-                        "T": "Fully Armed",
-                        "T_IN": "Fully Armed with Entry Delay Active",
-                        "T_OUT": "Fully Armed with Exit Delay Active",
-                        "P": "Partially Armed",
-                        "P_IN": "Partially Armed with Entry Delay Active",
-                        "P_OUT": "Partially Armed with Exit Delay Active",
-                        "D": "Disarmed",
+                        "T": "fully_armed",
+                        "T_IN": "fully_armed_entry_delay",
+                        "T_OUT": "fully_armed_exit_delay",
+                        "P": "partially_armed",
+                        "P_IN": "partially_armed_entry_delay",
+                        "P_OUT": "partially_armed_exit_delay",
+                        "D": "disarmed",
                     }
                     readable_state = state_mapping.get(state_code, state_code)
                     _LOGGER.debug(f"System sensor state mapping: {state_code} -> {readable_state}")
 
                     self._state = readable_state
-                    # Only add ID suffix if not the first/default system
-                    self._name = (
-                        "Alarm System Status"
-                        if self._id == "1"
-                        else f"Alarm System Status {self._id}"
-                    )
                     self._attributes = {}
                     # Merge update into raw_data to preserve all fields
                     self._raw_data.update(data)
@@ -959,7 +995,7 @@ class KseniaSensorEntity(SensorEntity):
                             attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
                         if "AN" in data:
                             attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
-                        state_mapping = {"R": "Closed", "A": "Open"}
+                        state_mapping = {"R": "closed", "A": "open"}
                         mapped_state = state_mapping.get(
                             data.get("STA"), data.get("STA", "unknown")
                         )
@@ -1009,7 +1045,7 @@ class KseniaSensorEntity(SensorEntity):
                         if "AN" in data:
                             attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
                         if "STA" in data:
-                            state_mapping = {"R": "Released", "A": "Armed", "D": "Disarmed"}
+                            state_mapping = {"R": "released", "A": "armed", "D": "disarmed"}
                             attributes["State"] = state_mapping.get(data["STA"], data["STA"])
                         if "BYP" in data:
                             attributes["Bypass"] = (
@@ -1050,7 +1086,7 @@ class KseniaSensorEntity(SensorEntity):
                         if "AN" in data:
                             attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
                         if "STA" in data:
-                            state_mapping = {"R": "Off", "A": "On"}
+                            state_mapping = {"R": "off", "A": "on"}
                             mapped_state = state_mapping.get(
                                 data.get("STA"), data.get("STA", "unknown")
                             )
@@ -1101,7 +1137,7 @@ class KseniaSensorEntity(SensorEntity):
                             attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
                         # Status
                         if "STA" in data:
-                            state_mapping = {"R": "Closed", "A": "Open"}
+                            state_mapping = {"R": "closed", "A": "open"}
                             mapped_state = state_mapping.get(data["STA"], data["STA"])
                             attributes["State"] = mapped_state
                         # Bypass
@@ -1140,9 +1176,9 @@ class KseniaSensorEntity(SensorEntity):
             elif self._sensor_type == "seism":
                 for data in data_list:
                     if str(data.get("ID")) == str(self._id):
-                        state_mapping = {"R": "Rest", "A": "Seismic Activity", "N": "Normal"}
+                        state_mapping = {"R": "rest", "A": "seismic_activity", "N": "normal"}
                         raw_state = data.get("STA")
-                        mapped_state = state_mapping.get(raw_state, raw_state or "Unknown")
+                        mapped_state = state_mapping.get(raw_state, raw_state or "unknown")
 
                         attributes = {
                             "ID": data.get("ID"),
@@ -1174,7 +1210,7 @@ class KseniaSensorEntity(SensorEntity):
                 # Siren status from real-time switch updates with proper state mapping
                 # Only update if the ID matches this specific siren sensor
                 if str(data.get("ID")) == str(self._id):
-                    state_mapping = {"ON": "On", "OFF": "Off", "on": "On", "off": "Off"}
+                    state_mapping = {"ON": "on", "OFF": "off", "on": "on", "off": "off"}
                     sta = data.get("STA", "OFF")
                     self._state = state_mapping.get(sta, sta)
                     self._attributes = {
@@ -1220,7 +1256,7 @@ class KseniaSensorEntity(SensorEntity):
     @property
     def name(self) -> str:
         """Returns the name of the sensor."""
-        return self._name
+        return self._name or super().name
 
     @property
     def state(self) -> str | None:
@@ -1261,7 +1297,7 @@ class KseniaSensorEntity(SensorEntity):
         """
         Indicates if the sensor should be polled to retrieve its state.
         """
-        if self._sensor_type in ("door", "pmc", "window", "imov", "emov"):
+        if self._sensor_type in ("door", "pmc", "window", "imov", "emov", "seism"):
             return False
 
         return True
@@ -1288,13 +1324,13 @@ class KseniaSensorEntity(SensorEntity):
                         arm_data = system["ARM"]
                         state_code = arm_data.get("S")
                         state_mapping = {
-                            "T": "Fully Armed",
-                            "T_IN": "Fully Armed with Entry Delay Active",
-                            "T_OUT": "Fully Armed with Exit Delay Active",
-                            "P": "Partially Armed",
-                            "P_IN": "Partially Armed with Entry Delay Active",
-                            "P_OUT": "Partially Armed with Exit Delay Active",
-                            "D": "Disarmed",
+                            "T": "fully_armed",
+                            "T_IN": "fully_armed_entry_delay",
+                            "T_OUT": "fully_armed_exit_delay",
+                            "P": "partially_armed",
+                            "P_IN": "partially_armed_entry_delay",
+                            "P_OUT": "partially_armed_exit_delay",
+                            "D": "disarmed",
                         }
                         self._state = state_mapping.get(state_code, state_code)
                         self._raw_data.update(system)
@@ -1474,7 +1510,7 @@ class KseniaSensorEntity(SensorEntity):
                     if "AN" in sensor:
                         attributes["Signal Type"] = "Analog" if sensor["AN"] == "T" else "Digital"
                     if "STA" in sensor:
-                        state_mapping = {"R": "Released", "A": "Armed", "D": "Disarmed"}
+                        state_mapping = {"R": "released", "A": "armed", "D": "disarmed"}
                         attributes["State"] = state_mapping.get(sensor["STA"], sensor["STA"])
                     if "BYP" in sensor:
                         attributes["Bypass"] = (
@@ -1505,7 +1541,7 @@ class KseniaSensorEntity(SensorEntity):
             switches = await self.ws_manager.getSwitches()
             for switch in switches:
                 if str(switch.get("ID")) == str(self._id):
-                    state_mapping = {"ON": "On", "OFF": "Off", "on": "On", "off": "Off"}
+                    state_mapping = {"ON": "on", "OFF": "off", "on": "on", "off": "off"}
                     sta = switch.get("STA", "OFF")
                     self._state = state_mapping.get(sta, sta)
                     self._attributes = {
@@ -1517,7 +1553,7 @@ class KseniaSensorEntity(SensorEntity):
                         self._attributes["Mode"] = switch["MOD"]
                     self._raw_data.update(switch)
                     break
-        elif self._sensor_type in ("door", "pmc", "zones", "imov", "window", "emov"):
+        elif self._sensor_type in ("door", "pmc", "zones", "imov", "window", "emov", "seism"):
             return
 
         else:
@@ -1535,16 +1571,19 @@ class KseniaSensorEntity(SensorEntity):
 class KseniaAlarmTriggerStatusSensor(SensorEntity):
     """Aggregated sensor showing system-wide alarm trigger status across all partitions."""
 
+    _attr_has_entity_name = True
+
+    _attr_translation_key = "alarm_trigger_status"
+
     def __init__(self, ws_manager, device_info=None):
         """Initialize the alarm trigger status sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
-        self._state = "Not triggered"
+        self._state = "not_triggered"
         self._alarmed_zones = []  # Track current alarmed zones
         self._zone_names = {}  # Map zone IDs to names
         self._partition_labels = {}  # Map partition IDs to labels
         self._attributes = {
-            "possible_states": ["Not triggered", "Alarm memory", "Ongoing Alarm"],
             "alarmed_zones": [],
         }
         self._raw_data = {}
@@ -1580,8 +1619,8 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
             # Fallback: initialize with default names
             self._partition_labels["1"] = "1"
             self._partition_labels["2"] = "2"
-            self._attributes["Partition 1 1"] = "Not triggered"
-            self._attributes["Partition 2 2"] = "Not triggered"
+            self._attributes["Partition 1"] = "Not triggered"
+            self._attributes["Partition 2"] = "Not triggered"
 
     async def _handle_zone_update(self, data_list):
         """Handle realtime zone updates and track alarmed zones."""
@@ -1617,14 +1656,13 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
         previous_state = self._state
 
         if has_ongoing_alarm:
-            self._state = "Ongoing Alarm"
+            self._state = "ongoing_alarm"
         elif has_alarm_memory:
-            self._state = "Alarm memory"
+            self._state = "alarm_memory"
         else:
-            self._state = "Not triggered"
+            self._state = "not_triggered"
             # Only clear alarmed zones when transitioning OUT of alarm state
-            # (was Ongoing Alarm or Alarm memory, now Not triggered)
-            if previous_state != "Not triggered":
+            if previous_state != "not_triggered":
                 self._alarmed_zones = []
                 self._attributes["alarmed_zones"] = []
 
@@ -1639,11 +1677,6 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
     def device_info(self) -> dict | None:
         """Return device information about this entity."""
         return self._device_info
-
-    @property
-    def name(self) -> str:
-        """Returns the name of the sensor."""
-        return "Alarm trigger status"
 
     @property
     def state(self) -> str | None:
@@ -1693,11 +1726,15 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
 class KseniaAlarmTamperStatusSensor(SensorEntity):
     """Diagnostic sensor showing system-wide tampering status from partitions, zones, and peripherals."""
 
+    _attr_has_entity_name = True
+
+    _attr_translation_key = "system_tampering"
+
     def __init__(self, ws_manager, device_info=None):
         """Initialize the alarm tamper status sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
-        self._state = "OK"
+        self._state = "ok"
         self._tampered_zones = []  # Track current tampered zones
         self._zone_names = {}  # Map zone IDs to names
         self._attributes = {
@@ -1801,13 +1838,13 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
         # Priority order: RF Jamming > Panel > Ongoing > Memory
 
         if self._attributes.get("jam_868_detected"):
-            self._state = "RF Jamming Detected"
+            self._state = "rf_jamming_detected"
         elif self._attributes.get("panel_tampered"):
-            self._state = "Panel Tampering"
+            self._state = "panel_tampering"
         elif self._attributes.get("peripheral_tampers", 0) > 0:
-            self._state = "Peripheral Tampering"
+            self._state = "peripheral_tampering"
         elif self._tampered_zones:
-            self._state = "Zone Tampering"
+            self._state = "zone_tampering"
         else:
             # Check partition TST for alarm-level tampering
             has_ongoing_tamper = any(
@@ -1818,11 +1855,11 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
             )
 
             if has_ongoing_tamper:
-                self._state = "Ongoing tampering"
+                self._state = "ongoing_tampering"
             elif has_tamper_memory:
-                self._state = "Tampering memory"
+                self._state = "tampering_memory"
             else:
-                self._state = "OK"
+                self._state = "ok"
                 # Clear tampered zones when tamper is cleared
                 self._tampered_zones = []
                 self._attributes["tampered_zones"] = []
@@ -1838,11 +1875,6 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
     def device_info(self):
         """Return device information about this entity."""
         return self._device_info
-
-    @property
-    def name(self):
-        """Returns the name of the sensor."""
-        return "System tampering"
 
     @property
     def state(self):
@@ -1883,6 +1915,10 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
 class KseniaEventLogSensor(SensorEntity):
     """Diagnostic sensor showing last event log EV and attributes with last 5 logs."""
 
+    _attr_has_entity_name = True
+
+    _attr_translation_key = "event_log"
+
     def __init__(self, ws_manager, device_info=None):
         self.ws_manager = ws_manager
         self._device_info = device_info
@@ -1897,10 +1933,6 @@ class KseniaEventLogSensor(SensorEntity):
     @property
     def device_info(self):
         return self._device_info
-
-    @property
-    def name(self):
-        return "Event log"
 
     @property
     def state(self):
@@ -1983,11 +2015,15 @@ class KseniaEventLogSensor(SensorEntity):
 class KseniaLastAlarmEventSensor(SensorEntity):
     """Diagnostic sensor tracking the last alarm event with zones, partitions, and timestamps."""
 
+    _attr_has_entity_name = True
+
+    _attr_translation_key = "last_alarm_event"
+
     def __init__(self, ws_manager, device_info=None):
         """Initialize the last alarm event sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
-        self._state = "No alarm"
+        self._state = "no_alarm"
         self._zone_names = {}
         self._partition_labels = {}
         self._last_alarmed_zones = []
@@ -2100,11 +2136,6 @@ class KseniaLastAlarmEventSensor(SensorEntity):
         return self._device_info
 
     @property
-    def name(self):
-        """Returns the name of the sensor."""
-        return "Last alarm event"
-
-    @property
     def state(self):
         """Returns the state of the sensor."""
         return self._state
@@ -2178,11 +2209,15 @@ class KseniaLastAlarmEventSensor(SensorEntity):
 class KseniaLastTamperedZonesSensor(SensorEntity):
     """Diagnostic sensor showing the last zones that triggered a tamper event (persistent)."""
 
+    _attr_has_entity_name = True
+
+    _attr_translation_key = "last_tampered_zones"
+
     def __init__(self, ws_manager, device_info=None):
         """Initialize the last tampered zones sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
-        self._state = "No tamper"  # Default: no tamper recorded
+        self._state = "no_tamper"  # Default: no tamper recorded
         self._zone_names = {}
         self._last_tampered_zones = []
         self._raw_data = {}
@@ -2231,11 +2266,6 @@ class KseniaLastTamperedZonesSensor(SensorEntity):
         return self._device_info
 
     @property
-    def name(self):
-        """Returns the name of the sensor."""
-        return "Last tampered zones"
-
-    @property
     def state(self):
         """Returns the state of the sensor."""
         return self._state
@@ -2265,6 +2295,10 @@ class KseniaLastTamperedZonesSensor(SensorEntity):
 
 class KseniaConnectionStatusSensor(SensorEntity):
     """Diagnostic sensor showing system connection status and details."""
+
+    _attr_has_entity_name = True
+
+    _attr_translation_key = "connection_status"
 
     def __init__(self, ws_manager, device_info=None):
         """Initialize the connection status sensor."""
@@ -2315,13 +2349,13 @@ class KseniaConnectionStatusSensor(SensorEntity):
 
         # Set state based on active connection type
         if inet == "ETH" and eth_link == "OK":
-            self._state = "Ethernet"
+            self._state = "ethernet"
         elif inet == "MOBILE" and mobile_link in ("E", "2", "3", "4"):
-            self._state = "Mobile"
+            self._state = "mobile"
         elif cloud_state == "OPERATIVE":
-            self._state = "Cloud"
+            self._state = "cloud"
         else:
-            self._state = "Offline"
+            self._state = "offline"
 
         self.async_write_ha_state()
 
@@ -2334,11 +2368,6 @@ class KseniaConnectionStatusSensor(SensorEntity):
     def device_info(self):
         """Return device information about this entity."""
         return self._device_info
-
-    @property
-    def name(self):
-        """Returns the name of the sensor."""
-        return "Connection status"
 
     @property
     def state(self):
@@ -2416,6 +2445,10 @@ class KseniaConnectionStatusSensor(SensorEntity):
 
 class KseniaPowerSupplySensor(SensorEntity):
     """Diagnostic sensor showing power supply health (main and battery voltages)."""
+
+    _attr_has_entity_name = True
+
+    _attr_translation_key = "power_supply"
 
     def __init__(self, ws_manager, device_info=None):
         """Initialize the power supply sensor."""
@@ -2529,13 +2562,13 @@ class KseniaPowerSupplySensor(SensorEntity):
             battery_ok = self._battery_voltage >= 12.0
 
             if main_ok and battery_ok:
-                self._state = "OK"
+                self._state = "ok"
             elif main_ok and not battery_ok:
-                self._state = "Low Battery"
+                self._state = "low_battery"
             elif not main_ok and battery_ok:
-                self._state = "Low Main Power"
+                self._state = "low_main_power"
             else:
-                self._state = "Critical"
+                self._state = "critical"
 
             _LOGGER.debug(
                 "[PowerSupply] State set to: %s (Main OK: %s, Battery OK: %s)",
@@ -2562,11 +2595,6 @@ class KseniaPowerSupplySensor(SensorEntity):
     def device_info(self):
         """Return device information about this entity."""
         return self._device_info
-
-    @property
-    def name(self):
-        """Returns the name of the sensor."""
-        return "Power supply"
 
     @property
     def state(self):
@@ -2630,11 +2658,15 @@ class KseniaPowerSupplySensor(SensorEntity):
 class KseniaSystemFaultsSensor(SensorEntity):
     """Diagnostic sensor showing system-wide fault status from power, communication, and peripherals."""
 
+    _attr_has_entity_name = True
+
+    _attr_translation_key = "system_faults"
+
     def __init__(self, ws_manager, device_info=None):
         """Initialize the system faults sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
-        self._state = "OK"
+        self._state = "ok"
         self._attributes = {
             "power_supply_faults": 0,
             "battery_faults": 0,
@@ -2724,19 +2756,19 @@ class KseniaSystemFaultsSensor(SensorEntity):
 
         # Set state
         if total_faults == 0:
-            self._state = "OK"
+            self._state = "ok"
         elif total_faults <= 2:
-            self._state = "Minor faults"
+            self._state = "minor_faults"
         elif total_faults <= 5:
-            self._state = "Multiple faults"
+            self._state = "multiple_faults"
         else:
-            self._state = "Critical faults"
+            self._state = "critical_faults"
 
         self.async_write_ha_state()
 
     def _reset_faults(self):
         """Reset all fault counters."""
-        self._state = "OK"
+        self._state = "ok"
         self._attributes["power_supply_faults"] = 0
         self._attributes["battery_faults"] = 0
         self._attributes["communication_faults"] = 0
@@ -2756,11 +2788,6 @@ class KseniaSystemFaultsSensor(SensorEntity):
     def device_info(self):
         """Return device information about this entity."""
         return self._device_info
-
-    @property
-    def name(self):
-        """Returns the name of the sensor."""
-        return "System faults"
 
     @property
     def state(self):
@@ -2797,11 +2824,15 @@ class KseniaSystemFaultsSensor(SensorEntity):
 class KseniaFaultMemorySensor(SensorEntity):
     """Diagnostic sensor showing system fault memory from STATUS_SYSTEM.FAULT_MEM."""
 
+    _attr_has_entity_name = True
+
+    _attr_translation_key = "fault_memory"
+
     def __init__(self, ws_manager, device_info=None):
         """Initialize the fault memory sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
-        self._state = "No faults"
+        self._state = "no_faults"
         self._fault_list = []
         self._raw_data = {}
         self._listener_registered = False
@@ -2837,7 +2868,7 @@ class KseniaFaultMemorySensor(SensorEntity):
             # Validate input
             if not data_list:
                 _LOGGER.debug("[FaultMemory] Empty data_list received")
-                self._state = "No faults"
+                self._state = "no_faults"
                 self._fault_list = []
                 self.async_write_ha_state()
                 return
@@ -2846,14 +2877,14 @@ class KseniaFaultMemorySensor(SensorEntity):
                 _LOGGER.warning(
                     "[FaultMemory] Expected list, got %s: %s", type(data_list), data_list
                 )
-                self._state = "No faults"
+                self._state = "no_faults"
                 self._fault_list = []
                 self.async_write_ha_state()
                 return
 
             if len(data_list) == 0:
                 _LOGGER.debug("[FaultMemory] Empty list received")
-                self._state = "No faults"
+                self._state = "no_faults"
                 self._fault_list = []
                 self.async_write_ha_state()
                 return
@@ -2873,7 +2904,7 @@ class KseniaFaultMemorySensor(SensorEntity):
                     type(fault_mem),
                     fault_mem,
                 )
-                self._state = "No faults"
+                self._state = "no_faults"
                 self._fault_list = []
                 self.async_write_ha_state()
                 return
@@ -2885,7 +2916,7 @@ class KseniaFaultMemorySensor(SensorEntity):
                 self._state = fault_mem[0]
                 _LOGGER.debug("[FaultMemory] State set to first fault: %s", self._state)
             else:
-                self._state = "No faults"
+                self._state = "no_faults"
                 _LOGGER.debug("[FaultMemory] No faults in list, state set to 'No faults'")
 
             self.async_write_ha_state()
@@ -2893,7 +2924,7 @@ class KseniaFaultMemorySensor(SensorEntity):
             _LOGGER.error(
                 "[FaultMemory] Unexpected error in _handle_system_update: %s", e, exc_info=True
             )
-            self._state = "No faults"
+            self._state = "no_faults"
             self._fault_list = []
             self.async_write_ha_state()
 
@@ -2906,11 +2937,6 @@ class KseniaFaultMemorySensor(SensorEntity):
     def device_info(self):
         """Return device information about this entity."""
         return self._device_info
-
-    @property
-    def name(self):
-        """Returns the name of the sensor."""
-        return "Fault memory"
 
     @property
     def state(self):
@@ -2939,7 +2965,7 @@ class KseniaFaultMemorySensor(SensorEntity):
     @property
     def icon(self):
         """Returns the icon of the sensor based on fault status."""
-        if self._state == "No faults":
+        if self._state == "no_faults":
             return "mdi:check-circle-outline"
         else:
             return "mdi:alert-circle"

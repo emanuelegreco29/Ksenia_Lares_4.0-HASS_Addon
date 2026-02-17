@@ -3,10 +3,25 @@
     "step": {
       "user": {
         "title": "Ksenia Lares Configuration",
-        "description": "Enter your Ksenia Lares device connection details"
+        "description": "Enter your Ksenia Lares device connection details. Enable secure connection (wss://) to the device. Select which entity platforms to enable.",
+        "data": {
+          "host": "Host",
+          "pin": "Pin",
+          "port": "Port",
+          "ssl": "SSL",
+          "platforms": "Platforms to include"
+        }
       },
       "reconfigure": {
-        "title": "Reconfigure Ksenia Lares"
+        "title": "Reconfigure Ksenia Lares",
+        "description": "Update your Ksenia Lares device connection details. Enable secure connection (wss://) to the device. Select which entity platforms to enable.",
+        "data": {
+          "host": "Host",
+          "pin": "Pin",
+          "port": "Port",
+          "ssl": "SSL",
+          "platforms": "Platforms to include"
+        }
       }
     },
     "error": {
@@ -19,23 +34,189 @@
       "reconfigure_successful": "Ksenia Lares configuration updated successfully"
     }
   },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Ksenia Lares Options"
-      }
-    }
-  },
   "entity": {
+    "button": {
+      "clear_communications": {
+        "name": "Clear Communications"
+      },
+      "clear_alarms": {
+        "name": "Clear Alarms"
+      },
+      "clear_faults_memory": {
+        "name": "Clear Faults Memory"
+      }
+    },
     "alarm_control_panel": {
       "alarm_control_panel": {
-        "name": "Alarm Control Panel"
+        "name": "Alarm Control Panel",
+        "state": {
+          "disarmed": "Disarmed",
+          "armed_away": "Armed Away",
+          "armed_home": "Armed Home",
+          "armed_custom_bypass": "Partially Armed",
+          "pending": "Pending",
+          "triggered": "Triggered"
+        }
       }
     },
     "sensor": {
+      "alarm_system_status": {
+        "name": "Alarm System Status{suffix}",
+        "state": {
+          "fully_armed": "Fully Armed",
+          "fully_armed_entry_delay": "Entry Delay Fully Arming",
+          "fully_armed_exit_delay": "Exit Delay Fully Arming",
+          "partially_armed": "Partially Armed",
+          "partially_armed_entry_delay": "Entry Delay Partially Arming",
+          "partially_armed_exit_delay": "Exit Delay Partially Arming",
+          "disarmed": "Disarmed"
+        }
+      },
+      "siren_status": {
+        "name": "Siren Status {label}",
+        "state": {
+          "on": "On",
+          "off": "Off"
+        }
+      },
+      "event_log": {
+        "name": "Event Log"
+      },
+      "connection_status": {
+        "name": "Connection Status",
+        "state": {
+          "ethernet": "Ethernet",
+          "mobile": "Mobile",
+          "cloud": "Cloud",
+          "offline": "Offline"
+        }
+      },
+      "power_supply": {
+        "name": "Power Supply",
+        "state": {
+          "ok": "Ok",
+          "low_battery": "Low Battery",
+          "low_main_power": "Low Main Power",
+          "critical": "Critical"
+        }
+      },
+      "system_tampering": {
+        "name": "System Tampering",
+        "state": {
+          "ok": "Ok",
+          "rf_jamming_detected": "RF Jamming Detected",
+          "panel_tampering": "Panel Tampering",
+          "peripheral_tampering": "Peripheral Tampering",
+          "zone_tampering": "Zone Tampering",
+          "ongoing_tampering": "Ongoing Tampering",
+          "tampering_memory": "Tampering Memory"
+        }
+      },
+      "system_faults": {
+        "name": "System Faults",
+        "state": {
+          "ok": "Ok",
+          "minor_faults": "Minor Faults",
+          "multiple_faults": "Multiple Faults",
+          "critical_faults": "Critical Faults"
+        }
+      },
       "fault_memory": {
-        "name": "Fault memory"
+        "name": "Fault Memory",
+        "state": {
+          "no_faults": "No Faults"
+        }
+      },
+      "last_alarm_event": {
+        "name": "Last Alarm Event",
+        "state": {
+          "no_alarm": "No Alarm",
+          "ongoing_alarm": "Ongoing Alarm",
+          "alarm_memory": "Alarm Memory"
+        }
+      },
+      "last_tampered_zones": {
+        "name": "Last Tampered Zones",
+        "state": {
+          "no_tamper": "No Tamper"
+        }
+      },
+      "alarm_trigger_status": {
+        "name": "Alarm Trigger Status",
+        "state": {
+          "not_triggered": "Not triggered",
+          "ongoing_alarm": "Triggered",
+          "alarm_memory": "Alarm memory"
+        }
+      },
+      "magnetic_sensor": {
+        "name": "{sensor_name}",
+        "state": {
+          "closed": "Closed",
+          "open": "Open",
+          "unknown": "Unknown"
+        }
+      },
+      "movement_sensor": {
+        "name": "{sensor_name}",
+        "state": {
+          "off": "Clear",
+          "on": "Motion detected",
+          "unknown": "Unknown"
+        }
+      },
+      "seismic_sensor": {
+        "name": "{sensor_name}",
+        "state": {
+          "rest": "Rest",
+          "seismic_activity": "Seismic Activity",
+          "normal": "Normal",
+          "unknown": "Unknown"
+        }
+      }
+    },
+    "switch": {
+      "zone_bypass": {
+        "name": "Bypass {zone_name}"
       }
     }
-  }
+  },
+  "exceptions": {
+    "pin_required_disarm": {
+      "message": "PIN code required to disarm"
+    },
+    "pin_required_arm": {
+      "message": "PIN code required to arm"
+    },
+    "scenario_missing": {
+      "message": "No {cat} scenario available. Configure a scenario with CAT={cat}"
+    },
+    "wrong_pin": {
+      "message": "Wrong PIN"
+    },
+    "wrong_pin_check": {
+      "message": "Wrong PIN - please check your PIN code"
+    },
+    "disarm_failed": {
+      "message": "Disarm command failed"
+    },
+    "arm_away_failed": {
+      "message": "Arm away command failed"
+    },
+    "arm_home_failed": {
+      "message": "Arm home command failed"
+    }
+  },
+      "selector": {
+      "platforms": {
+        "options": {  
+          "alarm_control_panel": "Alarm Control Panel",
+          "sensor": "Sensor",
+          "switch": "Switch",
+          "light": "Light",
+          "cover": "Cover",
+          "button": "Button"
+        }  
+      }
+    }
 }

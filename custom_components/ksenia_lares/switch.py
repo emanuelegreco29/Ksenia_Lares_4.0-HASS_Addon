@@ -209,11 +209,14 @@ class KseniaSwitchEntity(SwitchEntity):
 class KseniaZoneBypassSwitch(SwitchEntity):
     """Switch entity to control zone bypass status."""
 
+    _attr_has_entity_name = True
+    _attr_translation_key = "zone_bypass"
+
     def __init__(self, ws_manager, zone_id, name, zone_data, device_info=None):
         """Initialize the zone bypass switch."""
         self.ws_manager = ws_manager
         self.zone_id = zone_id
-        self._name = f"{name} Bypass"
+        self._attr_translation_placeholders = {"zone_name": name}
         self._available = True
         self._device_info = device_info
         # Parse bypass status: NO/N means not bypassed, anything else (AUTO, MAN_M, MAN_T) means bypassed
@@ -251,11 +254,6 @@ class KseniaZoneBypassSwitch(SwitchEntity):
     def entity_category(self):
         """Return the entity category for this switch."""
         return EntityCategory.CONFIG
-
-    @property
-    def name(self):
-        """Returns the name of the switch."""
-        return self._name
 
     @property
     def is_on(self):

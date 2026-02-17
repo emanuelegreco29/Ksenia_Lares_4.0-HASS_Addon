@@ -6,6 +6,7 @@ import logging
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
 from .const import (
     CONF_HOST,
@@ -32,11 +33,6 @@ _CONFIG_SCHEMA = vol.Schema(
         vol.Required(CONF_PLATFORMS, default=DEFAULT_PLATFORMS): cv.multi_select(DEFAULT_PLATFORMS),
     }
 )
-
-_DESCRIPTION = {
-    "ssl_info": "Enable secure connection (wss://) to the device.",
-    "platform_info": "Select which entity platforms to enable.",
-}
 
 
 class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -105,14 +101,20 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_PLATFORMS,
                 default=user_input.get(CONF_PLATFORMS) if user_input else DEFAULT_PLATFORMS,
-            ): cv.multi_select(DEFAULT_PLATFORMS),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=DEFAULT_PLATFORMS,
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key="platforms",
+                )
+            ),
         }
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(schema_data),
             errors=errors,
-            description_placeholders=_DESCRIPTION,
             last_step=False,
         )
 
@@ -183,14 +185,20 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_PLATFORMS,
                 default=config_entry.data.get(CONF_PLATFORMS)
                 or config_entry.data.get("Platforms", DEFAULT_PLATFORMS),
-            ): cv.multi_select(DEFAULT_PLATFORMS),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=DEFAULT_PLATFORMS,
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key="platforms",
+                )
+            ),
         }
 
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=vol.Schema(schema_data),
             errors=errors,
-            description_placeholders=_DESCRIPTION,
         )
 
     @staticmethod

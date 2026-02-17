@@ -77,6 +77,9 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
     Scenarios are discovered from device configuration using CAT field.
     """
 
+    _attr_has_entity_name = True
+    _attr_translation_key = "alarm_control_panel"
+
     def __init__(self, ws_manager, scenario_map, device_info=None):
         """Initialize the alarm control panel.
 
@@ -280,11 +283,6 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         return self._device_info
 
     @property
-    def name(self):
-        """Return the name of the alarm control panel."""
-        return "Alarm Control Panel"
-
-    @property
     def alarm_state(self):
         """Return the current alarm state."""
         return self._state
@@ -374,12 +372,17 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             Exception: If DISARM scenario not configured or execution fails
         """
         if code is None:
-            raise ValueError("PIN code required to disarm")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="pin_required_disarm",
+            )
 
         scenario_id = self._scenarios.get("DISARM")
         if not scenario_id:
-            raise ValueError(
-                "No DISARM scenario available. " "Configure a scenario with CAT=DISARM"
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="scenario_missing",
+                translation_placeholders={"cat": "DISARM"},
             )
 
         try:
@@ -393,14 +396,23 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
                 _LOGGER.error("Failed to disarm partitions")
                 detail = self.ws_manager.get_last_command_error_detail()
                 if detail == "WRONG_PIN":
-                    raise HomeAssistantError("Wrong PIN")
-                raise HomeAssistantError("Disarm command failed")
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="wrong_pin",
+                    )
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="disarm_failed",
+                )
 
         except HomeAssistantError:
             raise
         except Exception as e:
             _LOGGER.error("Error disarming partitions: %s", e)
-            raise HomeAssistantError("Disarm command failed") from e
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="disarm_failed",
+            ) from e
 
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
         """Arm all partitions in away mode.
@@ -413,11 +425,18 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             Exception: If ARM scenario not configured or execution fails
         """
         if code is None:
-            raise ValueError("PIN code required to arm")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="pin_required_arm",
+            )
 
         scenario_id = self._scenarios.get("ARM")
         if not scenario_id:
-            raise ValueError("No ARM scenario available. " "Configure a scenario with CAT=ARM")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="scenario_missing",
+                translation_placeholders={"cat": "ARM"},
+            )
 
         try:
             _LOGGER.debug("Arming all partitions in away mode via scenario %s", scenario_id)
@@ -430,14 +449,23 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
                 _LOGGER.error("Failed to arm partitions in away mode")
                 detail = self.ws_manager.get_last_command_error_detail()
                 if detail == "WRONG_PIN":
-                    raise HomeAssistantError("Wrong PIN")
-                raise HomeAssistantError("Arm away command failed")
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="wrong_pin",
+                    )
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="arm_away_failed",
+                )
 
         except HomeAssistantError:
             raise
         except Exception as e:
             _LOGGER.error("Error arming partitions in away mode: %s", e)
-            raise HomeAssistantError("Arm away command failed") from e
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="arm_away_failed",
+            ) from e
 
     async def async_alarm_arm_home(self, code: str | None = None) -> None:
         """Arm all partitions in home/stay mode.
@@ -454,12 +482,17 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             Exception: If PARTIAL scenario not configured or execution fails
         """
         if code is None:
-            raise ValueError("PIN code required to arm")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="pin_required_arm",
+            )
 
         scenario_id = self._scenarios.get("PARTIAL")
         if not scenario_id:
-            raise ValueError(
-                "No PARTIAL scenario available. " "Configure a scenario with CAT=PARTIAL"
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="scenario_missing",
+                translation_placeholders={"cat": "PARTIAL"},
             )
 
         try:
@@ -473,14 +506,23 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
                 _LOGGER.error("Failed to arm partitions in home mode")
                 detail = self.ws_manager.get_last_command_error_detail()
                 if detail in ("LOGIN_KO", "WRONG_PIN"):
-                    raise HomeAssistantError("Wrong PIN - please check your PIN code")
-                raise HomeAssistantError("Arm home command failed")
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="wrong_pin_check",
+                    )
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="arm_home_failed",
+                )
 
         except HomeAssistantError:
             raise
         except Exception as e:
             _LOGGER.error("Error arming partitions in home mode: %s", e)
-            raise HomeAssistantError("Arm home command failed") from e
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="arm_home_failed",
+            ) from e
 
     @property
     def icon(self):

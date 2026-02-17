@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, ANY
 import asyncio
+from homeassistant.exceptions import HomeAssistantError
 
 
 @pytest.mark.asyncio
@@ -318,7 +319,8 @@ async def test_ksenia_zone_bypass_switch_initialization():
     entity = KseniaZoneBypassSwitch(ws_manager, "1", "Zone 1", zone_data)
     
     assert entity.zone_id == "1"
-    assert entity._name == "Zone 1 Bypass"
+    assert entity._attr_translation_key == "zone_bypass"
+    assert entity._attr_translation_placeholders == {"zone_name": "Zone 1"}
     assert entity.ws_manager is ws_manager
 
 
@@ -434,7 +436,7 @@ async def test_ksenia_event_log_sensor_initialization():
     entity = KseniaEventLogSensor(ws_manager)
     
     assert entity.ws_manager is ws_manager
-    assert entity.name == "Event log"
+    assert entity._attr_translation_key == "event_log"
 
 
 @pytest.mark.asyncio
@@ -836,7 +838,7 @@ async def test_ksenia_connection_status_sensor_initialization():
     entity = KseniaConnectionStatusSensor(ws_manager)
     
     assert entity.ws_manager is ws_manager
-    assert entity.name == "Connection status"
+    assert entity._attr_translation_key == "connection_status"
 
 
 @pytest.mark.asyncio
@@ -848,7 +850,7 @@ async def test_ksenia_alarm_tamper_status_sensor_initialization():
     entity = KseniaAlarmTamperStatusSensor(ws_manager)
     
     assert entity.ws_manager is ws_manager
-    assert entity.name == "System tampering"
+    assert entity._attr_translation_key == "system_tampering"
 
 
 @pytest.mark.asyncio
@@ -860,7 +862,7 @@ async def test_ksenia_system_faults_sensor_initialization():
     entity = KseniaSystemFaultsSensor(ws_manager)
     
     assert entity.ws_manager is ws_manager
-    assert entity.name == "System faults"
+    assert entity._attr_translation_key == "system_faults"
 
 
 @pytest.mark.asyncio
@@ -872,7 +874,7 @@ async def test_ksenia_power_supply_sensor_initialization():
     entity = KseniaPowerSupplySensor(ws_manager)
     
     assert entity.ws_manager is ws_manager
-    assert entity.name == "Power supply"
+    assert entity._attr_translation_key == "power_supply"
 
 
 # ============================================================================
@@ -888,7 +890,7 @@ async def test_ksenia_alarm_trigger_status_sensor_initialization():
     entity = KseniaAlarmTriggerStatusSensor(ws_manager)
     
     assert entity.ws_manager is ws_manager
-    assert entity.name == "Alarm trigger status"
+    assert entity._attr_translation_key == "alarm_trigger_status"
 
 
 @pytest.mark.asyncio
@@ -900,7 +902,7 @@ async def test_ksenia_last_alarm_event_sensor_initialization():
     entity = KseniaLastAlarmEventSensor(ws_manager)
     
     assert entity.ws_manager is ws_manager
-    assert entity.name == "Last alarm event"
+    assert entity._attr_translation_key == "last_alarm_event"
 
 
 @pytest.mark.asyncio
@@ -912,7 +914,7 @@ async def test_ksenia_last_tampered_zones_sensor_initialization():
     entity = KseniaLastTamperedZonesSensor(ws_manager)
     
     assert entity.ws_manager is ws_manager
-    assert entity.name == "Last tampered zones"
+    assert entity._attr_translation_key == "last_tampered_zones"
 
 
 # ============================================================================
@@ -1025,7 +1027,7 @@ async def test_alarm_control_panel_name():
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
     
-    assert panel.name == "Alarm Control Panel"
+    assert panel._attr_translation_key == "alarm_control_panel"
 
 
 @pytest.mark.asyncio
@@ -1068,7 +1070,7 @@ async def test_alarm_control_panel_disarm_without_code():
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
     
-    with pytest.raises(ValueError, match="PIN code required"):
+    with pytest.raises(HomeAssistantError):
         await panel.async_alarm_disarm(code=None)
 
 
@@ -1098,13 +1100,13 @@ async def test_alarm_control_panel_disarm_failure():
     from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
     
     ws_manager = MagicMock()
-    ws_manager.executeScenario = AsyncMock(return_value=False)
+    ws_manager.executeScenario_with_login = AsyncMock(return_value=False)
     ws_manager.register_listener = MagicMock()
-    
+
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
-    
-    with pytest.raises(Exception, match="Disarm command failed"):
+
+    with pytest.raises(HomeAssistantError):
         await panel.async_alarm_disarm(code="123456")
 
 
@@ -1346,7 +1348,7 @@ async def test_alarm_control_panel_arm_without_code():
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
     
-    with pytest.raises(ValueError, match="PIN code required"):
+    with pytest.raises(HomeAssistantError):
         await panel.async_alarm_arm_away(code=None)
 
 
