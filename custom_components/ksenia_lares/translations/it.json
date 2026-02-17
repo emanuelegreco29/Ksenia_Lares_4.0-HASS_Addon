@@ -1,0 +1,222 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurazione Ksenia Lares",
+        "description": "Inserisci i dettagli di connessione del dispositivo Ksenia Lares. Abilita la connessione sicura (wss://) al dispositivo. Seleziona quali piattaforme di entità abilitare.",
+        "data": {
+          "host": "Host",
+          "pin": "PIN",
+          "port": "Porta",
+          "ssl": "SSL",
+          "platforms": "Piattaforme da includere"
+        }
+      },
+      "reconfigure": {
+        "title": "Riconfigura Ksenia Lares",
+        "description": "Aggiorna i dettagli di connessione del dispositivo Ksenia Lares. Abilita la connessione sicura (wss://) al dispositivo. Seleziona quali piattaforme di entità abilitare.",
+        "data": {
+          "host": "Host",
+          "pin": "PIN",
+          "port": "Porta",
+          "ssl": "SSL",
+          "platforms": "Piattaforme da includere"
+        }
+      }
+    },
+    "error": {
+      "invalid_host": "Formato indirizzo IP non valido",
+      "cannot_connect": "Impossibile connettersi al dispositivo. Controlla host, porta e impostazioni SSL",
+      "invalid_pin": "Codice PIN non valido"
+    },
+    "abort": {
+      "already_configured": "Il dispositivo è già configurato",
+      "reconfigure_successful": "Configurazione Ksenia Lares aggiornata correttamente"
+    }
+  },
+  "entity": {
+    "button": {
+      "clear_communications": {
+        "name": "Cancella Comunicazioni"
+      },
+      "clear_alarms": {
+        "name": "Cancella Allarmi"
+      },
+      "clear_faults_memory": {
+        "name": "Cancella Memoria Guasti"
+      }
+    },
+    "alarm_control_panel": {
+      "alarm_control_panel": {
+        "name": "Pannello di Controllo Allarme",
+        "state": {
+          "disarmed": "Disinserito",
+          "armed_away": "Inserito Totale",
+          "armed_home": "Inserito Parziale",
+          "armed_custom_bypass": "Inserito Parziale",
+          "pending": "In Attesa",
+          "triggered": "Scattato"
+        }
+      }
+    },
+    "sensor": {
+      "alarm_system_status": {
+        "name": "Stato del Sistema di Allarme{suffix}",
+        "state": {
+          "fully_armed": "Completamente Inserito",
+          "fully_armed_entry_delay": "Ritardo Ingresso Inserimento Totale",
+          "fully_armed_exit_delay": "Ritardo Uscita Inserimento Totale",
+          "partially_armed": "Parzialmente Inserito",
+          "partially_armed_entry_delay": "Ritardo Ingresso Inserimento Parziale",
+          "partially_armed_exit_delay": "Ritardo Uscita Inserimento Parziale",
+          "disarmed": "Disinserito"
+        }
+      },
+      "siren_status": {
+        "name": "Stato Sirena {label}",
+        "state": {
+          "on": "Accesa",
+          "off": "Spenta"
+        }
+      },
+      "event_log": {
+        "name": "Registro Eventi"
+      },
+      "connection_status": {
+        "name": "Stato Connessione",
+        "state": {
+          "ethernet": "Ethernet",
+          "mobile": "Mobile",
+          "cloud": "Cloud",
+          "offline": "Offline"
+        }
+      },
+      "power_supply": {
+        "name": "Alimentazione",
+        "state": {
+          "ok": "Ok",
+          "low_battery": "Batteria Scarica",
+          "low_main_power": "Alimentazione Principale Bassa",
+          "critical": "Critico"
+        }
+      },
+      "system_tampering": {
+        "name": "Manomissione Sistema",
+        "state": {
+          "ok": "Ok",
+          "rf_jamming_detected": "Rilevato Disturbo RF",
+          "panel_tampering": "Manomissione Centrale",
+          "peripheral_tampering": "Manomissione Periferiche",
+          "zone_tampering": "Manomissione Zone",
+          "ongoing_tampering": "Manomissione in Corso",
+          "tampering_memory": "Memoria Manomissione"
+        }
+      },
+      "system_faults": {
+        "name": "Guasti Sistema",
+        "state": {
+          "ok": "Ok",
+          "minor_faults": "Guasti Minori",
+          "multiple_faults": "Guasti Multipli",
+          "critical_faults": "Guasti Critici"
+        }
+      },
+      "fault_memory": {
+        "name": "Memoria Guasti",
+        "state": {
+          "no_faults": "Nessun Guasto"
+        }
+      },
+      "last_alarm_event": {
+        "name": "Ultimo Evento di Allarme",
+        "state": {
+          "no_alarm": "Nessun Allarme",
+          "ongoing_alarm": "Allarme in Corso",
+          "alarm_memory": "Memoria Allarme"
+        }
+      },
+      "last_tampered_zones": {
+        "name": "Ultime Zone Manomesse",
+        "state": {
+          "no_tamper": "Nessuna Manomissione"
+        }
+      },
+      "alarm_trigger_status": {
+        "name": "Stato Attivazione Allarme",
+        "state": {
+          "not_triggered": "Libero",
+          "ongoing_alarm": "Attivato",
+          "alarm_memory": "Memoria alarme"
+        }
+      },
+      "magnetic_sensor": {
+        "name": "{sensor_name}",
+        "state": {
+          "closed": "Chiuso",
+          "open": "Aperto",
+          "unknown": "Sconosciuto"
+        }
+      },
+      "movement_sensor": {
+        "name": "{sensor_name}",
+        "state": {
+          "off": "Libero",
+          "on": "Movimento Rilevato",
+          "unknown": "Sconosciuto"
+        }
+      },
+      "seismic_sensor": {
+        "name": "{sensor_name}",
+        "state": {
+          "rest": "Riposo",
+          "seismic_activity": "Attività Sismica",
+          "normal": "Normale",
+          "unknown": "Sconosciuto"
+        }
+      }
+    },
+    "switch": {
+      "zone_bypass": {
+        "name": "Esclusione {zone_name}"
+      }
+    }
+  },
+  "exceptions": {
+    "pin_required_disarm": {
+      "message": "PIN richiesto per disinserire"
+    },
+    "pin_required_arm": {
+      "message": "PIN richiesto per inserire"
+    },
+    "scenario_missing": {
+      "message": "Nessuno scenario {cat} disponibile. Configura uno scenario con CAT={cat}"
+    },
+    "wrong_pin": {
+      "message": "PIN errato"
+    },
+    "wrong_pin_check": {
+      "message": "PIN errato - controlla il tuo PIN"
+    },
+    "disarm_failed": {
+      "message": "Comando di disinserimento fallito"
+    },
+    "arm_away_failed": {
+      "message": "Comando di inserimento totale fallito"
+    },
+    "arm_home_failed": {
+      "message": "Comando di inserimento parziale fallito"
+    }
+  },
+  "selector": {
+    "platforms": {
+      "options": {
+        "alarm_control_panel": "Pannello di Controllo Allarme",
+        "sensor": "Sensore",
+        "switch": "Interruttore",
+        "light": "Luce",
+        "cover": "Copertura",
+        "button": "Pulsante"
+      }
+    }
+  }
+}

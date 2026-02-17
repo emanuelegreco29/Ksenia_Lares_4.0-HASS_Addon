@@ -2,39 +2,220 @@
   "config": {
     "step": {
       "user": {
-        "title": "Ksenia Lares Konfiguration",
-        "description": "Ange anslutningsuppgifter för din Ksenia Lares-enhet"
+        "title": "Ksenia Lares-konfiguration",
+        "description": "Ange anslutningsuppgifter för din Ksenia Lares-enhet. Aktivera säker anslutning (wss://) till enheten. Välj vilka entitetsplattformar som ska aktiveras.",
+        "data": {
+          "host": "Värd",
+          "pin": "PIN",
+          "port": "Port",
+          "ssl": "SSL",
+          "platforms": "Plattformar att inkludera"
+        }
       },
       "reconfigure": {
-        "title": "Omkonfigurera Ksenia Lares"
+        "title": "Omkonfigurera Ksenia Lares",
+        "description": "Uppdatera anslutningsuppgifter för din Ksenia Lares-enhet. Aktivera säker anslutning (wss://) till enheten. Välj vilka entitetsplattformar som ska aktiveras.",
+        "data": {
+          "host": "Värd",
+          "pin": "PIN",
+          "port": "Port",
+          "ssl": "SSL",
+          "platforms": "Plattformar att inkludera"
+        }
       }
     },
     "error": {
       "invalid_host": "Ogiltigt IP-adressformat",
       "cannot_connect": "Det gick inte att ansluta till enheten. Kontrollera värd, port och SSL-inställningar",
-      "invalid_pin": "Ogiltigt PIN-kod"
+      "invalid_pin": "Ogiltig PIN-kod"
     },
     "abort": {
       "already_configured": "Enheten är redan konfigurerad",
       "reconfigure_successful": "Ksenia Lares-konfigurationen uppdaterades"
     }
   },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Ksenia Lares Alternativ"
-      }
-    }
-  },
   "entity": {
+    "button": {
+      "clear_communications": {
+        "name": "Rensa Kommunikationer"
+      },
+      "clear_alarms": {
+        "name": "Rensa Larm"
+      },
+      "clear_faults_memory": {
+        "name": "Rensa Felminne"
+      }
+    },
     "alarm_control_panel": {
       "alarm_control_panel": {
-        "name": "Alarmkontrollpanel"
+        "name": "Larmpanel",
+        "state": {
+          "disarmed": "Avaktiverat",
+          "armed_away": "Aktiverat Borta",
+          "armed_home": "Aktiverat Hemma",
+          "armed_custom_bypass": "Delvis Aktiverat",
+          "pending": "Väntar",
+          "triggered": "Utlöst"
+        }
       }
     },
     "sensor": {
+      "alarm_system_status": {
+        "name": "Larmsystemstatus{suffix}",
+        "state": {
+          "fully_armed": "Fullständigt Aktiverat",
+          "fully_armed_entry_delay": "Ingångsfördröjning Full Aktivering",
+          "fully_armed_exit_delay": "Utgångsfördröjning Full Aktivering",
+          "partially_armed": "Delvis Aktiverat",
+          "partially_armed_entry_delay": "Ingångsfördröjning Delvis Aktivering",
+          "partially_armed_exit_delay": "Utgångsfördröjning Delvis Aktivering",
+          "disarmed": "Avaktiverat"
+        }
+      },
+      "siren_status": {
+        "name": "Sirenstatus {label}",
+        "state": {
+          "on": "På",
+          "off": "Av"
+        }
+      },
+      "event_log": {
+        "name": "Händelselogg"
+      },
+      "connection_status": {
+        "name": "Anslutningsstatus",
+        "state": {
+          "ethernet": "Ethernet",
+          "mobile": "Mobil",
+          "cloud": "Moln",
+          "offline": "Offline"
+        }
+      },
+      "power_supply": {
+        "name": "Strömförsörjning",
+        "state": {
+          "ok": "Ok",
+          "low_battery": "Lågt Batteri",
+          "low_main_power": "Låg Huvudström",
+          "critical": "Kritiskt"
+        }
+      },
+      "system_tampering": {
+        "name": "Systemmanipulering",
+        "state": {
+          "ok": "Ok",
+          "rf_jamming_detected": "RF-störning Upptäckt",
+          "panel_tampering": "Panelmanipulering",
+          "peripheral_tampering": "Periferimanipulering",
+          "zone_tampering": "Zonmanipulering",
+          "ongoing_tampering": "Pågående Manipulering",
+          "tampering_memory": "Manipuleringsminne"
+        }
+      },
+      "system_faults": {
+        "name": "Systemfel",
+        "state": {
+          "ok": "Ok",
+          "minor_faults": "Mindre Fel",
+          "multiple_faults": "Flera Fel",
+          "critical_faults": "Kritiska Fel"
+        }
+      },
       "fault_memory": {
-        "name": "Felminne"
+        "name": "Felminne",
+        "state": {
+          "no_faults": "Inga Fel"
+        }
+      },
+      "last_alarm_event": {
+        "name": "Senaste Larmhändelse",
+        "state": {
+          "no_alarm": "Inget Larm",
+          "ongoing_alarm": "Pågående Larm",
+          "alarm_memory": "Larmminne"
+        }
+      },
+      "last_tampered_zones": {
+        "name": "Senast Manipulerade Zoner",
+        "state": {
+          "no_tamper": "Ingen Manipulering"
+        }
+      },
+      "alarm_trigger_status": {
+        "name": "Larmutlösningsstatus",
+        "state": {
+          "not_triggered": "Ej utlöst",
+          "ongoing_alarm": "Alarm utlöst",
+          "alarm_memory": "Alarm minne"
+        }
+      },
+      "magnetic_sensor": {
+        "name": "{sensor_name}",
+        "state": {
+          "closed": "Stängd",
+          "open": "Öppen",
+          "unknown": "Okänd"
+        }
+      },
+      "movement_sensor": {
+        "name": "{sensor_name}",
+        "state": {
+          "off": "Fri",
+          "on": "Rörelse Upptäckt",
+          "unknown": "Okänd"
+        }
+      },
+      "seismic_sensor": {
+        "name": "{sensor_name}",
+        "state": {
+          "rest": "Vila",
+          "seismic_activity": "Seismisk Aktivitet",
+          "normal": "Normal",
+          "unknown": "Okänd"
+        }
+      }
+    },
+    "switch": {
+      "zone_bypass": {
+        "name": "Förbikoppling {zone_name}"
+      }
+    }
+  },
+  "exceptions": {
+    "pin_required_disarm": {
+      "message": "PIN-kod krävs för att avaktivera"
+    },
+    "pin_required_arm": {
+      "message": "PIN-kod krävs för att aktivera"
+    },
+    "scenario_missing": {
+      "message": "Inget {cat}-scenario tillgängligt. Konfigurera ett scenario med CAT={cat}"
+    },
+    "wrong_pin": {
+      "message": "Fel PIN-kod"
+    },
+    "wrong_pin_check": {
+      "message": "Fel PIN-kod - kontrollera din PIN-kod"
+    },
+    "disarm_failed": {
+      "message": "Avaktiveringskommandot misslyckades"
+    },
+    "arm_away_failed": {
+      "message": "Aktiveringskommandot (borta) misslyckades"
+    },
+    "arm_home_failed": {
+      "message": "Aktiveringskommandot (hemma) misslyckades"
+    }
+  },
+  "selector": {
+    "platforms": {
+      "options": {
+        "alarm_control_panel": "Larmpanel",
+        "sensor": "Sensor",
+        "switch": "Brytare",
+        "light": "Ljus",
+        "cover": "Lucka",
+        "button": "Knapp"
       }
     }
   }

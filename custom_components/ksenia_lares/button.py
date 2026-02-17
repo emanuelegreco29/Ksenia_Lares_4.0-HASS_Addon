@@ -57,13 +57,15 @@ async def _add_scenario_buttons(ws_manager, device_info, entities):
 def _add_clear_buttons(ws_manager, device_info, entities):
     """Add system clear command buttons."""
     clear_buttons = [
-        (CLEAR_COMMUNICATIONS, "Clear Communications"),
-        (CLEAR_ALARMS, "Clear Alarms"),
-        (CLEAR_FAULTS, "Clear Faults Memory"),
+        (CLEAR_COMMUNICATIONS, "clear_communications"),
+        (CLEAR_ALARMS, "clear_alarms"),
+        (CLEAR_FAULTS, "clear_faults_memory"),
     ]
 
-    for clear_type, name in clear_buttons:
-        entities.append(KseniaClearButtonEntity(ws_manager, clear_type, name, device_info))
+    for clear_type, translation_key in clear_buttons:
+        entities.append(
+            KseniaClearButtonEntity(ws_manager, clear_type, translation_key, device_info)
+        )
 
 
 class KseniaScenarioButtonEntity(ButtonEntity):
@@ -104,10 +106,12 @@ class KseniaScenarioButtonEntity(ButtonEntity):
 class KseniaClearButtonEntity(ButtonEntity):
     """Button entity for system clear commands."""
 
-    def __init__(self, ws_manager, clear_type, name, device_info=None):
+    _attr_has_entity_name = True
+
+    def __init__(self, ws_manager, clear_type, translation_key, device_info=None):
         self.ws_manager = ws_manager
         self._clear_type = clear_type
-        self._name = name
+        self._attr_translation_key = translation_key
         self._available = True
         self._device_info = device_info
 
@@ -120,11 +124,6 @@ class KseniaClearButtonEntity(ButtonEntity):
     def device_info(self):
         """Return device information about this entity."""
         return self._device_info
-
-    @property
-    def name(self):
-        """Returns the name of the button."""
-        return self._name
 
     async def async_press(self):
         """Execute the clear command when the button is pressed."""
