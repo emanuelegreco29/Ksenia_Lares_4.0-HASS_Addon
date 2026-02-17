@@ -8,7 +8,7 @@
     <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 50px !important;width: 200px !important;">
 </a>
 
-This **unofficial** integration allows you to connect your HomeAssistant to the [Ksenia Lares 4.0](https://www.kseniasecurity.com/en/insights/control-panel-ksenia-lares-4-0-the-most-complete-iot-platform-for-home-automation.html) control panel and add all your devices. I am **NOT** affiliated with Ksenia in any way, this integration was made for personal use only.
+This **unofficial** integration allows you to connect your HomeAssistant to the [Ksenia Lares 4.0](https://www.kseniasecurity.com/en/insights/control-panel-ksenia-lares-4-0-the-most-complete-iot-platform-for-home-automation.html) control panel and add all your devices. This integration, me or any contributor, are **NOT** affiliated with Ksenia Security S.p.A in any way.
 
 ## Compatible Devices
 | Device | Compatibility |
@@ -20,25 +20,15 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 | Garage Shutters | ✅ |
 | Buttons | ✅ |
 | Switches | ✅ |
-| Scenarios | ⚠️ |
+| Scenarios | ✅ |
 | Sensors | ⚠️ (see below) |
-| Partitions | ⚠️ |
+| Partitions | ✅ |
 
 #### Legend
 ⛔ - Not Implemented; ⚠️ - Work In Progress; ✅ - Implemented
 
-### Compatible Sensors
-- DOMUS (environmental)
-- Power Lines
-- Alarm System
-- Zone-based:
-    - Door
-    - Window
-    - Magnetic Contact (PMC)
-    - Internal Movement
-
 #### ⚠️ Warning ⚠️
-If any of the devices listed is not compatible, or if some devices listed as "compatible" are not working as intended, please open an issue. Collaboration is more than welcome, if somebody wants to implement new functions or contribute in any form to the integration, feel free to send a pull request.
+If any of the devices listed is not compatible, or if some devices listed as "compatible" are not working as intended, please open an issue. Collaboration is more than welcome, if somebody wants to implement new functions or contribute in any form to the integration, feel free to open a pull request.
 
 ## Installation
 ### 1. HACS installation (best method)
