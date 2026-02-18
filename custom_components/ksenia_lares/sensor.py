@@ -2488,40 +2488,20 @@ class KseniaPowerSupplySensor(SensorEntity):
         try:
             _LOGGER.debug("[PowerSupply] _handle_panel_update called with: %s", data_list)
 
-            # Validate input
-            if not data_list:
-                _LOGGER.debug("[PowerSupply] Empty data_list received")
-                self._state = "Unknown"
-                self._main_voltage = None
-                self._battery_voltage = None
-                self.async_write_ha_state()
-                return
-
-            if not isinstance(data_list, list):
-                _LOGGER.warning(
-                    "[PowerSupply] Expected list, got %s: %s", type(data_list), data_list
-                )
-                self._state = "Unknown"
-                self._main_voltage = None
-                self._battery_voltage = None
-                self.async_write_ha_state()
-                return
-
-            if len(data_list) == 0:
-                _LOGGER.debug("[PowerSupply] Empty list received")
-                self._state = "Unknown"
-                self._main_voltage = None
-                self._battery_voltage = None
-                self.async_write_ha_state()
+            # Validate input - keep current state on empty/invalid data
+            if not isinstance(data_list, list) or not data_list:
+                _LOGGER.debug("[PowerSupply] No valid panel data received, keeping current state")
                 return
 
             panel = data_list[0]  # Usually only one panel object
             _LOGGER.debug("[PowerSupply] Panel object: %s", panel)
-            self._raw_data = panel
+            # Merge into raw_data to preserve fields from previous updates
+            self._raw_data.update(panel)
 
-            # Extract voltages with detailed error reporting
-            m_val = panel.get("M")
-            b_val = panel.get("B")
+            # Extract voltages from merged data so partial broadcasts
+            # don't wipe previously known values
+            m_val = self._raw_data.get("M")
+            b_val = self._raw_data.get("B")
 
             _LOGGER.debug(
                 "[PowerSupply] M=%s (type: %s), B=%s (type: %s)",
@@ -2532,11 +2512,11 @@ class KseniaPowerSupplySensor(SensorEntity):
             )
 
             if m_val is None or b_val is None:
-                _LOGGER.debug("[PowerSupply] Missing voltage fields: M=%s, B=%s", m_val, b_val)
-                self._state = "Unknown"
-                self._main_voltage = None
-                self._battery_voltage = None
-                self.async_write_ha_state()
+                _LOGGER.debug(
+                    "[PowerSupply] Missing voltage fields after merge: M=%s, B=%s, keeping current state",
+                    m_val,
+                    b_val,
+                )
                 return
 
             try:
@@ -2551,10 +2531,6 @@ class KseniaPowerSupplySensor(SensorEntity):
                 _LOGGER.error(
                     "[PowerSupply] Failed to parse voltages: %s (M=%s, B=%s)", e, m_val, b_val
                 )
-                self._state = "Unknown"
-                self._main_voltage = None
-                self._battery_voltage = None
-                self.async_write_ha_state()
                 return
 
             # Calculate health state based on voltage thresholds
@@ -2581,10 +2557,6 @@ class KseniaPowerSupplySensor(SensorEntity):
             _LOGGER.error(
                 "[PowerSupply] Unexpected error in _handle_panel_update: %s", e, exc_info=True
             )
-            self._state = "Unknown"
-            self._main_voltage = None
-            self._battery_voltage = None
-            self.async_write_ha_state()
 
     @property
     def unique_id(self):
