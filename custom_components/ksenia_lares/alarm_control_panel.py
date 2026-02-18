@@ -126,7 +126,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         )
         if system_list and len(system_list) > 0:
             _LOGGER.debug(f"[KseniaACP] System data: {system_list[0]}")
-            self._system_status = system_list[0]
+            self._system_status.update(system_list[0])
             self._compute_state_from_system()
             _LOGGER.debug(f"[KseniaACP] Computed state: {self._state}")
             self.async_write_ha_state()
@@ -190,7 +190,13 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         elif arm_state == "P":
             self._state = AlarmControlPanelState.ARMED_HOME
         else:
-            self._state = AlarmControlPanelState.DISARMED
+            # Unrecognized ARM.S code - keep current state rather than
+            # defaulting to DISARMED which causes false state flips
+            _LOGGER.debug(
+                "Unrecognized ARM.S code '%s', keeping current state: %s",
+                arm_state,
+                self._state,
+            )
 
         arm_data = self._system_status.get("ARM", {})
         _LOGGER.debug(
@@ -210,8 +216,8 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         """
         arm_data = self._system_status.get("ARM", {})
         if isinstance(arm_data, dict):
-            return arm_data.get("S", "D")
-        return "D"
+            return arm_data.get("S", "")
+        return ""
 
     def _is_delay_active(self, arm_state: str) -> bool:
         """Check if entry or exit delay is active.
@@ -342,7 +348,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             # during countdown periods
             system_data = await self.ws_manager.getSensor("STATUS_SYSTEM")
             if system_data and len(system_data) > 0:
-                self._system_status = system_data[0]
+                self._system_status.update(system_data[0])
 
             # Also fetch partition status to detect alarm states
             # Partition alarm status is only available in STATUS_PARTITIONS
