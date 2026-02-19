@@ -528,6 +528,11 @@ class WebSocketManager:
             raise ValueError(f"Unknown entity type: {entity_type}")
         if not asyncio.iscoroutinefunction(callback):
             raise TypeError(f"Listener must be async function, got {type(callback)}")
+        if callback in self.listeners[entity_type]:
+            self._logger.debug(
+                f"[WS] Listener for '{entity_type}' already registered, skipping duplicate"
+            )
+            return
         self._logger.debug(
             f"[WS] Registering listener for type '{entity_type}', now {len(self.listeners[entity_type]) + 1} listener(s)"
         )
@@ -1545,15 +1550,9 @@ class WebSocketManager:
             )
             if not callbacks:
                 self._logger.debug(f"[WS] No listeners registered for type '{listener_type}'")
-            for i, callback in enumerate(callbacks):
-                self._logger.debug(
-                    f"[WS] Calling listener {i+1}/{len(callbacks)} for {listener_type}"
-                )
+            for callback in callbacks:
                 try:
                     await callback(data)
-                    self._logger.debug(
-                        f"[WS] Listener {i+1} for {listener_type} completed successfully"
-                    )
                 except Exception as e:
                     self._logger.error(
                         f"[WS] Error in listener callback for {listener_type}: {e}", exc_info=True
@@ -1796,6 +1795,10 @@ class WebSocketManager:
 
         # Cancel all background tasks
         await self._cancel_background_tasks()
+
+        # Release all listener references so no late-arriving messages fire against removed callbacks
+        for callbacks in self.listeners.values():
+            callbacks.clear()
 
         # Close WebSocket connection
         if self._ws:

@@ -1000,7 +1000,6 @@ class KseniaSensorEntity(SensorEntity):
                             data.get("STA"), data.get("STA", "unknown")
                         )
                         attributes["State"] = mapped_state
-                        data.pop("STA", None)
                         if "BYP" in data:
                             attributes["Bypass"] = (
                                 "Active" if data["BYP"].upper() not in ["NO", "N"] else "Inactive"
@@ -1091,7 +1090,7 @@ class KseniaSensorEntity(SensorEntity):
                                 data.get("STA"), data.get("STA", "unknown")
                             )
                             attributes["State"] = mapped_state
-                            data.pop("STA", None)
+                            self._state = mapped_state
                         if "BYP" in data:
                             attributes["Bypass"] = (
                                 "Active" if data["BYP"].upper() not in ["NO", "N"] else "Inactive"
@@ -1111,7 +1110,6 @@ class KseniaSensorEntity(SensorEntity):
                         if "LBL" in data and data["LBL"]:
                             attributes["Label"] = data["LBL"]
 
-                        self._state = mapped_state
                         self._attributes = attributes
                         # Merge update into raw_data to preserve all fields
                         self._raw_data.update(data)
@@ -1140,6 +1138,7 @@ class KseniaSensorEntity(SensorEntity):
                             state_mapping = {"R": "closed", "A": "open"}
                             mapped_state = state_mapping.get(data["STA"], data["STA"])
                             attributes["State"] = mapped_state
+                            self._state = mapped_state
                         # Bypass
                         if "BYP" in data:
                             attributes["Bypass"] = (
@@ -1166,7 +1165,6 @@ class KseniaSensorEntity(SensorEntity):
                         if "LBL" in data and data["LBL"]:
                             attributes["Label"] = data["LBL"]
 
-                        self._state = mapped_state
                         self._attributes = attributes
                         # Merge update into raw_data to preserve all fields
                         self._raw_data.update(data)
