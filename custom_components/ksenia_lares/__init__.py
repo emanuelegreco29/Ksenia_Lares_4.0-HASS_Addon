@@ -187,6 +187,8 @@ async def async_unload_entry(hass, entry):
                 _LOGGER.info("WebSocket manager stopped successfully")
             except Exception as e:
                 _LOGGER.warning("Error stopping WebSocket manager during unload: %s", e)
+            finally:
+                hass.data[DOMAIN].pop("ws_manager", None)
 
         platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
 
@@ -204,9 +206,6 @@ async def async_unload_entry(hass, entry):
         unload_ok = all(
             result is True or isinstance(result, Exception) for result in unload_results
         )
-
-        if unload_ok and ws_manager:
-            hass.data[DOMAIN].pop("ws_manager", None)
 
         _LOGGER.debug(
             "Integration unload complete: unload_ok=%s, platforms=%s", unload_ok, platforms
