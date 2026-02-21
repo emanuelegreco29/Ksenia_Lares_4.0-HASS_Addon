@@ -18,7 +18,6 @@ from enum import Enum
 from typing import Any, TypedDict
 
 import websockets
-from websockets.asyncio.client import connect as ws_connect
 from websockets.typing import Subprotocol
 
 from .wscall import (
@@ -181,7 +180,7 @@ class WebSocketManager:
             # Open temporary WebSocket connection with 5-second timeout
             # This connection is only for this specific scenario execution
             temp_ws = await asyncio.wait_for(
-                ws_connect(uri, ssl=ssl_ctx, subprotocols=[Subprotocol("KS_WSOCK")]),
+                websockets.connect(uri, ssl=ssl_ctx, subprotocols=[Subprotocol("KS_WSOCK")]),
                 timeout=5,
             )
 
@@ -627,11 +626,8 @@ class WebSocketManager:
         while self._retries < self._max_retries:
             try:
                 self._logger.debug(f"[{time.time():.3f}] Connecting to WebSocket: {uri}")
-                self._ws = await ws_connect(
-                    uri,
-                    ssl=ssl,
-                    subprotocols=[Subprotocol("KS_WSOCK")],
-                    ping_interval=30,
+                self._ws = await websockets.connect(
+                    uri, ssl=ssl, subprotocols=[Subprotocol("KS_WSOCK")], ping_interval=30
                 )
                 self._logger.debug(f"[{time.time():.3f}] WebSocket connection established")
 

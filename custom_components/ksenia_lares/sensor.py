@@ -1,17 +1,12 @@
 """Sensors for Ksenia Lares integration."""
 
 import logging
-from datetime import datetime
+from abc import ABC
+from datetime import datetime, timedelta
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
-from homeassistant.const import (
-    LIGHT_LUX,
-    PERCENTAGE,
-    EntityCategory,
-    UnitOfPower,
-    UnitOfTemperature,
-)
+from homeassistant.components.sensor import SensorEntity
+from homeassistant.const import EntityCategory
 
 from .const import (
     _ARM_STATE_MAP,
@@ -227,6 +222,25 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
     def unique_id(self) -> str:
         """Returns a unique ID for the sensor."""
         return build_unique_id(self._base_id, self._sensor_type, self._id)
+
+    @property
+    def device_info(self) -> dict | None:
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
+    def entity_category(self) -> EntityCategory | None:
+        """Return the entity category for this sensor."""
+        # Powerlines are diagnostic sensors
+        if self._sensor_type in ("powerlines",):
+            return EntityCategory.DIAGNOSTIC
+        # All other sensors are regular sensors (no category)
+        return None
+
+    @property
+    def name(self) -> str | None:
+        """Returns the name of the sensor."""
+        return self._name
 
     @property
     def native_value(self) -> str | float | None:
@@ -683,6 +697,11 @@ class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
         return build_unique_id(self._base_id, "alarm_trigger_status")
 
     @property
+    def device_info(self) -> dict | None:
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
     def native_value(self) -> str | None:
         """Returns the state of the sensor."""
         return self._state
@@ -844,6 +863,11 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         return build_unique_id(self._base_id, "system_tampering")
 
     @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -897,8 +921,11 @@ class KseniaEventLogSensor(KseniaEntity, SensorEntity):
         return build_unique_id(self._base_id, "event_log")
 
     @property
+    def device_info(self):
+        return self._device_info
+
+    @property
     def native_value(self):
-        """Return the most recent log entry as the sensor state."""
         return self._state
 
     @staticmethod
@@ -1109,6 +1136,11 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
         return build_unique_id(self._base_id, "last_alarm_event")
 
     @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -1210,6 +1242,11 @@ class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
         return build_unique_id(self._base_id, "last_tampered_zones")
 
     @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -1304,6 +1341,11 @@ class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
     def unique_id(self):
         """Returns a unique ID for the sensor."""
         return build_unique_id(self._base_id, "connection_status")
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
 
     @property
     def native_value(self):
@@ -1504,6 +1546,11 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
         return build_unique_id(self._base_id, "power_supply")
 
     @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -1690,6 +1737,11 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
         return build_unique_id(self._base_id, "system_faults")
 
     @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -1831,6 +1883,11 @@ class KseniaFaultMemorySensor(KseniaEntity, SensorEntity):
     def unique_id(self):
         """Returns a unique ID for the sensor."""
         return build_unique_id(self._base_id, "fault_memory")
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
 
     @property
     def native_value(self):
