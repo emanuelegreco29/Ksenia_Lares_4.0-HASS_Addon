@@ -26,62 +26,122 @@ echo "🔍 Running linting on integration code..."
 echo
 
 # Black
-if $FIX_MODE; then
+if [[ "$FIX_MODE" == "true" ]]; then
     echo "Running: Black (auto-format)"
-    black custom_components/ksenia_lares/ --line-length=100 || LINT_FAILED=true
-else
-    echo "Running: Black (check)"
-    if ! black custom_components/ksenia_lares/ --line-length=100 --check 2>&1; then
+    if black custom_components/ksenia_lares/ --line-length=100; then
+        echo "✓ Black passed"
+    else
         LINT_FAILED=true
     fi
-fi
-if [[ "$LINT_FAILED" == "false" ]]; then
-    echo "✓ Black passed"
+else
+    echo "Running: Black (check)"
+    if black custom_components/ksenia_lares/ --line-length=100 --check 2>&1; then
+        echo "✓ Black passed"
+    else
+        LINT_FAILED=true
+    fi
 fi
 echo
 
 # isort
 if [[ "$LINT_FAILED" == "false" ]]; then
-    if $FIX_MODE; then
+    if [[ "$FIX_MODE" == "true" ]]; then
         echo "Running: isort (auto-sort)"
-        isort custom_components/ksenia_lares/ --profile=black --line-length=100 || LINT_FAILED=true
-    else
-        echo "Running: isort (check)"
-        if ! isort custom_components/ksenia_lares/ --profile=black --line-length=100 --check-only 2>&1; then
+        if isort custom_components/ksenia_lares/ --profile=black --line-length=100; then
+            echo "✓ isort passed"
+        else
             LINT_FAILED=true
         fi
-    fi
-    if [[ "$LINT_FAILED" == "false" ]]; then
-        echo "✓ isort passed"
+    else
+        echo "Running: isort (check)"
+        if isort custom_components/ksenia_lares/ --profile=black --line-length=100 --check-only 2>&1; then
+            echo "✓ isort passed"
+        else
+            LINT_FAILED=true
+        fi
     fi
     echo
 fi
 
 # Ruff
 if [[ "$LINT_FAILED" == "false" ]]; then
-    if $FIX_MODE; then
+    if [[ "$FIX_MODE" == "true" ]]; then
         echo "Running: Ruff (auto-fix)"
-        ruff check custom_components/ksenia_lares/ --fix --config=pyproject.toml || LINT_FAILED=true
-    else
-        echo "Running: Ruff (check)"
-        if ! ruff check custom_components/ksenia_lares/ --config=pyproject.toml 2>&1; then
+        if ruff check custom_components/ksenia_lares/ --fix --config=pyproject.toml; then
+            echo "✓ Ruff passed"
+        else
             LINT_FAILED=true
         fi
-    fi
-    if [[ "$LINT_FAILED" == "false" ]]; then
-        echo "✓ Ruff passed"
+    else
+        echo "Running: Ruff (check)"
+        if ruff check custom_components/ksenia_lares/ --config=pyproject.toml 2>&1; then
+            echo "✓ Ruff passed"
+        else
+            LINT_FAILED=true
+        fi
     fi
     echo
 fi
 
-# Bandit (security - continue even if previous failed)
+# Pyright
 if [[ "$LINT_FAILED" == "false" ]]; then
-    echo "Running: Bandit (security)"
-    if ! bandit -r custom_components/ksenia_lares/ --configfile=pyproject.toml -q 2>&1; then
+    echo "Running: Pyright (check)"
+    if pyright custom_components/ksenia_lares/ 2>&1; then
+        echo "✓ Pyright passed"
+    else
+        LINT_FAILED=true
+    fi
+    echo
+fi
+
+# YAMLLint
+if [[ "$LINT_FAILED" == "false" ]]; then
+    echo "Running: YAMLLint"
+    if yamllint -d "{extends: default, rules: {line-length: {max: 120}}}" custom_components/ksenia_lares/ 2>&1; then
+        echo "✓ YAMLLint passed"
+    else
+        LINT_FAILED=true
+    fi
+    echo
+fi
+
+# JSON validation
+if [[ "$LINT_FAILED" == "false" ]]; then
+    echo "Running: JSON validation"
+    JSON_FAILED=false
+    while IFS= read -r -d '' f; do
+        if ! python -m json.tool "$f" > /dev/null 2>&1; then
+            echo "✗ Invalid JSON: $f"
+            JSON_FAILED=true
+        fi
+    done < <(find custom_components/ksenia_lares/ -name "*.json" -print0)
+    if [[ "$JSON_FAILED" == "true" ]]; then
         LINT_FAILED=true
     else
-        echo "✓ Bandit passed"
+        echo "✓ JSON validation passed"
     fi
+    echo
+fi
+
+
+# Bandit (security)
+if [[ "$LINT_FAILED" == "false" ]]; then
+    echo "Running: Bandit (security)"
+    if bandit -r custom_components/ksenia_lares/ --configfile=pyproject.toml -q 2>&1; then
+        echo "✓ Bandit passed"
+    else
+        LINT_FAILED=true
+    fi
+    echo
+fi
+
+# Radon complexity (informational only — does not fail the build)
+if [[ "$LINT_FAILED" == "false" ]]; then
+    echo "Running: Radon (complexity)"
+    RADON_DETAIL=$(radon cc custom_components/ksenia_lares/ --min C 2>&1)
+    [[ -n "$RADON_DETAIL" ]] && echo "$RADON_DETAIL"
+    radon cc custom_components/ksenia_lares/ -a 2>&1 | tail -2
+    echo "To see details run: 'radon cc custom_components/ksenia_lares/ --total-average'"
     echo
 fi
 
@@ -104,19 +164,3 @@ else
     echo "✅ All checks passed!"
     exit 0
 fi
-echo
-
-# YAMLLint
-echo "Running: YAMLLint"
-yamllint -d "{extends: default, rules: {line-length: {max: 120}}}" custom_components/ksenia_lares/ || true
-echo "✓ YAMLLint passed"
-echo
-
-# Radon
-echo "Running: Radon (complexity metrics)"
-radon cc custom_components/ksenia_lares/ -a
-echo
-radon mi custom_components/ksenia_lares/ -s
-echo
-
-echo "✓ All checks passed!"

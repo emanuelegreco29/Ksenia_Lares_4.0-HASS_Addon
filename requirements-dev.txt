@@ -4,6 +4,8 @@ isort==7.0.0
 ruff==0.15.0
 bandit==1.9.3
 radon==6.0.1
+pyright==1.1.408
+yamllint==1.38.0
 
 # Testing
 pytest>=7.0.0
