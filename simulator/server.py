@@ -49,6 +49,7 @@ LOG_INFO_TESTUSER = "testuser"
 ZONE_LABEL_FRONT_DOOR = "Front Door"
 ZONE_LABEL_LIVING_ROOM_MOTION = "Living Room Motion"
 ZONE_LABEL_SMOKE_DETECTOR = "Ceiling Smoke Detector"
+ZONE_LABEL_DOORBELL = "Doorbell"
 
 # Output labels
 OUTPUT_LABEL_SIREN = "Outdoor siren"
@@ -76,6 +77,7 @@ PARTITION_2 = "2"
 ZONE_1 = "1"
 ZONE_2 = "2"
 ZONE_3 = "3"
+ZONE_4 = "4"
 
 # Output IDs
 OUTPUT_SIREN = "1"
@@ -284,6 +286,15 @@ class SimulatorState:
                 "CAT": "SMOKE",
                 "AN": "F",
             },
+            ZONE_4: {
+                "ID": ZONE_4,
+                "DES": ZONE_LABEL_DOORBELL,
+                "PRT": "ALL",
+                "CMD": "T",
+                "BYP_EN": "T",
+                "CAT": "CMD",
+                "AN": "F",
+            },
         }
 
     def _init_zones(self) -> Dict[str, Dict[str, Any]]:
@@ -321,6 +332,17 @@ class SimulatorState:
                 "OHM": "NA",
                 "VAS": "F",
                 "LBL": ZONE_LABEL_SMOKE_DETECTOR,
+            },
+            ZONE_4: {
+                "ID": ZONE_4,
+                "STA": "R",
+                "BYP": "NO",
+                "T": "N",
+                "A": "N",
+                "FM": "F",
+                "OHM": "NA",
+                "VAS": "F",
+                "LBL": ZONE_LABEL_DOORBELL,
             },
         }
 
