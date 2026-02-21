@@ -10,7 +10,6 @@ on:
     paths:
       - "custom_components/ksenia_lares/**"
       - "tests/**"
-      - "!custom_components/ksenia_lares/manifest.json"  # Exclude manifest.json to avoid triggering on version updates
   pull_request:
     branches:
       - main
@@ -18,7 +17,6 @@ on:
     paths:
       - "custom_components/ksenia_lares/**"
       - "tests/**"
-      - "!custom_components/ksenia_lares/manifest.json"  # Exclude manifest.json to avoid triggering on version updates
 
 jobs:
   test:
