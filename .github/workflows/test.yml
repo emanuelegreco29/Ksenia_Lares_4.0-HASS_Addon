@@ -7,10 +7,16 @@ on:
     branches:
       - main
       - dev
+    paths:
+      - "custom_components/ksenia_lares/**"
+      - "tests/**"
   pull_request:
     branches:
       - main
       - dev
+    paths:
+      - "custom_components/ksenia_lares/**"
+      - "tests/**"
 
 jobs:
   test:
