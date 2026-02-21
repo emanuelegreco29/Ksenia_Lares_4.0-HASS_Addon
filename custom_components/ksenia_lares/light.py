@@ -3,7 +3,8 @@
 import logging
 import time
 
-from homeassistant.components.light import ColorMode, LightEntity
+from homeassistant.components.light import LightEntity
+from homeassistant.components.light.const import ColorMode
 
 from .const import DOMAIN
 from .websocketmanager import ConnectionState

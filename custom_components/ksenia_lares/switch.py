@@ -3,7 +3,7 @@
 import logging
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.const import EntityCategory
 
 from .const import DOMAIN
 from .websocketmanager import ConnectionState

@@ -3,9 +3,10 @@
 import logging
 from abc import ABC
 from datetime import datetime, timedelta
+from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.const import EntityCategory
 
 from .const import DOMAIN
 
@@ -1252,12 +1253,12 @@ class KseniaSensorEntity(SensorEntity):
         return None
 
     @property
-    def name(self) -> str:
+    def name(self) -> str | None:
         """Returns the name of the sensor."""
-        return self._name or super().name
+        return self._name
 
     @property
-    def state(self) -> str | None:
+    def native_value(self) -> str | float | None:
         """Returns the state of the sensor."""
         return self._state
 
@@ -1581,7 +1582,7 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
         self._alarmed_zones = []  # Track current alarmed zones
         self._zone_names = {}  # Map zone IDs to names
         self._partition_labels = {}  # Map partition IDs to labels
-        self._attributes = {
+        self._attributes: dict[str, Any] = {
             "alarmed_zones": [],
         }
         self._raw_data = {}
@@ -1677,7 +1678,7 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
         return self._device_info
 
     @property
-    def state(self) -> str | None:
+    def native_value(self) -> str | None:
         """Returns the state of the sensor."""
         return self._state
 
@@ -1875,7 +1876,7 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
         return self._device_info
 
     @property
-    def state(self):
+    def native_value(self):
         """Returns the state of the sensor."""
         return self._state
 
@@ -1933,7 +1934,7 @@ class KseniaEventLogSensor(SensorEntity):
         return self._device_info
 
     @property
-    def state(self):
+    def native_value(self):
         return self._state
 
     @property
@@ -2134,7 +2135,7 @@ class KseniaLastAlarmEventSensor(SensorEntity):
         return self._device_info
 
     @property
-    def state(self):
+    def native_value(self):
         """Returns the state of the sensor."""
         return self._state
 
@@ -2264,7 +2265,7 @@ class KseniaLastTamperedZonesSensor(SensorEntity):
         return self._device_info
 
     @property
-    def state(self):
+    def native_value(self):
         """Returns the state of the sensor."""
         return self._state
 
@@ -2368,7 +2369,7 @@ class KseniaConnectionStatusSensor(SensorEntity):
         return self._device_info
 
     @property
-    def state(self):
+    def native_value(self):
         """Returns the state of the sensor."""
         return self._state
 
@@ -2567,7 +2568,7 @@ class KseniaPowerSupplySensor(SensorEntity):
         return self._device_info
 
     @property
-    def state(self):
+    def native_value(self):
         """Returns the state of the sensor."""
         return self._state
 
@@ -2760,7 +2761,7 @@ class KseniaSystemFaultsSensor(SensorEntity):
         return self._device_info
 
     @property
-    def state(self):
+    def native_value(self):
         """Returns the state of the sensor."""
         return self._state
 
@@ -2909,7 +2910,7 @@ class KseniaFaultMemorySensor(SensorEntity):
         return self._device_info
 
     @property
-    def state(self):
+    def native_value(self):
         """Returns the state of the sensor."""
         return self._state
 

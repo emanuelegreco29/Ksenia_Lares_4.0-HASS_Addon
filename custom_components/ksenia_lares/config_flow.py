@@ -120,7 +120,9 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_reconfigure(self, user_input=None):
         """Handle reconfiguration of existing entry."""
-        config_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        config_entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id", ""))
+        if config_entry is None:
+            return self.async_abort(reason="entry_not_found")
         errors = {}
 
         if user_input is not None:

@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 
-from homeassistant.config_entries import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 

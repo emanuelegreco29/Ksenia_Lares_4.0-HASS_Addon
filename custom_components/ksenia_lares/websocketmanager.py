@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any, TypedDict
 
 import websockets
+from websockets.typing import Subprotocol
 
 from .wscall import (
     bypassZone,
@@ -144,7 +145,8 @@ class WebSocketManager:
             # Open temporary WebSocket connection with 5-second timeout
             # This connection is only for this specific scenario execution
             temp_ws = await asyncio.wait_for(
-                websockets.connect(uri, ssl=ssl_ctx, subprotocols=["KS_WSOCK"]), timeout=5
+                websockets.connect(uri, ssl=ssl_ctx, subprotocols=[Subprotocol("KS_WSOCK")]),
+                timeout=5,
             )
 
             self._logger.debug("Temporary connection established, logging in with user PIN")
@@ -609,7 +611,7 @@ class WebSocketManager:
             try:
                 self._logger.debug(f"[{time.time():.3f}] Connecting to WebSocket: {uri}")
                 self._ws = await websockets.connect(
-                    uri, ssl=ssl, subprotocols=["KS_WSOCK"], ping_interval=30
+                    uri, ssl=ssl, subprotocols=[Subprotocol("KS_WSOCK")], ping_interval=30
                 )
                 self._logger.debug(f"[{time.time():.3f}] WebSocket connection established")
 
@@ -963,6 +965,8 @@ class WebSocketManager:
         """
         async with self._ws_lock:
             try:
+                if self._ws is None:
+                    return None
                 msg = await asyncio.wait_for(self._ws.recv(), timeout=RECV_TIMEOUT)
                 self._last_message_time = time.time()
                 self._metrics["messages_received"] += 1
@@ -1757,7 +1761,7 @@ class WebSocketManager:
         self._logger.debug(
             f"Batch command completed: {sum(1 for r in results if r)}/{len(commands)} succeeded"
         )
-        return results
+        return [bool(r) for r in results]
 
     async def bypass_zone(self, zone_id, mode):
         """Bypass or unbypass a zone.
