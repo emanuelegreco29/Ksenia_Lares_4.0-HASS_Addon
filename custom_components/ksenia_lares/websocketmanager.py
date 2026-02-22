@@ -258,6 +258,22 @@ class WebSocketManager:
             except Exception as e:
                 self._logger.debug(f"Error closing temporary connection: {e}")
 
+        Critical: prevents session leaks and resource exhaustion.
+        The main connection is not affected.
+        """
+        if temp_ws and user_login_id and user_login_id != -1:
+            try:
+                self._logger.debug(f"Logging out user session {user_login_id}")
+                await ws_logout(temp_ws, user_login_id, self._logger)
+            except Exception as e:
+                self._logger.debug(f"Error logging out user session: {e}")
+        if temp_ws:
+            try:
+                self._logger.debug("Closing temporary connection")
+                await temp_ws.close()
+            except Exception as e:
+                self._logger.debug(f"Error closing temporary connection: {e}")
+
     def __init__(
         self,
         ip,
@@ -387,22 +403,6 @@ class WebSocketManager:
     def ip(self) -> str:
         """Return the IP address of the connected panel."""
         return self._ip
-
-    @property
-    def available(self) -> bool:
-        """Return True if the connection is active and authenticated."""
-        return self._connection_state == ConnectionState.CONNECTED
-
-    async def _notify_connection_state_change(self) -> None:
-        """Notify listeners about connection state transitions."""
-        payload = {
-            "state": self._connection_state.value,
-            "available": self.available,
-        }
-        try:
-            await self._notify_listeners(["connection"], payload)
-        except Exception as err:
-            self._logger.debug("Error notifying connection listeners: %s", err)
 
     def get_metrics(self):
         """Get connection and command statistics.
@@ -839,6 +839,23 @@ class WebSocketManager:
                 self._logger.error("Connection closed during state refresh - triggering reconnect")
                 asyncio.create_task(self._handle_connection_closed())
 
+    def _seed_initial_cache(self, payload: dict) -> None:
+        """Seed the realtime cache from the initial READ payload.
+
+        Called once after the first successful READ so that entities have
+        cached data before any REALTIME broadcast arrives.
+        """
+        if payload.get("STATUS_PANEL"):
+            self._logger.debug(
+                f"[{time.time():.3f}] Caching STATUS_PANEL: {payload.get('STATUS_PANEL')}"
+            )
+            self._update_realtime_cache("STATUS_PANEL", payload.get("STATUS_PANEL"))
+        if payload.get("STATUS_CONNECTION"):
+            self._logger.debug(
+                f"[{time.time():.3f}] Caching STATUS_CONNECTION: {payload.get('STATUS_CONNECTION')}"
+            )
+            self._update_realtime_cache("STATUS_CONNECTION", payload.get("STATUS_CONNECTION"))
+
     async def _fetch_initial_data(self):
         """Retrieve static configuration and real-time data from panel.
 
@@ -868,6 +885,13 @@ class WebSocketManager:
                 self._logger.debug(f"[{time.time():.3f}] Static data received successfully")
                 if self._debug_mode:
                     self._logger.debug(f"Static data received: {self._readData}")
+
+                # Seed realtime cache from READ payload so entities can use cached initial data
+                payload = self._readData if self._readData else {}
+                self._logger.debug(
+                    f"[{time.time():.3f}] Seeding realtime cache from READ payload with keys: {list(payload.keys())}"
+                )
+                self._seed_initial_cache(payload)
 
                 self._logger.debug(
                     f"[{time.time():.3f}] Starting real-time data subscription (attempt {retry_count + 1}/{max_retries})"
@@ -1223,6 +1247,30 @@ class WebSocketManager:
             return True
         return False
 
+    def _payload_type_matches(
+        self, expected_cmd_prefix: str, req_payload_type: str, response_payload_type: str
+    ) -> bool:
+        """Return True if request and response payload types are compatible.
+
+        Handles known firmware variations where the response PAYLOAD_TYPE differs
+        from the request (e.g., GET_LAST_LOGS → LAST_LOGS on older firmware).
+        """
+        if req_payload_type == response_payload_type:
+            return True
+        if (
+            expected_cmd_prefix == "LOGS"
+            and req_payload_type == "GET_LAST_LOGS"
+            and response_payload_type in ("GET_LAST_LOGS", "LAST_LOGS")
+        ):
+            return True
+        if (
+            expected_cmd_prefix == "REALTIME"
+            and req_payload_type == "REGISTER"
+            and response_payload_type == "REGISTER_ACK"
+        ):
+            return True
+        return False
+
     def _find_pending_by_fallback(self, pending_dict, message, expected_cmd_prefix):
         """Find pending request using fallback matching when ID doesn't match.
 
@@ -1500,6 +1548,27 @@ class WebSocketManager:
         self, existing_dict: dict, new_entities: list, status_payload_type: str
     ) -> int:
         """Merge new_entities into existing_dict (keyed by entity ID).
+
+        Updates fields in-place for known entities; adds new ones.
+        Returns the number of entities processed.
+        """
+        updates_count = 0
+        for new_entity in new_entities:
+            entity_id = str(new_entity.get("ID", ""))
+            if entity_id:
+                if entity_id in existing_dict:
+                    existing_dict[entity_id].update(new_entity)
+                else:
+                    existing_dict[entity_id] = new_entity
+                updates_count += 1
+            else:
+                self._logger.warning(
+                    f"[WS] _update_realtime_cache: Entity without ID field in {status_payload_type}: {new_entity}"
+                )
+        return updates_count
+
+    def _update_realtime_cache(self, status_payload_type: str, status_entities: Any) -> None:
+        """Update unified cache with real-time data.
 
         Updates fields in-place for known entities; adds new ones.
         Returns the number of entities processed.

@@ -111,7 +111,22 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the light."""
-        return build_unique_id(self._base_id, "light", self._id)
+        return f"{self.ws_manager.ip}_{self._id}"
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
+    def name(self):
+        """Returns the name of the light."""
+        return self._name
+
+    @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self._available
 
     @property
     def is_on(self):
@@ -162,3 +177,35 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         self._state = False
         self._pending_command = ("off", time.time())
         self.async_write_ha_state()
+
+    """
+    Asynchronously updates the state of the light.
+
+    Retrieves the list of lights from the WebSocket manager and checks if the
+    light with the specified ID is present. If found, updates the light's state
+    and brightness, and notifies Home Assistant of the state change.
+    """
+
+    async def async_update(self):
+        lights = await self.ws_manager.getLights()
+        _LOGGER.debug("async_update: full lights data: %s", lights)
+        for light in lights:
+            if light.get("ID") == self._id:
+                remote_state = light.get("STA", "off").lower() == "on"
+                # If there's a recent pending command, keep the local state
+                if self._pending_command is not None:
+                    cmd, timestamp = self._pending_command
+                    if time.time() - timestamp < 2:
+                        return
+                    else:
+                        self._pending_command = None
+                self._state = remote_state
+                self._available = True
+                # Merge update into raw_data to preserve all fields
+                self._raw_data.update(light)
+                break
+
+    @property
+    def should_poll(self) -> bool:
+        """Lights use periodic polling for multi-client reconciliation."""
+        return True

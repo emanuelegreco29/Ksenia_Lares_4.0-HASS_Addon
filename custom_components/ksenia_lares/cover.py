@@ -120,7 +120,22 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the roller blind."""
-        return build_unique_id(self._base_id, "cover", self._roll_id)
+        return f"{self.ws_manager.ip}_{self._roll_id}"
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self._available
+
+    @property
+    def name(self):
+        """Returns the name of the roller blind."""
+        return self._name
 
     @property
     def current_cover_position(self):
@@ -191,3 +206,36 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
         await self.ws_manager.setCoverPosition(self._roll_id, position)
         self._pending_command = ("set", time.time())
         self.async_write_ha_state()
+
+    """
+    Updates the state of the roller blind by retrieving the full list of
+    roller blinds and finding the one with the matching ID.
+
+    If a recent command is pending (< 2 seconds), it keeps the local state.
+    """
+
+    async def async_update(self):
+        rolls = await self.ws_manager.getRolls()
+        _LOGGER.debug("async_update: full rolls data: %s", rolls)
+        for roll in rolls:
+            if str(roll.get("ID")) == str(self._roll_id):
+                try:
+                    new_pos = int(roll.get("POS", 0))
+                except Exception:
+                    new_pos = 0
+                if self._pending_command is not None:
+                    cmd, ts = self._pending_command
+                    if time.time() - ts < 2:
+                        return
+                    else:
+                        self._pending_command = None
+                self._position = new_pos
+                self._available = True
+                # Merge update into raw_data to preserve all fields
+                self._raw_data.update(roll)
+                break
+
+    @property
+    def should_poll(self) -> bool:
+        """Covers use periodic polling for multi-client reconciliation."""
+        return True

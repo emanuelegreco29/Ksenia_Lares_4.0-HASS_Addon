@@ -80,7 +80,17 @@ class KseniaScenarioButtonEntity(KseniaEntity, ButtonEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the button."""
-        return build_unique_id(self._base_id, "scenario", self._scenario_id)
+        return f"{self.ws_manager.ip}_{self._scenario_id}"
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
+
+    @property
+    def name(self):
+        """Returns the name of the button."""
+        return self._name
 
     async def async_press(self):
         """Execute the scenario when the button is pressed."""
@@ -106,7 +116,12 @@ class KseniaClearButtonEntity(KseniaEntity, ButtonEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the button."""
-        return build_unique_id(self._base_id, "clear", self._clear_type)
+        return f"{self.ws_manager.ip}_clear_{self._clear_type}"
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
 
     async def async_press(self):
         """Execute the clear command when the button is pressed."""

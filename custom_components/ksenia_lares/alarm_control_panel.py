@@ -327,7 +327,12 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
     @property
     def unique_id(self):
         """Return unique ID for the entity."""
-        return build_unique_id(self._base_id, "alarm_control_panel")
+        return f"{self.ws_manager.ip}_alarm_control_panel"
+
+    @property
+    def device_info(self):
+        """Return device information about this entity."""
+        return self._device_info
 
     @property
     def alarm_state(self):
@@ -568,15 +573,26 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
             _LOGGER.debug(f"Error loading bypassed zones for attributes: {e}")
         return result
 
+    _PARTITION_ARM_MAP = {
+        "D": "Disarmed",
+        "IA": "Armed",
+        "DA": "Arming (exit delay)",
+        "IT": "Entry delay active",
+        "OT": "Exit delay active",
+        "AL": "Alarm triggered",
+        "AM": "Alarm memory",
+    }
+
     def _get_partition_status(self) -> dict:
         """Return a dict mapping partition_<id> to a readable ARM state string."""
         result = {}
-        for part in self._partitions_status:
-            part_id = part.get("ID", "Unknown")
-            part_arm = part.get("ARM", "Unknown")
-            result[f"partition_{part_id}"] = next(
-                (s.name for s in PartitionArmStatus if s == part_arm), part_arm
-            )
+        try:
+            for part in self.ws_manager.get_cached_data("STATUS_PARTITIONS"):
+                part_id = part.get("ID", "Unknown")
+                part_arm = part.get("ARM", "Unknown")
+                result[f"partition_{part_id}"] = self._PARTITION_ARM_MAP.get(part_arm, part_arm)
+        except Exception as e:
+            _LOGGER.debug(f"Error loading partition status for attributes: {e}")
         return result
 
     @property
@@ -593,11 +609,12 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         device_description = (
             arm_data.get("D", "Unknown") if isinstance(arm_data, dict) else "Unknown"
         )
+        ast_status = self._system_status.get("AST", "Unknown")
+        ast_map = {"OK": "No Alarm", "AL": "Ongoing Alarm", "AM": "Alarm Memory"}
         bypassed_zones = self._get_bypassed_zones()
         return {
             "device_status": device_description,
-            "alarm_condition": ("Ongoing Alarm" if self._has_partition_alarm() else "No Alarm"),
-            "alarm_memory": self._has_partition_alarm_memory(),
+            "alarm_condition": ast_map.get(ast_status, ast_status),
             "bypassed_zones": bypassed_zones if bypassed_zones else "None",
             "partition_status": self._get_partition_status(),
             "scenarios_available": list(self._scenarios.keys()),

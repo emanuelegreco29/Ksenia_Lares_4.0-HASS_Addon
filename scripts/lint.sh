@@ -135,15 +135,21 @@ if [[ "$LINT_FAILED" == "false" ]]; then
     echo
 fi
 
-# Radon complexity (informational only — does not fail the build)
+# Radon complexity / maintainability (informational only — does not fail the build)
 if [[ "$LINT_FAILED" == "false" ]]; then
-    echo "Running: Radon (complexity)"
+    echo "Running: Radon (cyclomatic complexity)"
     RADON_DETAIL=$(radon cc custom_components/ksenia_lares/ --min C 2>&1)
     [[ -n "$RADON_DETAIL" ]] && echo "$RADON_DETAIL"
     radon cc custom_components/ksenia_lares/ -a 2>&1 | tail -2
     echo "To see details run: 'radon cc custom_components/ksenia_lares/ --total-average'"
     echo
+    echo "Running: Radon (Maintainability)"
+    radon mi custom_components/ksenia_lares/ --min C 2>&1
+    echo "To see details run: 'radon mi -s custom_components/ksenia_lares'"
+    echo
 fi
+
+
 
 # Summary
 echo "────────────────────────────────────"
