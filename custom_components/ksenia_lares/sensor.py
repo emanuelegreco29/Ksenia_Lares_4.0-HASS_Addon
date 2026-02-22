@@ -799,7 +799,7 @@ class KseniaSensorEntity(SensorEntity):
     """
 
     async def async_added_to_hass(self):
-        if self._sensor_type in ("door", "pmc", "window", "imov", "emov", "seism"):
+        if self._sensor_type in ("door", "pmc", "window", "imov", "emov", "seism", "cmd"):
             key = "zones"
             self.ws_manager.register_listener(key, self._handle_realtime_update)
         elif self._sensor_type == "siren":
@@ -1028,10 +1028,7 @@ class KseniaSensorEntity(SensorEntity):
 
             elif self._sensor_type == "cmd":
                 for data in data_list:
-                    if (
-                        str(data.get("ID")) == str(self._id)
-                        and data.get("CAT", "").upper() == "CMD"
-                    ):
+                    if str(data.get("ID")) == str(self._id):
                         attributes = {}
                         if "DES" in data:
                             attributes["Description"] = data["DES"]

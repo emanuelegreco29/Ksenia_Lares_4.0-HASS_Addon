@@ -49,6 +49,11 @@ LOG_INFO_TESTUSER = "testuser"
 ZONE_LABEL_FRONT_DOOR = "Front Door"
 ZONE_LABEL_LIVING_ROOM_MOTION = "Living Room Motion"
 ZONE_LABEL_SMOKE_DETECTOR = "Ceiling Smoke Detector"
+ZONE_LABEL_DOORBELL = "Doorbell"
+
+# Domus sensor
+DOMUS_ID = "1"
+DOMUS_LABEL = "Living Room Domus"
 
 # Output labels
 OUTPUT_LABEL_SIREN = "Outdoor siren"
@@ -76,6 +81,7 @@ PARTITION_2 = "2"
 ZONE_1 = "1"
 ZONE_2 = "2"
 ZONE_3 = "3"
+ZONE_4 = "4"
 
 # Output IDs
 OUTPUT_SIREN = "1"
@@ -246,6 +252,8 @@ class SimulatorState:
         self.zone_config = self._init_zone_config()
         self.zones = self._init_zones()
         self.partitions = self._init_partitions()
+        self.bus_has = self._init_bus_has()
+        self.bus_ha_sensors = self._init_bus_ha_sensors()
 
     def _init_outputs(self) -> Dict[str, Dict[str, Any]]:
         """Initialize output devices."""
@@ -282,6 +290,15 @@ class SimulatorState:
                 "CMD": "F",
                 "BYP_EN": "F",
                 "CAT": "SMOKE",
+                "AN": "F",
+            },
+            ZONE_4: {
+                "ID": ZONE_4,
+                "DES": ZONE_LABEL_DOORBELL,
+                "PRT": "ALL",
+                "CMD": "T",
+                "BYP_EN": "T",
+                "CAT": "CMD",
                 "AN": "F",
             },
         }
@@ -322,6 +339,17 @@ class SimulatorState:
                 "VAS": "F",
                 "LBL": ZONE_LABEL_SMOKE_DETECTOR,
             },
+            ZONE_4: {
+                "ID": ZONE_4,
+                "STA": "R",
+                "BYP": "NO",
+                "T": "N",
+                "A": "N",
+                "FM": "F",
+                "OHM": "NA",
+                "VAS": "F",
+                "LBL": ZONE_LABEL_DOORBELL,
+            },
         }
 
     def _init_partitions(self) -> Dict[str, Dict[str, Any]]:
@@ -349,6 +377,35 @@ class SimulatorState:
                 "TOUT": str(EXIT_DELAY),
                 "TIN": str(ENTRY_DELAY),
             },
+        }
+
+    def _init_bus_has(self) -> Dict[str, Dict[str, Any]]:
+        """Initialize BUS_HAS config (domus sensor definitions)."""
+        return {
+            DOMUS_ID: {
+                "ID": DOMUS_ID,
+                "TYP": "DOMUS",
+                "DES": DOMUS_LABEL,
+            }
+        }
+
+    def _init_bus_ha_sensors(self) -> Dict[str, Dict[str, Any]]:
+        """Initialize STATUS_BUS_HA_SENSORS state (domus sensor readings)."""
+        return {
+            DOMUS_ID: {
+                "ID": DOMUS_ID,
+                "DOMUS": {
+                    "TEM": "21.2",
+                    "HUM": "50",
+                    "LHT": "64",
+                    "PIR": "NA",
+                    "TL": "F",
+                    "TH": "F",
+                },
+                "FW": "0.0.38",
+                "HW": "k035",
+                "INFO": []
+            }
         }
 
     def now(self) -> str:
@@ -409,26 +466,14 @@ class LogInvalidRequestMiddleware(BaseHTTPMiddleware):
         try:
             # Try to read the request body
             body = await request.body()
-            if body:
+            if body and body[0:1] == b'\x16':
                 # Detect SSL/TLS handshake (starts with 0x16 for TLS record type)
-                if body[0:1] == b'\x16':
-                    logger.warning(
+                logger.warning(
                         f"WARNING: SSL/TLS connection attempt received on non-SSL port. "
                         f"The client is trying to connect with SSL/TLS, but the simulator "
                         f"is running on a plain HTTP port (8000). "
                         f"Please disable SSL in your Home Assistant configuration for this device."
                     )
-                else:
-                    # Log the raw body if present
-                    try:
-                        logger.warning(
-                            f"Potentially invalid HTTP request: {request.method} {request.url.path} - "
-                            f"Body: {body[:200].decode('utf-8', errors='ignore')}"
-                        )
-                    except Exception:
-                        logger.warning(
-                            f"Potentially invalid HTTP request: {request.method} {request.url.path}"
-                        )
         except Exception as e:
             logger.warning(f"Error reading HTTP request: {e}")
         
@@ -938,7 +983,11 @@ def initial_read_payload(types: List[str]) -> Dict[str, Any]:
     payload: Dict[str, Any] = {}
 
     for t in types:
-        if t == "OUTPUTS":
+        if t == "BUS_HAS":
+            payload["BUS_HAS"] = list(state.bus_has.values())
+        elif t == "STATUS_BUS_HA_SENSORS":
+            payload["STATUS_BUS_HA_SENSORS"] = list(state.bus_ha_sensors.values())
+        elif t == "OUTPUTS":
             payload["OUTPUTS"] = list(state.outputs.values())
         elif t == "ZONES":
             payload["ZONES"] = list(state.zone_config.values())
@@ -1012,6 +1061,27 @@ async def home(request: Request) -> str:
         f"<button onclick=disarmPartition('{p['ID']}')>Disarm</button></td></tr>"
         for p in state.partitions.values()
     )
+    domus_rows_parts = []
+    for s in state.bus_ha_sensors.values():
+        sid = s["ID"]
+        des = state.bus_has[sid]["DES"]
+        tem = s["DOMUS"].get("TEM", "NA").replace("+", "")
+        hum = s["DOMUS"].get("HUM", "NA")
+        lht = s["DOMUS"].get("LHT", "NA")
+        pir = s["DOMUS"].get("PIR", "NA")
+        tl = s["DOMUS"].get("TL", "NA")
+        th = s["DOMUS"].get("TH", "NA")
+        domus_rows_parts.append(
+            f"<tr><td>{sid}</td><td>{des}</td>"
+            f"<td><input id='tem-{sid}' type='number' step='0.1' value='{tem}'></td>"
+            f"<td><input id='hum-{sid}' type='number' step='1' value='{hum}'></td>"
+            f"<td><input id='lht-{sid}' type='number' step='1' value='{lht}'></td>"
+            f"<td>{pir}</td>"
+            f"<td>{tl}</td>"
+            f"<td>{th}</td>"
+            f"<td><button onclick=updateDomus('{sid}')>Send</button></td></tr>"
+        )
+    domus_rows = "".join(domus_rows_parts)
     scenarios = [
         {"ID": "1", "DES": SCENARIO_LABEL_DISARM},
         {"ID": "2", "DES": SCENARIO_LABEL_ARM_AWAY},
@@ -1073,6 +1143,9 @@ async def home(request: Request) -> str:
 
                     <h2>Partitions</h2>
                       <table><tr><th>ID</th><th>Label</th><th>Status</th><th>ARM</th><th>AST</th><th>Action</th></tr><tbody id="parts-body">{partitions_rows}</tbody></table>
+
+                    <h2>Domus Sensors</h2>
+                      <table><tr><th>ID</th><th>Label</th><th>Temp (°C)</th><th>Humidity (%)</th><th>Light (lux)</th><th>PIR</th><th>TL</th><th>TH</th><th>Action</th></tr><tbody id="domus-body">{domus_rows}</tbody></table>
                 </div>
 
                 <div class="status">
@@ -1116,19 +1189,19 @@ async def home(request: Request) -> str:
                 function renderAlarmStatus(parts) {{
                     const tbody = document.getElementById('alarm-body');
                     const anyAlarm = parts.some(p => (p.AST || 'OK') === 'AL');
-                    const alarmText = anyAlarm ? 'RED: YES - ALARM ACTIVE' : 'GREEN: NO';
-                    
+
                     tbody.innerHTML = parts.map(p => {{
                         const ast = p.AST || 'OK';
-                        let statusDisplay = 'GREEN: NO';
+                        let color = 'green';
+                        let label = 'NO';
                         if (ast === 'AL') {{
-                            statusDisplay = 'RED: YES';
+                            color = 'red'; label = 'YES';
                         }} else if (ast === 'AM') {{
-                            statusDisplay = 'YELLOW: MEMORY';
+                            color = 'orange'; label = 'MEMORY';
                         }}
-                        return `<tr><td>${{p.ID}} - ${{p.LBL || p.DES}}</td><td>${{ast}}</td><td>${{statusDisplay}}</td></tr>`;
+                        return `<tr><td>${{p.ID}} - ${{p.LBL || p.DES}}</td><td>${{ast}}</td><td style='color:${{color}};font-weight:bold'>${{label}}</td></tr>`;
                     }}).join('');
-                    return alarmText;
+                    return anyAlarm ? 'YES' : 'NO';
                 }}
 
                 function renderSystem(system) {{
@@ -1142,6 +1215,34 @@ async def home(request: Request) -> str:
                         `<tr><td>Description</td><td>${{arm.D || ''}}</td></tr>` +
                         `<tr><td>Status Code</td><td>${{arm.S || ''}}</td></tr>` +
                         `</table>`;
+                }}
+
+                let domusDirty = false;
+
+                function renderDomus(sensors) {{
+                    if (domusDirty) return;
+                    const tbody = document.getElementById('domus-body');
+                    tbody.innerHTML = sensors.map(s =>
+                        `<tr><td>${{s.ID}}</td><td>${{s.DES || s.ID}}</td>`+
+                        `<td><input id='tem-${{s.ID}}' type='number' step='0.1' value='${{(s.DOMUS.TEM || 'NA').replace('+', '')}}'></td>`+
+                        `<td><input id='hum-${{s.ID}}' type='number' step='1' value='${{s.DOMUS.HUM || 'NA'}}'></td>`+
+                        `<td><input id='lht-${{s.ID}}' type='number' step='1' value='${{s.DOMUS.LHT || 'NA'}}'></td>`+
+                        `<td>${{s.DOMUS.PIR || 'NA'}}</td>`+
+                        `<td>${{s.DOMUS.TL || 'NA'}}</td>`+
+                        `<td>${{s.DOMUS.TH || 'NA'}}</td>`+
+                        `<td><button onclick=updateDomus('${{s.ID}}')>Send</button></td></tr>`
+                    ).join('');
+                    tbody.querySelectorAll('input').forEach(el => el.addEventListener('input', () => {{ domusDirty = true; }}));
+                }}
+
+                async function updateDomus(id) {{
+                    const tem = document.getElementById(`tem-${{id}}`).value;
+                    const hum = document.getElementById(`hum-${{id}}`).value;
+                    const lht = document.getElementById(`lht-${{id}}`).value;
+                    const body = {{ TEM: tem ? `${{parseFloat(tem).toFixed(1)}}` : 'NA', HUM: hum, LHT: lht }};
+                    await fetch(`/api/domus/${{id}}`, {{ method: 'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify(body) }});
+                    domusDirty = false;
+                    refreshState();
                 }}
 
                 function renderLogs(logs) {{
@@ -1162,6 +1263,7 @@ async def home(request: Request) -> str:
                     renderPartitions(data.partitions || []);
                     renderAlarmStatus(data.partitions || []);
                     document.getElementById('system-status').innerHTML = renderSystem(data.system);
+                    renderDomus(data.bus_ha_sensors || []);
                     document.getElementById('logs').innerHTML = renderLogs(data.logs);
                 }}
                 async function toggleOutput(id) {{
@@ -1249,6 +1351,10 @@ async def api_state() -> Dict[str, Any]:
         "zones": list(state.zones.values()),
         "partitions": [get_partition_status_data(p) for p in state.partitions.values()],
         "system": [{"ID": "1", "INFO": [], "ARM": system_arm}],
+        "bus_ha_sensors": [
+            {**s, "DES": state.bus_has.get(s["ID"], {}).get("DES", s["ID"])}
+            for s in state.bus_ha_sensors.values()
+        ],
         "scenarios": [
             {"ID": "1", "DES": SCENARIO_LABEL_DISARM},
             {"ID": "2", "DES": SCENARIO_LABEL_ARM_AWAY},
@@ -1293,6 +1399,18 @@ async def api_bypass_zone(zone_id: str, byp: Dict[str, str]) -> Response:
         
         await state.broadcast_realtime({"STATUS_ZONES": [{**zone}]})
         return JSONResponse(content=zone)
+
+
+@app.post("/api/domus/{domus_id}", response_model=None)
+async def api_update_domus(domus_id: str, values: Dict[str, str]) -> Response:
+    """Update domus sensor readings and broadcast STATUS_BUS_HA_SENSORS."""
+    async with state.lock:
+        sensor = state.bus_ha_sensors.get(domus_id)
+        if not sensor:
+            return JSONResponse(status_code=404, content={"detail": "Domus sensor not found"})
+        sensor["DOMUS"].update(values)
+        await state.broadcast_realtime({"STATUS_BUS_HA_SENSORS": [sensor]})
+        return JSONResponse(content=sensor)
 
 
 @app.post("/api/partitions/{partition_id}/arm", response_model=None)
@@ -1552,6 +1670,7 @@ async def handle_websocket_realtime(ws: WebSocket, msg_id: str, payload_type: st
         "STATUS_ZONES": status_zones,
         "STATUS_PARTITIONS": status_partitions,
         "STATUS_OUTPUTS": status_outputs,
+        "STATUS_BUS_HA_SENSORS": list(state.bus_ha_sensors.values()),
         "STATUS_SYSTEM": [
             {"ID": "1", "INFO": [], "ARM": get_system_status_from_partitions()}
         ],
