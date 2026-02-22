@@ -68,43 +68,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         device_info = hass.data[DOMAIN].get("device_info")
         entities = []
 
-        # Track initial entity counts for delayed discovery
-        initial_counts = {}
-
-        # Add standard sensors from device data
-        domus_count = len(entities)
-        await _add_domus_sensors(ws_manager, device_info, entities)
-        initial_counts["domus"] = len(entities) - domus_count
-
-        powerline_count = len(entities)
-        await _add_powerline_sensors(ws_manager, device_info, entities)
-        initial_counts["powerlines"] = len(entities) - powerline_count
-
-        partition_count = len(entities)
-        await _add_partition_sensors(ws_manager, device_info, entities)
-        initial_counts["partitions"] = len(entities) - partition_count
-
-        zone_count = len(entities)
-        await _add_zone_sensors(ws_manager, device_info, entities)
-        initial_counts["zones"] = len(entities) - zone_count
-
-        system_count = len(entities)
-        await _add_system_sensors(ws_manager, device_info, entities)
-        initial_counts["systems"] = len(entities) - system_count
-
-        siren_count = len(entities)
-        await _add_siren_sensors(ws_manager, device_info, entities)
-        initial_counts["sirens"] = len(entities) - siren_count
-
-        # Add aggregated status sensors (always available)
+        initial_counts = await _add_all_device_sensors(ws_manager, device_info, entities)
         _add_status_sensors(ws_manager, device_info, entities)
-
-        # Add diagnostic sensors (always available)
         _add_diagnostic_sensors(ws_manager, device_info, entities)
-
         async_add_entities(entities, update_before_add=True)
 
-        # Log initial setup summary
         _LOGGER.info(
             f"Initial sensor setup complete: "
             f"{initial_counts['domus']} domus, "
@@ -115,70 +83,96 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             f"{initial_counts['sirens']} sirens"
         )
 
-        # Track discovered IDs for all sensor types to prevent duplicates
-        discovered_ids = {
-            "domus": {
-                f"domus_{s._id}"
-                for s in entities
-                if hasattr(s, "_sensor_type") and s._sensor_type in ("domus", "door")
-            },
-            "powerlines": {
-                f"powerlines_{s._id}"
-                for s in entities
-                if hasattr(s, "_sensor_type") and s._sensor_type == "powerlines"
-            },
-            "partitions": {
-                f"partitions_{s._id}"
-                for s in entities
-                if hasattr(s, "_sensor_type") and s._sensor_type == "partitions"
-            },
-            "zones": {
-                f"zones_{s._id}"
-                for s in entities
-                if hasattr(s, "_sensor_type") and s._sensor_type == "zones"
-            },
-            "systems": {
-                f"system_{s._id}"
-                for s in entities
-                if hasattr(s, "_sensor_type") and s._sensor_type == "system"
-            },
-            "sirens": {
-                f"siren_{s._id}"
-                for s in entities
-                if hasattr(s, "_sensor_type") and s._sensor_type == "siren"
-            },
-        }
-
-        async def discover_via_switches_listener(data_list):
-            """Listener-based discovery for sirens - checks switches data."""
-            try:
-                new_entities = []
-                for switch in data_list:
-                    unique_id = f"siren_{switch.get('ID')}"
-                    if unique_id not in discovered_ids["sirens"]:
-                        name = (
-                            switch.get("DES")
-                            or switch.get("LBL")
-                            or switch.get("NM")
-                            or f"Switch {switch.get('ID')}"
-                        )
-                        if "siren" in name.lower() or "sirena" in name.lower():
-                            new_entities.append(
-                                KseniaSensorEntity(ws_manager, switch, "siren", device_info)
-                            )
-                            discovered_ids["sirens"].add(unique_id)
-
-                if new_entities:
-                    _LOGGER.info(f"Discovery found {len(new_entities)} new siren sensor(s)")
-                    await async_add_entities(new_entities, update_before_add=True)
-            except Exception as e:
-                _LOGGER.debug(f"Error during siren sensor discovery: {e}")
-
-        # Register discovery listener for switches (for siren sensors)
-        ws_manager.register_listener("switches", discover_via_switches_listener)
+        discovered_ids = _build_discovered_ids(entities)
+        _register_siren_discovery_listener(
+            ws_manager, device_info, async_add_entities, discovered_ids
+        )
 
     except Exception as e:
         _LOGGER.error("Error setting up sensors: %s", e, exc_info=True)
+
+
+async def _add_all_device_sensors(ws_manager, device_info, entities: list) -> dict:
+    """Add all device-type sensor groups and return per-type counts."""
+    initial_counts: dict = {}
+
+    before = len(entities)
+    await _add_domus_sensors(ws_manager, device_info, entities)
+    initial_counts["domus"] = len(entities) - before
+
+    before = len(entities)
+    await _add_powerline_sensors(ws_manager, device_info, entities)
+    initial_counts["powerlines"] = len(entities) - before
+
+    before = len(entities)
+    await _add_partition_sensors(ws_manager, device_info, entities)
+    initial_counts["partitions"] = len(entities) - before
+
+    before = len(entities)
+    await _add_zone_sensors(ws_manager, device_info, entities)
+    initial_counts["zones"] = len(entities) - before
+
+    before = len(entities)
+    await _add_system_sensors(ws_manager, device_info, entities)
+    initial_counts["systems"] = len(entities) - before
+
+    before = len(entities)
+    await _add_siren_sensors(ws_manager, device_info, entities)
+    initial_counts["sirens"] = len(entities) - before
+
+    return initial_counts
+
+
+def _ids_for_type(entities: list, prefix: str, *sensor_types: str) -> set:
+    """Return the set of unique-ID strings for entities matching one or more sensor types."""
+    return {
+        f"{prefix}_{s._id}"
+        for s in entities
+        if hasattr(s, "_sensor_type") and s._sensor_type in sensor_types
+    }
+
+
+def _build_discovered_ids(entities: list) -> dict:
+    """Build a dict of already-discovered entity unique IDs grouped by sensor category."""
+    return {
+        "domus": _ids_for_type(entities, "domus", "domus", "door"),
+        "powerlines": _ids_for_type(entities, "powerlines", "powerlines"),
+        "partitions": _ids_for_type(entities, "partitions", "partitions"),
+        "zones": _ids_for_type(entities, "zones", "zones"),
+        "systems": _ids_for_type(entities, "system", "system"),
+        "sirens": _ids_for_type(entities, "siren", "siren"),
+    }
+
+
+def _register_siren_discovery_listener(ws_manager, device_info, async_add_entities, discovered_ids):
+    """Register a listener that dynamically discovers new siren sensors from switch updates."""
+
+    async def discover_via_switches_listener(data_list):
+        """Listener-based discovery for sirens - checks switches data."""
+        try:
+            new_entities = []
+            for switch in data_list:
+                unique_id = f"siren_{switch.get('ID')}"
+                if unique_id not in discovered_ids["sirens"]:
+                    name = (
+                        switch.get("DES")
+                        or switch.get("LBL")
+                        or switch.get("NM")
+                        or f"Switch {switch.get('ID')}"
+                    )
+                    if "siren" in name.lower() or "sirena" in name.lower():
+                        new_entities.append(
+                            KseniaSensorEntity(ws_manager, switch, "siren", device_info)
+                        )
+                        discovered_ids["sirens"].add(unique_id)
+
+            if new_entities:
+                _LOGGER.info(f"Discovery found {len(new_entities)} new siren sensor(s)")
+                await async_add_entities(new_entities, update_before_add=True)
+        except Exception as e:
+            _LOGGER.debug(f"Error during siren sensor discovery: {e}")
+
+    ws_manager.register_listener("switches", discover_via_switches_listener)
 
 
 async def _add_domus_sensors(ws_manager, device_info, entities):
@@ -276,6 +270,36 @@ class KseniaSensorEntity(SensorEntity):
 
     _attr_has_entity_name = True
 
+    # Shared ARM state mapping used across sensor types and update methods
+    _ARM_STATE_MAP = {
+        "T": "fully_armed",
+        "T_IN": "fully_armed_entry_delay",
+        "T_OUT": "fully_armed_exit_delay",
+        "P": "partially_armed",
+        "P_IN": "partially_armed_entry_delay",
+        "P_OUT": "partially_armed_exit_delay",
+        "D": "disarmed",
+    }
+
+    # Shared partition ARM/AST/TST maps
+    _PARTITION_ARM_MAP = {
+        "D": "Disarmed",
+        "DA": "Delayed Arming",
+        "IA": "Immediate Arming",
+        "IT": "Input time",
+        "OT": "Output time",
+    }
+    _PARTITION_AST_MAP = {
+        "OK": "No ongoing alarm",
+        "AL": "Ongoing alarm",
+        "AM": "Alarm memory",
+    }
+    _PARTITION_TST_MAP = {
+        "OK": "No ongoing tampering",
+        "TAM": "Ongoing tampering",
+        "TM": "Tampering memory",
+    }
+
     """
     Initializes a Ksenia sensor entity.
 
@@ -285,6 +309,7 @@ class KseniaSensorEntity(SensorEntity):
     """
 
     def __init__(self, ws_manager, sensor_data, sensor_type, device_info=None):
+        """Initialise the sensor entity with its manager, raw data, and type."""
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
         self._sensor_type = sensor_type
@@ -296,499 +321,453 @@ class KseniaSensorEntity(SensorEntity):
         )
         self._device_info = device_info
 
-        if sensor_data.get("CAT", "").upper() == "DOOR" or sensor_type == "door":
-            attributes = {}
-            if "DES" in sensor_data:
-                attributes["Description"] = sensor_data["DES"]
-            if "PRT" in sensor_data:
-                attributes["Partition"] = sensor_data["PRT"]
-            if "CMD" in sensor_data:
-                attributes["Command"] = "Fixed" if sensor_data["CMD"] == "F" else sensor_data["CMD"]
-            if "BYP EN" in sensor_data:
-                attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
-            if "AN" in sensor_data:
-                attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            state_mapping = {"R": "closed", "A": "open"}
-            mapped_state = state_mapping.get(
-                sensor_data.get("STA"), sensor_data.get("STA", "unknown")
-            )
-            attributes["State"] = mapped_state
-            sensor_data.pop("STA", None)
-            if "BYP" in sensor_data:
-                attributes["Bypass"] = (
-                    "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                )
-            if "T" in sensor_data:
-                attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
-            if "A" in sensor_data:
-                attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
-            if "FM" in sensor_data:
-                attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
-            if "OHM" in sensor_data:
-                attributes["Resistance"] = (
-                    sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
-                )
-            if "VAS" in sensor_data:
-                attributes["Voltage Alarm Sensor"] = (
-                    "Active" if sensor_data["VAS"] == "T" else "Inactive"
-                )
-            if "LBL" in sensor_data and sensor_data["LBL"]:
-                attributes["Label"] = sensor_data["LBL"]
+        self._dispatch_init(sensor_data, sensor_type)
 
-            self._state = mapped_state
-            self._attributes = attributes
-            self._sensor_type = "door"
-            sensor_name = (
-                sensor_data.get("NM")
-                or sensor_data.get("LBL")
-                or sensor_data.get("DES")
-                or str(self._id)
-            )
-            self._attr_translation_key = "magnetic_sensor"
-            self._attr_translation_placeholders = {"sensor_name": sensor_name}
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
+    def _dispatch_init(self, sensor_data: dict, sensor_type: str) -> None:
+        """Dispatch sensor initialisation to the appropriate per-type helper.
 
-        elif sensor_data.get("CAT", "").upper() == "WINDOW" or sensor_type == "window":
-            attributes = {}
-            if "DES" in sensor_data:
-                attributes["Description"] = sensor_data["DES"]
-            if "PRT" in sensor_data:
-                attributes["Partition"] = sensor_data["PRT"]
-            if "CMD" in sensor_data:
-                attributes["Command"] = "Fixed" if sensor_data["CMD"] == "F" else sensor_data["CMD"]
-            if "BYP EN" in sensor_data:
-                attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
-            if "AN" in sensor_data:
-                attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            state_mapping = {"R": "closed", "A": "open"}
-            mapped_state = state_mapping.get(
-                sensor_data.get("STA"), sensor_data.get("STA", "unknown")
-            )
-            attributes["State"] = mapped_state
-            sensor_data.pop("STA", None)
-            if "BYP" in sensor_data:
-                attributes["Bypass"] = (
-                    "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                )
-            if "T" in sensor_data:
-                attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
-            if "A" in sensor_data:
-                attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
-            if "FM" in sensor_data:
-                attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
-            if "OHM" in sensor_data:
-                attributes["Resistance"] = (
-                    sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
-                )
-            if "VAS" in sensor_data:
-                attributes["Vasistas"] = "Yes" if sensor_data["VAS"] == "T" else "No"
-            if "LBL" in sensor_data and sensor_data["LBL"]:
-                attributes["Label"] = sensor_data["LBL"]
+        CAT-based types (from zone data) take precedence over the sensor_type argument.
+        """
+        cat = sensor_data.get("CAT", "").upper()
 
-            self._state = mapped_state
-            self._attributes = attributes
-            self._sensor_type = "window"
-            sensor_name = (
-                sensor_data.get("NM")
-                or sensor_data.get("LBL")
-                or sensor_data.get("DES")
-                or str(self._id)
-            )
-            self._attr_translation_key = "magnetic_sensor"
-            self._attr_translation_placeholders = {"sensor_name": sensor_name}
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
+        # CAT-based dispatch (zone-type sensors carry their category in the data)
+        _cat_dispatch = {
+            "DOOR": self._init_door_type,
+            "WINDOW": self._init_window_type,
+            "CMD": self._init_cmd_type,
+            "IMOV": self._init_mov_type,
+            "EMOV": self._init_mov_type,
+            "PMC": self._init_pmc_type,
+            "SEISM": self._init_seism_type,
+        }
+        if cat in _cat_dispatch:
+            _cat_dispatch[cat](sensor_data)
+            return
 
-        elif sensor_data.get("CAT", "").upper() == "CMD" or sensor_type == "cmd":
-            attributes = {}
-            if "DES" in sensor_data:
-                attributes["Description"] = sensor_data["DES"]
-            if "PRT" in sensor_data:
-                attributes["Partition"] = sensor_data["PRT"]
-            # Command type: "T" means Trigger
-            if "CMD" in sensor_data:
-                attributes["Command"] = (
-                    "Trigger" if sensor_data["CMD"] == "T" else sensor_data["CMD"]
-                )
-            if "BYP EN" in sensor_data:
-                attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
-            if "AN" in sensor_data:
-                attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            if "STA" in sensor_data:
-                state_mapping = {"R": "released", "A": "armed", "D": "disarmed"}
-                attributes["State"] = state_mapping.get(sensor_data["STA"], sensor_data["STA"])
-            if "BYP" in sensor_data:
-                attributes["Bypass"] = (
-                    "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                )
-            if "T" in sensor_data:
-                attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
-            if "A" in sensor_data:
-                attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
-            if "FM" in sensor_data:
-                attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
-            if "OHM" in sensor_data:
-                attributes["Resistance"] = (
-                    sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
-                )
-            if "VAS" in sensor_data:
-                attributes["Voltage Alarm Sensor"] = (
-                    "Active" if sensor_data["VAS"] == "T" else "Inactive"
-                )
-            if "LBL" in sensor_data and sensor_data["LBL"]:
-                attributes["Label"] = sensor_data["LBL"]
-
-            self._state = sensor_data.get("STA", "unknown")
-            self._attributes = attributes
-            self._sensor_type = "cmd"
-            self._name = (
-                sensor_data.get("NM")
-                or sensor_data.get("LBL")
-                or sensor_data.get("DES")
-                or f"Command Sensor {self._id}"
-            )
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
-
-        elif (
-            sensor_data.get("CAT", "").upper() == "IMOV"
-            or sensor_data.get("CAT", "").upper() == "EMOV"
-        ):
-            attributes = {}
-            mapped_state = "unknown"  # Initialize with default value
-            if "DES" in sensor_data:
-                attributes["Description"] = sensor_data["DES"]
-            if "PRT" in sensor_data:
-                attributes["Partition"] = sensor_data["PRT"]
-            if "BYP EN" in sensor_data:
-                attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
-            if "AN" in sensor_data:
-                attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            if "STA" in sensor_data:
-                state_mapping = {"R": "off", "A": "on"}
-                mapped_state = state_mapping.get(
-                    sensor_data.get("STA"), sensor_data.get("STA", "unknown")
-                )
-                attributes["State"] = mapped_state
-                sensor_data.pop("STA", None)
-            if "BYP" in sensor_data:
-                attributes["Bypass"] = (
-                    "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                )
-            if "T" in sensor_data:
-                attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
-            if "A" in sensor_data:
-                attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
-            if "FM" in sensor_data:
-                attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
-            if "OHM" in sensor_data:
-                attributes["Resistance"] = (
-                    sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
-                )
-            if "VAS" in sensor_data:
-                attributes["Voltage Alarm Sensor"] = (
-                    "Active" if sensor_data["VAS"] == "T" else "Inactive"
-                )
-            if "LBL" in sensor_data and sensor_data["LBL"]:
-                attributes["Label"] = sensor_data["LBL"]
-
-            self._state = mapped_state
-            self._attributes = attributes
-            sensor_name = (
-                sensor_data.get("NM")
-                or sensor_data.get("LBL")
-                or sensor_data.get("DES")
-                or str(self._id)
-            )
-            if sensor_data.get("CAT", "").upper() == "EMOV":
-                self._sensor_type = "emov"
-                self._attr_translation_key = "movement_sensor"
-                self._attr_translation_placeholders = {"sensor_name": sensor_name}
-            else:
-                self._sensor_type = "imov"
-                self._attr_translation_key = "movement_sensor"
-                self._attr_translation_placeholders = {"sensor_name": sensor_name}
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
-
-        elif sensor_data.get("CAT", "").upper() == "PMC":
-            attributes = {}
-            mapped_state = "unknown"  # Initialize with default value
-            if "DES" in sensor_data:
-                attributes["Description"] = sensor_data["DES"]
-            if "PRT" in sensor_data:
-                attributes["Partition"] = sensor_data["PRT"]
-            if "CMD" in sensor_data:
-                attributes["Command"] = "Fixed" if sensor_data["CMD"] == "F" else sensor_data["CMD"]
-            if "BYP EN" in sensor_data:
-                attributes["Bypass Enabled"] = "Yes" if sensor_data["BYP EN"] == "T" else "No"
-            if "AN" in sensor_data:
-                attributes["Signal Type"] = "Analog" if sensor_data["AN"] == "T" else "Digital"
-            if "STA" in sensor_data:
-                state_mapping = {"R": "closed", "A": "open"}
-                mapped_state = state_mapping.get(sensor_data["STA"], sensor_data["STA"])
-                attributes["State"] = mapped_state
-            if "BYP" in sensor_data:
-                attributes["Bypass"] = (
-                    "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                )
-            if "T" in sensor_data:
-                attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
-            if "A" in sensor_data:
-                attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
-            if "FM" in sensor_data:
-                attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
-            if "OHM" in sensor_data:
-                attributes["Resistance"] = (
-                    sensor_data["OHM"] if sensor_data["OHM"] != "NA" else "N/A"
-                )
-            if "VAS" in sensor_data:
-                attributes["Voltage Alarm Sensor"] = (
-                    "Active" if sensor_data["VAS"] == "T" else "Inactive"
-                )
-            if "LBL" in sensor_data and sensor_data["LBL"]:
-                attributes["Label"] = sensor_data["LBL"]
-
-            self._state = mapped_state
-            self._attributes = attributes
-            self._sensor_type = "pmc"
-            sensor_name = (
-                sensor_data.get("NM")
-                or sensor_data.get("LBL")
-                or sensor_data.get("DES")
-                or str(self._id)
-            )
-            self._attr_translation_key = "magnetic_sensor"
-            self._attr_translation_placeholders = {"sensor_name": sensor_name}
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
-
-        elif sensor_data.get("CAT", "").upper() == "SEISM" or sensor_type == "seism":
-            attributes = {}
-            if "DES" in sensor_data:
-                attributes["Description"] = sensor_data["DES"]
-            if "PRT" in sensor_data:
-                attributes["Partition"] = sensor_data["PRT"]
-            state_mapping = {"R": "rest", "A": "seismic_activity", "N": "normal"}
-            mapped_state = state_mapping.get(
-                sensor_data.get("STA"), sensor_data.get("STA", "unknown")
-            )
-            attributes["State"] = mapped_state
-            if "BYP" in sensor_data:
-                attributes["Bypass"] = (
-                    "Active" if sensor_data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                )
-            if "T" in sensor_data:
-                attributes["Tamper"] = "Yes" if sensor_data["T"] == "T" else "No"
-            if "A" in sensor_data:
-                attributes["Alarm"] = "On" if sensor_data["A"] == "T" else "Off"
-            if "FM" in sensor_data:
-                attributes["Fault Memory"] = "Yes" if sensor_data["FM"] == "T" else "No"
-
-            self._state = mapped_state
-            self._attributes = attributes
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
-            self._sensor_type = "seism"
-            sensor_name = (
-                sensor_data.get("NM")
-                or sensor_data.get("LBL")
-                or sensor_data.get("DES")
-                or str(self._id)
-            )
-            self._attr_translation_key = "seismic_sensor"
-            self._attr_translation_placeholders = {"sensor_name": sensor_name}
-
-        elif sensor_type == "system":
-            arm_data = sensor_data.get("ARM", {})
-            # STATUS_SYSTEM.ARM is always an object: {"S": code, "D": description}
-            state_code = arm_data.get("S", "D") if isinstance(arm_data, dict) else "D"
-            if state_code is None or state_code == "":
-                _LOGGER.error(
-                    "Ksenia system sensor %s: ARM state code is None/empty; ARM data: %r",
-                    self._id,
-                    arm_data,
-                )
-                state_code = ""
-            state_mapping = {
-                "T": "fully_armed",
-                "T_IN": "fully_armed_entry_delay",
-                "T_OUT": "fully_armed_exit_delay",
-                "P": "partially_armed",
-                "P_IN": "partially_armed_entry_delay",
-                "P_OUT": "partially_armed_exit_delay",
-                "D": "disarmed",
-            }
-            readable_state = state_mapping.get(state_code, state_code)
-            if state_code not in state_mapping:
-                _LOGGER.error(
-                    "Ksenia system sensor %s: unwanted ARM code %r → cannot map!",
-                    self._id,
-                    state_code,
-                )
-
-            self._state = readable_state
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
-            self._attributes = {}
-            self._name = None
-            self._attr_has_entity_name = True
-            self._attr_translation_key = "alarm_system_status"
-            # Only add ID suffix if not the first/default system
-            suffix = "" if str(self._id) == "1" else f" {self._id}"
-            self._attr_translation_placeholders = {"suffix": suffix}
-
-        elif sensor_type == "powerlines":
-            # Extract consumption and production
-            pcons = sensor_data.get("PCONS")
-            try:
-                pcons_val = float(pcons) if pcons and pcons.replace(".", "", 1).isdigit() else None
-            except Exception as e:
-                _LOGGER.error("Error converting PCONS: %s", e)
-                pcons_val = None
-            pprod = sensor_data.get("PPROD")
-            try:
-                pprod_val = float(pprod) if pprod and pprod.replace(".", "", 1).isdigit() else None
-            except Exception as e:
-                _LOGGER.error("Error converting PPROD: %s", e)
-                pprod_val = None
-            # Use PCONS if it exists, otherwise use STATUS
-            consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
-            self._state = (
-                pcons_val if pcons_val is not None else sensor_data.get("STATUS", "Unknown")
-            )
-            self._attributes = {
-                "Consumption": consumo_kwh,
-                "Production": pprod_val,
-                "Status": sensor_data.get("STATUS", "Unknown"),
-            }
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
-            if consumo_kwh is not None:
-                self._name = f"Cons: {self._name}"
-
-        elif sensor_type == "domus":
-            domus_data = sensor_data.get("DOMUS", {})
-            if not isinstance(domus_data, dict):
-                domus_data = {}
-            try:
-                temp_str = domus_data.get("TEM")
-                temperature = (
-                    float(temp_str.replace("+", ""))
-                    if temp_str and temp_str not in ["NA", ""]
-                    else None
-                )
-            except Exception as e:
-                _LOGGER.error("Error converting temperature in domus sensor: %s", e)
-                temperature = None
-            try:
-                hum_str = domus_data.get("HUM")
-                humidity = float(hum_str) if hum_str and hum_str not in ["NA", ""] else None
-            except Exception as e:
-                _LOGGER.error("Error converting humidity in domus sensor: %s", e)
-                humidity = None
-
-            # Other parameters
-            lht = (
-                domus_data.get("LHT")
-                if domus_data.get("LHT") not in [None, "NA", ""]
-                else "Unknown"
-            )
-            pir = (
-                domus_data.get("PIR")
-                if domus_data.get("PIR") not in [None, "NA", ""]
-                else "Unknown"
-            )
-            tl = domus_data.get("TL") if domus_data.get("TL") not in [None, "NA", ""] else "Unknown"
-            th = domus_data.get("TH") if domus_data.get("TH") not in [None, "NA", ""] else "Unknown"
-
-            state_value = temperature if temperature is not None else "Unknown"
-            self._state = state_value
-            self._attributes = {
-                "temperature": temperature if temperature is not None else "Unknown",
-                "humidity": humidity if humidity is not None else "Unknown",
-                "light": lht,
-                "pir": pir,
-                "tl": tl,
-                "th": th,
-            }
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
-
-        elif sensor_type == "partitions":
-            ARM_MAP = {
-                "D": "Disarmed",
-                "DA": "Delayed Arming",
-                "IA": "Immediate Arming",
-                "IT": "Input time",
-                "OT": "Output time",
-            }
-            AST_MAP = {
-                "OK": "No ongoing alarm",
-                "AL": "Ongoing alarm",
-                "AM": "Alarm memory",
-            }
-            TST_MAP = {
-                "OK": "No ongoing tampering",
-                "TAM": "Ongoing tampering",
-                "TM": "Tampering memory",
-            }
-            raw_arm = sensor_data.get("ARM", "")
-            arm_desc = ARM_MAP.get(raw_arm, raw_arm) if raw_arm else "Unknown"
-            if raw_arm in ("IT", "OT"):
-                timer = sensor_data.get("T", 0)
-                state = f"{arm_desc} ({timer}s)"
-            else:
-                state = arm_desc if arm_desc else "Unknown"
-            self._state = state
-
-            attrs = {
-                "Partition": sensor_data.get("ID"),
-                "Description": sensor_data.get("DES"),
-                "Arming Mode": raw_arm,
-                "Arming Description": arm_desc,
-                "Alarm Mode": sensor_data.get("AST"),
-                "Alarm Description": AST_MAP.get(sensor_data.get("AST", ""), ""),
-                "Tamper Mode": sensor_data.get("TST"),
-                "Tamper Description": TST_MAP.get(sensor_data.get("TST", ""), ""),
-            }
-
-            if sensor_data.get("TIN") is not None:
-                attrs["entry_delay"] = sensor_data["TIN"]
-            if sensor_data.get("TOUT") is not None:
-                attrs["exit_delay"] = sensor_data["TOUT"]
-
-            self._attributes = attrs
-            self._name = f"Part: {self._name}"
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
-
-        elif sensor_type == "siren":
-            # Siren sensor (read-only status)
-            state_mapping = {"ON": "on", "OFF": "off", "on": "on", "off": "off"}
-            sta = sensor_data.get("STA", "OFF")
-            self._state = state_mapping.get(sta, sta)
-            label = sensor_data.get("DES") or sensor_data.get("LBL") or sensor_data.get("NM")
-            self._attributes = {
-                "ID": sensor_data.get("ID"),
-                "Description": label,
-                "Category": sensor_data.get("CAT"),
-            }
-            if "MOD" in sensor_data:
-                self._attributes["Mode"] = sensor_data["MOD"]
-            self._name = None
-            self._attr_has_entity_name = True
-            self._attr_translation_key = "siren_status"
-            self._attr_translation_placeholders = {"label": label or str(self._id)}
-            # Store complete raw data for debugging and transparency
-            self._raw_data = dict(sensor_data)
-
+        # sensor_type-based dispatch (explicit type argument)
+        _type_dispatch = {
+            "door": self._init_door_type,
+            "window": self._init_window_type,
+            "cmd": self._init_cmd_type,
+            "seism": self._init_seism_type,
+            "system": self._init_system_type,
+            "powerlines": self._init_powerlines_type,
+            "domus": self._init_domus_type,
+            "partitions": self._init_partitions_type,
+            "siren": self._init_siren_type,
+        }
+        init_fn = _type_dispatch.get(sensor_type)
+        if init_fn:
+            init_fn(sensor_data)
         else:
             self._state = sensor_data.get("STA", "unknown")
             self._attributes = sensor_data
-            # Store complete raw data for debugging and transparency
             self._raw_data = dict(sensor_data)
+
+    # ------------------------------------------------------------------
+    # Per-type init helpers (called from __init__)
+    # ------------------------------------------------------------------
+
+    # Maps zone flag key → (attribute name, value transform)
+    _ZONE_FLAG_MAP: dict = {
+        "T": ("Tamper", lambda v: "Yes" if v == "T" else "No"),
+        "A": ("Alarm", lambda v: "On" if v == "T" else "Off"),
+        "FM": ("Fault Memory", lambda v: "Yes" if v == "T" else "No"),
+        "OHM": ("Resistance", lambda v: v if v != "NA" else "N/A"),
+        "VAS": ("Voltage Alarm Sensor", lambda v: "Active" if v == "T" else "Inactive"),
+    }
+
+    @staticmethod
+    def _apply_zone_fault_flags(data: dict, attributes: dict) -> None:
+        """Populate attributes with zone fault/tamper/alarm flags in-place.
+
+        Handles: BYP, T (tamper), A (alarm), FM (fault memory), OHM (resistance),
+        VAS (voltage alarm sensor), LBL (label).
+        """
+        if "BYP" in data:
+            attributes["Bypass"] = (
+                "Active" if data["BYP"].upper() != "NO" else "Inactive"
+            )
+        for key, (attr, transform) in KseniaSensorEntity._ZONE_FLAG_MAP.items():
+            if key in data:
+                attributes[attr] = transform(data[key])
+        if "LBL" in data and data["LBL"]:
+            attributes["Label"] = data["LBL"]
+
+    @staticmethod
+    def _apply_zone_header_flags(data: dict, attributes: dict) -> None:
+        """Populate attributes with common zone header fields in-place.
+
+        Handles: DES (description), PRT (partition), CMD (command), BYP EN, AN (signal type).
+        """
+        if "DES" in data:
+            attributes["Description"] = data["DES"]
+        if "PRT" in data:
+            attributes["Partition"] = data["PRT"]
+        if "CMD" in data:
+            attributes["Command"] = "Fixed" if data["CMD"] == "F" else data["CMD"]
+        if "BYP EN" in data:
+            attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
+        if "AN" in data:
+            attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
+
+    @classmethod
+    def _build_contact_attributes(cls, data: dict) -> tuple[dict, str]:
+        """Build shared attributes and mapped state for door/window/pmc sensor data.
+
+        Returns:
+            Tuple of (attributes dict, mapped_state string)
+        """
+        attributes: dict = {}
+        cls._apply_zone_header_flags(data, attributes)
+        state_mapping = {"R": "closed", "A": "open"}
+        sta = str(data.get("STA", "unknown"))
+        mapped_state = state_mapping.get(sta, sta)
+        attributes["State"] = mapped_state
+        cls._apply_zone_fault_flags(data, attributes)
+        return attributes, mapped_state
+
+    @classmethod
+    def _build_mov_attributes(cls, data: dict) -> tuple[dict, str]:
+        """Build shared attributes and mapped state for imov/emov sensor data.
+
+        Returns:
+            Tuple of (attributes dict, mapped_state string)
+        """
+        attributes: dict = {}
+        mapped_state = "unknown"
+        if "DES" in data:
+            attributes["Description"] = data["DES"]
+        if "PRT" in data:
+            attributes["Partition"] = data["PRT"]
+        if "BYP EN" in data:
+            attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
+        if "AN" in data:
+            attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
+        if "STA" in data:
+            state_mapping = {"R": "off", "A": "on"}
+            sta = str(data.get("STA", "unknown"))
+            mapped_state = state_mapping.get(sta, sta)
+            attributes["State"] = mapped_state
+        cls._apply_zone_fault_flags(data, attributes)
+        return attributes, mapped_state
+
+    @classmethod
+    def _build_cmd_attributes(cls, data: dict) -> dict:
+        """Build attributes dict for cmd sensor data."""
+        attributes: dict = {}
+        if "DES" in data:
+            attributes["Description"] = data["DES"]
+        if "PRT" in data:
+            attributes["Partition"] = data["PRT"]
+        if "CMD" in data:
+            attributes["Command"] = "Trigger" if data["CMD"] == "T" else data["CMD"]
+        if "BYP EN" in data:
+            attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
+        if "AN" in data:
+            attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
+        if "STA" in data:
+            state_mapping = {"R": "released", "A": "armed", "D": "disarmed"}
+            attributes["State"] = state_mapping.get(data["STA"], data["STA"])
+        cls._apply_zone_fault_flags(data, attributes)
+        return attributes
+
+    @staticmethod
+    def _parse_power_float(value, field_name: str):
+        """Safely parse a power reading string to float.
+
+        Returns:
+            Float value or None on failure.
+        """
+        try:
+            return float(value) if value and value.replace(".", "", 1).isdigit() else None
+        except Exception as e:
+            _LOGGER.error("Error converting %s: %s", field_name, e)
+            return None
+
+    @staticmethod
+    def _domus_optional_reading(domus_data: dict, key: str) -> str:
+        """Return domus optional environmental field value, or 'Unknown' when absent/NA."""
+        val = domus_data.get(key)
+        return "Unknown" if val in (None, "NA", "") else str(val)
+
+    @staticmethod
+    def _parse_domus_temperature(domus_data: dict):
+        """Parse temperature string from domus data, returning float or None on failure."""
+        try:
+            temp_str = domus_data.get("TEM")
+            return (
+                float(temp_str.replace("+", ""))
+                if temp_str and temp_str not in ["NA", ""]
+                else None
+            )
+        except Exception as e:
+            _LOGGER.error("Error converting temperature in domus sensor: %s", e)
+            return None
+
+    @staticmethod
+    def _parse_domus_humidity(domus_data: dict):
+        """Parse humidity string from domus data, returning float or None on failure."""
+        try:
+            hum_str = domus_data.get("HUM")
+            return float(hum_str) if hum_str and hum_str not in ["NA", ""] else None
+        except Exception as e:
+            _LOGGER.error("Error converting humidity in domus sensor: %s", e)
+            return None
+
+    @classmethod
+    def _parse_domus_readings(cls, sensor_data: dict) -> tuple:
+        """Extract temperature, humidity, and environmental readings from domus data.
+
+        Returns:
+            Tuple of (temperature, humidity, lht, pir, tl, th)
+        """
+        domus_data = sensor_data.get("DOMUS", {})
+        if not isinstance(domus_data, dict):
+            domus_data = {}
+
+        temperature = cls._parse_domus_temperature(domus_data)
+        humidity = cls._parse_domus_humidity(domus_data)
+        lht = cls._domus_optional_reading(domus_data, "LHT")
+        pir = cls._domus_optional_reading(domus_data, "PIR")
+        tl = cls._domus_optional_reading(domus_data, "TL")
+        th = cls._domus_optional_reading(domus_data, "TH")
+        return temperature, humidity, lht, pir, tl, th
+
+    @classmethod
+    def _build_partition_state_and_attrs(cls, data: dict) -> tuple[str, dict]:
+        """Build partition state string and attributes dict from data dict.
+
+        Returns:
+            Tuple of (state string, attributes dict)
+        """
+        raw_arm = data.get("ARM", "")
+        arm_desc = cls._PARTITION_ARM_MAP.get(raw_arm, raw_arm) if raw_arm else "Unknown"
+        if raw_arm in ("IT", "OT"):
+            timer = data.get("T", 0)
+            state = f"{arm_desc} ({timer}s)"
+        else:
+            state = arm_desc if arm_desc else "Unknown"
+
+        attrs = {
+            "Partition": data.get("ID"),
+            "Description": data.get("DES"),
+            "Arming Mode": raw_arm,
+            "Arming Description": arm_desc,
+            "Alarm Mode": data.get("AST"),
+            "Alarm Description": cls._PARTITION_AST_MAP.get(data.get("AST", ""), ""),
+            "Tamper Mode": data.get("TST"),
+            "Tamper Description": cls._PARTITION_TST_MAP.get(data.get("TST", ""), ""),
+        }
+        if data.get("TIN") is not None:
+            attrs["entry_delay"] = data["TIN"]
+        if data.get("TOUT") is not None:
+            attrs["exit_delay"] = data["TOUT"]
+        return state, attrs
+
+    def _init_door_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a door (magnetic contact) sensor."""
+        attributes, mapped_state = self._build_contact_attributes(sensor_data)
+        sensor_data.pop("STA", None)
+        self._state = mapped_state
+        self._attributes = attributes
+        self._sensor_type = "door"
+        sensor_name = (
+            sensor_data.get("NM")
+            or sensor_data.get("LBL")
+            or sensor_data.get("DES")
+            or str(self._id)
+        )
+        self._attr_translation_key = "magnetic_sensor"
+        self._attr_translation_placeholders = {"sensor_name": sensor_name}
+        self._raw_data = dict(sensor_data)
+
+    def _init_window_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a window (magnetic contact) sensor."""
+        attributes, mapped_state = self._build_contact_attributes(sensor_data)
+        # Window has Vasistas instead of Voltage Alarm Sensor for VAS
+        if "VAS" in sensor_data:
+            attributes["Vasistas"] = "Yes" if sensor_data["VAS"] == "T" else "No"
+            # Overwrite the VAS entry set by _build_contact_attributes
+            attributes.pop("Voltage Alarm Sensor", None)
+        sensor_data.pop("STA", None)
+        self._state = mapped_state
+        self._attributes = attributes
+        self._sensor_type = "window"
+        sensor_name = (
+            sensor_data.get("NM")
+            or sensor_data.get("LBL")
+            or sensor_data.get("DES")
+            or str(self._id)
+        )
+        self._attr_translation_key = "magnetic_sensor"
+        self._attr_translation_placeholders = {"sensor_name": sensor_name}
+        self._raw_data = dict(sensor_data)
+
+    def _init_cmd_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a command sensor."""
+        attributes = self._build_cmd_attributes(sensor_data)
+        self._state = sensor_data.get("STA", "unknown")
+        self._attributes = attributes
+        self._sensor_type = "cmd"
+        self._name = (
+            sensor_data.get("NM")
+            or sensor_data.get("LBL")
+            or sensor_data.get("DES")
+            or f"Command Sensor {self._id}"
+        )
+        self._raw_data = dict(sensor_data)
+
+    def _init_mov_type(self, sensor_data: dict) -> None:
+        """Initialize entity for an internal/external movement (PIR) sensor."""
+        attributes, mapped_state = self._build_mov_attributes(sensor_data)
+        sensor_data.pop("STA", None)
+        self._state = mapped_state
+        self._attributes = attributes
+        sensor_name = (
+            sensor_data.get("NM")
+            or sensor_data.get("LBL")
+            or sensor_data.get("DES")
+            or str(self._id)
+        )
+        cat = sensor_data.get("CAT", "").upper()
+        self._sensor_type = "emov" if cat == "EMOV" else "imov"
+        self._attr_translation_key = "movement_sensor"
+        self._attr_translation_placeholders = {"sensor_name": sensor_name}
+        self._raw_data = dict(sensor_data)
+
+    def _init_pmc_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a PMC (gate/garage) contact sensor."""
+        attributes: dict = {}
+        mapped_state = "unknown"
+        self._apply_zone_header_flags(sensor_data, attributes)
+        if "STA" in sensor_data:
+            state_mapping = {"R": "closed", "A": "open"}
+            mapped_state = state_mapping.get(sensor_data["STA"], sensor_data["STA"])
+            attributes["State"] = mapped_state
+        self._apply_zone_fault_flags(sensor_data, attributes)
+        self._state = mapped_state
+        self._attributes = attributes
+        self._sensor_type = "pmc"
+        sensor_name = (
+            sensor_data.get("NM")
+            or sensor_data.get("LBL")
+            or sensor_data.get("DES")
+            or str(self._id)
+        )
+        self._attr_translation_key = "magnetic_sensor"
+        self._attr_translation_placeholders = {"sensor_name": sensor_name}
+        self._raw_data = dict(sensor_data)
+
+    def _init_seism_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a seismic sensor."""
+        attributes: dict = {}
+        if "DES" in sensor_data:
+            attributes["Description"] = sensor_data["DES"]
+        if "PRT" in sensor_data:
+            attributes["Partition"] = sensor_data["PRT"]
+        state_mapping = {"R": "rest", "A": "seismic_activity", "N": "normal"}
+        sta = str(sensor_data.get("STA", "unknown"))
+        mapped_state = state_mapping.get(sta, sta)
+        attributes["State"] = mapped_state
+        self._apply_zone_fault_flags(sensor_data, attributes)
+        self._state = mapped_state
+        self._attributes = attributes
+        self._raw_data = dict(sensor_data)
+        self._sensor_type = "seism"
+        sensor_name = (
+            sensor_data.get("NM")
+            or sensor_data.get("LBL")
+            or sensor_data.get("DES")
+            or str(self._id)
+        )
+        self._attr_translation_key = "seismic_sensor"
+        self._attr_translation_placeholders = {"sensor_name": sensor_name}
+
+    def _init_system_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a system status sensor."""
+        arm_data = sensor_data.get("ARM", {})
+        # STATUS_SYSTEM.ARM is always an object: {"S": code, "D": description}
+        state_code = arm_data.get("S", "D") if isinstance(arm_data, dict) else "D"
+        if state_code is None or state_code == "":
+            _LOGGER.error(
+                "Ksenia system sensor %s: ARM state code is None/empty; ARM data: %r",
+                self._id,
+                arm_data,
+            )
+            state_code = ""
+        readable_state = self._ARM_STATE_MAP.get(state_code, state_code)
+        if state_code not in self._ARM_STATE_MAP:
+            _LOGGER.error(
+                "Ksenia system sensor %s: unwanted ARM code %r → cannot map!",
+                self._id,
+                state_code,
+            )
+        self._state = readable_state
+        self._raw_data = dict(sensor_data)
+        self._attributes = {}
+        self._name = None
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "alarm_system_status"
+        # Only add ID suffix if not the first/default system
+        suffix = "" if str(self._id) == "1" else f" {self._id}"
+        self._attr_translation_placeholders = {"suffix": suffix}
+
+    def _init_powerlines_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a power line sensor."""
+        pcons_val = self._parse_power_float(sensor_data.get("PCONS"), "PCONS")
+        pprod_val = self._parse_power_float(sensor_data.get("PPROD"), "PPROD")
+        consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
+        self._state = pcons_val if pcons_val is not None else sensor_data.get("STATUS", "Unknown")
+        self._attributes = {
+            "Consumption": consumo_kwh,
+            "Production": pprod_val,
+            "Status": sensor_data.get("STATUS", "Unknown"),
+        }
+        self._raw_data = dict(sensor_data)
+        if consumo_kwh is not None:
+            self._name = f"Cons: {self._name}"
+
+    def _init_domus_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a domus (environmental) sensor."""
+        temperature, humidity, lht, pir, tl, th = self._parse_domus_readings(sensor_data)
+        self._state = temperature if temperature is not None else "Unknown"
+        self._attributes = {
+            "temperature": temperature if temperature is not None else "Unknown",
+            "humidity": humidity if humidity is not None else "Unknown",
+            "light": lht,
+            "pir": pir,
+            "tl": tl,
+            "th": th,
+        }
+        self._raw_data = dict(sensor_data)
+
+    def _init_partitions_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a partition status sensor."""
+        state, attrs = self._build_partition_state_and_attrs(sensor_data)
+        self._state = state
+        self._attributes = attrs
+        self._name = f"Part: {self._name}"
+        self._raw_data = dict(sensor_data)
+
+    def _init_siren_type(self, sensor_data: dict) -> None:
+        """Initialize entity for a siren status (read-only) sensor."""
+        state_mapping = {"ON": "on", "OFF": "off", "on": "on", "off": "off"}
+        sta = sensor_data.get("STA", "OFF")
+        self._state = state_mapping.get(sta, sta)
+        label = sensor_data.get("DES") or sensor_data.get("LBL") or sensor_data.get("NM")
+        self._attributes = {
+            "ID": sensor_data.get("ID"),
+            "Description": label,
+            "Category": sensor_data.get("CAT"),
+        }
+        if "MOD" in sensor_data:
+            self._attributes["Mode"] = sensor_data["MOD"]
+        self._name = None
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "siren_status"
+        self._attr_translation_placeholders = {"label": label or str(self._id)}
+        self._raw_data = dict(sensor_data)
 
     """
     Register the sensor entity to start receiving real-time updates.
@@ -800,6 +779,7 @@ class KseniaSensorEntity(SensorEntity):
     """
 
     async def async_added_to_hass(self):
+        """Register the appropriate realtime listener with the WebSocket manager once added to HA."""
         if self._sensor_type in ("door", "pmc", "window", "imov", "emov", "seism"):
             key = "zones"
             self.ws_manager.register_listener(key, self._handle_realtime_update)
@@ -822,414 +802,187 @@ class KseniaSensorEntity(SensorEntity):
     """
 
     async def _handle_realtime_update(self, data_list):
+        """Dispatch real-time update to the appropriate per-type handler."""
+        # List-based handlers do their own ID filtering and state writes.
+        _list_handlers = {
+            "door": self._rt_update_contact,
+            "window": self._rt_update_contact,
+            "cmd": self._rt_update_cmd,
+            "imov": self._rt_update_mov,
+            "emov": self._rt_update_mov,
+            "pmc": self._rt_update_pmc,
+            "seism": self._rt_update_seism,
+            "siren": self._rt_update_siren,
+        }
+        list_handler = _list_handlers.get(self._sensor_type)
+        if list_handler:
+            list_handler(data_list)
+            return
+
+        # Record-based handlers receive a single matched record.
+        _record_handlers = {
+            "system": self._rt_update_system,
+            "powerlines": self._rt_update_powerlines,
+            "domus": self._rt_update_domus,
+            "partitions": self._rt_update_partitions,
+        }
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
-
-            if self._sensor_type == "system":
-                for data in data_list:
-                    if str(data.get("ID")) != str(self._id):
-                        continue
-
-                    if "ARM" not in data or not isinstance(data["ARM"], dict):
-                        continue
-
-                    arm_data = data["ARM"]
-                    state_code = arm_data.get("S")
-                    _LOGGER.debug(f"System sensor update: ID={self._id}, ARM code={state_code}")
-                    state_mapping = {
-                        "T": "fully_armed",
-                        "T_IN": "fully_armed_entry_delay",
-                        "T_OUT": "fully_armed_exit_delay",
-                        "P": "partially_armed",
-                        "P_IN": "partially_armed_entry_delay",
-                        "P_OUT": "partially_armed_exit_delay",
-                        "D": "disarmed",
-                    }
-                    readable_state = state_mapping.get(state_code, state_code)
-                    _LOGGER.debug(f"System sensor state mapping: {state_code} -> {readable_state}")
-
-                    self._state = readable_state
-                    self._attributes = {}
-                    # Merge update into raw_data to preserve all fields
-                    self._raw_data.update(data)
-                    self.async_write_ha_state()
-                    break
-
-            elif self._sensor_type == "powerlines":
-                pcons = data.get("PCONS")
-                try:
-                    pcons_val = (
-                        float(pcons) if pcons and pcons.replace(".", "", 1).isdigit() else None
-                    )
-                except Exception as e:
-                    _LOGGER.error("Error converting PCONS: %s", e)
-                    pcons_val = None
-                pprod = data.get("PPROD")
-                try:
-                    pprod_val = (
-                        float(pprod) if pprod and pprod.replace(".", "", 1).isdigit() else None
-                    )
-                except Exception as e:
-                    _LOGGER.error("Error converting PPROD: %s", e)
-                    pprod_val = None
-                consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
-                self._state = pcons_val if pcons_val is not None else data.get("STATUS", "unknown")
-                self._attributes = {
-                    "Consumption": consumo_kwh,
-                    "Production": pprod_val,
-                    "Status": data.get("STATUS", "unknown"),
-                }
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(data)
-
-            elif self._sensor_type == "domus" and self._sensor_type != "door":
-                domus_data = data.get("DOMUS", {})
-                if not isinstance(domus_data, dict):
-                    domus_data = {}
-                try:
-                    temp_str = domus_data.get("TEM")
-                    temperature = (
-                        float(temp_str.replace("+", ""))
-                        if temp_str and temp_str not in ["NA", ""]
-                        else None
-                    )
-                except Exception as e:
-                    _LOGGER.error("Error converting domus temperature: %s", e)
-                    temperature = None
-                try:
-                    hum_str = domus_data.get("HUM")
-                    humidity = float(hum_str) if hum_str and hum_str not in ["NA", ""] else None
-                except Exception as e:
-                    _LOGGER.error("Error converting domus humidity: %s", e)
-                    humidity = None
-                lht = (
-                    domus_data.get("LHT")
-                    if domus_data.get("LHT") not in [None, "NA", ""]
-                    else "Unknown"
-                )
-                pir = (
-                    domus_data.get("PIR")
-                    if domus_data.get("PIR") not in [None, "NA", ""]
-                    else "Unknown"
-                )
-                tl = (
-                    domus_data.get("TL")
-                    if domus_data.get("TL") not in [None, "NA", ""]
-                    else "Unknown"
-                )
-                th = (
-                    domus_data.get("TH")
-                    if domus_data.get("TH") not in [None, "NA", ""]
-                    else "Unknown"
-                )
-                self._state = temperature if temperature is not None else "Unknown"
-                self._attributes = {
-                    "temperature": temperature if temperature is not None else "Unknown",
-                    "humidity": humidity if humidity is not None else "Unknown",
-                    "light": lht,
-                    "pir": pir,
-                    "tl": tl,
-                    "th": th,
-                }
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(data)
-
-            elif self._sensor_type == "partitions":
-                ARM_MAP = {
-                    "D": "Disarmed",
-                    "DA": "Delayed Arming",
-                    "IA": "Immediate Arming",
-                    "IT": "Input time",
-                    "OT": "Output time",
-                }
-                AST_MAP = {
-                    "OK": "No ongoing alarm",
-                    "AL": "Ongoing alarm",
-                    "AM": "Alarm memory",
-                }
-                TST_MAP = {
-                    "OK": "No ongoing tampering",
-                    "TAM": "Ongoing tampering",
-                    "TM": "Tampering memory",
-                }
-
-                raw_arm = data.get("ARM", "")
-                arm_desc = ARM_MAP.get(raw_arm, raw_arm) if raw_arm else "Unknown"
-                if raw_arm in ("IT", "OT"):
-                    timer = data.get("T", 0)
-                    self._state = f"{arm_desc} ({timer}s)"
-                else:
-                    self._state = arm_desc if arm_desc else "Unknown"
-
-                attrs = {
-                    "Partition": data.get("ID"),
-                    "Description": data.get("DES"),
-                    "Arming Mode": raw_arm,
-                    "Arming Description": arm_desc,
-                    "Alarm Mode": data.get("AST"),
-                    "Alarm Description": AST_MAP.get(data.get("AST", ""), ""),
-                    "Tamper Mode": data.get("TST"),
-                    "Tamper Description": TST_MAP.get(data.get("TST", ""), ""),
-                }
-
-                if data.get("TIN") is not None:
-                    attrs["entry_delay"] = data.get("TIN")
-                if data.get("TOUT") is not None:
-                    attrs["exit_delay"] = data.get("TOUT")
-
-                self._attributes = attrs
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(data)
-
-            elif self._sensor_type == "door" or self._sensor_type == "window":
-                for data in data_list:
-                    if str(data.get("ID")) == str(self._id):
-                        attributes = {}
-                        if "DES" in data:
-                            attributes["Description"] = data["DES"]
-                        if "PRT" in data:
-                            attributes["Partition"] = data["PRT"]
-                        if "CMD" in data:
-                            attributes["Command"] = "Fixed" if data["CMD"] == "F" else data["CMD"]
-                        if "BYP EN" in data:
-                            attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
-                        if "AN" in data:
-                            attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
-                        state_mapping = {"R": "closed", "A": "open"}
-                        mapped_state = state_mapping.get(
-                            data.get("STA"), data.get("STA", "unknown")
-                        )
-                        attributes["State"] = mapped_state
-                        if "BYP" in data:
-                            attributes["Bypass"] = (
-                                "Active" if data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                            )
-                        if "T" in data:
-                            attributes["Tamper"] = "Yes" if data["T"] == "T" else "No"
-                        if "A" in data:
-                            attributes["Alarm"] = "On" if data["A"] == "T" else "Off"
-                        if "FM" in data:
-                            attributes["Fault Memory"] = "Yes" if data["FM"] == "T" else "No"
-                        if "OHM" in data:
-                            attributes["Resistance"] = data["OHM"] if data["OHM"] != "NA" else "N/A"
-                        if "VAS" in data:
-                            attributes["Voltage Alarm Sensor"] = (
-                                "Active" if data["VAS"] == "T" else "Inactive"
-                            )
-                        if "LBL" in data and data["LBL"]:
-                            attributes["Label"] = data["LBL"]
-
-                        self._state = mapped_state
-                        self._attributes = attributes
-                        # Merge update into raw_data to preserve all fields
-                        self._raw_data.update(data)
-                        self.async_write_ha_state()
-                        break
-
-            elif self._sensor_type == "cmd":
-                for data in data_list:
-                    if (
-                        str(data.get("ID")) == str(self._id)
-                        and data.get("CAT", "").upper() == "CMD"
-                    ):
-                        attributes = {}
-                        if "DES" in data:
-                            attributes["Description"] = data["DES"]
-                        if "PRT" in data:
-                            attributes["Partition"] = data["PRT"]
-                        if "CMD" in data:
-                            attributes["Command"] = "Trigger" if data["CMD"] == "T" else data["CMD"]
-                        if "BYP EN" in data:
-                            attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
-                        if "AN" in data:
-                            attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
-                        if "STA" in data:
-                            state_mapping = {"R": "released", "A": "armed", "D": "disarmed"}
-                            attributes["State"] = state_mapping.get(data["STA"], data["STA"])
-                        if "BYP" in data:
-                            attributes["Bypass"] = (
-                                "Active" if data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                            )
-                        if "T" in data:
-                            attributes["Tamper"] = "Yes" if data["T"] == "T" else "No"
-                        if "A" in data:
-                            attributes["Alarm"] = "On" if data["A"] == "T" else "Off"
-                        if "FM" in data:
-                            attributes["Fault Memory"] = "Yes" if data["FM"] == "T" else "No"
-                        if "OHM" in data:
-                            attributes["Resistance"] = data["OHM"] if data["OHM"] != "NA" else "N/A"
-                        if "VAS" in data:
-                            attributes["Voltage Alarm Sensor"] = (
-                                "Active" if data["VAS"] == "T" else "Inactive"
-                            )
-                        if "LBL" in data and data["LBL"]:
-                            attributes["Label"] = data["LBL"]
-
-                        self._state = data.get("STA", "unknown")
-                        self._attributes = attributes
-                        # Merge update into raw_data to preserve all fields
-                        self._raw_data.update(data)
-                        self.async_write_ha_state()
-                        break
-
-            elif self._sensor_type == "imov" or self._sensor_type == "emov":
-                for data in data_list:
-                    if str(data.get("ID")) == str(self._id):
-                        attributes = {}
-                        if "DES" in data:
-                            attributes["Description"] = data["DES"]
-                        if "PRT" in data:
-                            attributes["Partition"] = data["PRT"]
-                        if "BYP EN" in data:
-                            attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
-                        if "AN" in data:
-                            attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
-                        if "STA" in data:
-                            state_mapping = {"R": "off", "A": "on"}
-                            mapped_state = state_mapping.get(
-                                data.get("STA"), data.get("STA", "unknown")
-                            )
-                            attributes["State"] = mapped_state
-                            self._state = mapped_state
-                        if "BYP" in data:
-                            attributes["Bypass"] = (
-                                "Active" if data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                            )
-                        if "T" in data:
-                            attributes["Tamper"] = "Yes" if data["T"] == "T" else "No"
-                        if "A" in data:
-                            attributes["Alarm"] = "On" if data["A"] == "T" else "Off"
-                        if "FM" in data:
-                            attributes["Fault Memory"] = "Yes" if data["FM"] == "T" else "No"
-                        if "OHM" in data:
-                            attributes["Resistance"] = data["OHM"] if data["OHM"] != "NA" else "N/A"
-                        if "VAS" in data:
-                            attributes["Voltage Alarm Sensor"] = (
-                                "Active" if data["VAS"] == "T" else "Inactive"
-                            )
-                        if "LBL" in data and data["LBL"]:
-                            attributes["Label"] = data["LBL"]
-
-                        self._attributes = attributes
-                        # Merge update into raw_data to preserve all fields
-                        self._raw_data.update(data)
-                        self.async_write_ha_state()
-                        break
-
-            elif self._sensor_type == "pmc":
-                for data in data_list:
-                    if str(data.get("ID")) == str(self._id):
-                        attributes = {}
-                        if "DES" in data:
-                            attributes["Description"] = data["DES"]
-                        if "PRT" in data:
-                            attributes["Partition"] = data["PRT"]
-                        # Command
-                        if "CMD" in data:
-                            attributes["Command"] = "Fixed" if data["CMD"] == "F" else data["CMD"]
-                        # Bypass Enabled
-                        if "BYP EN" in data:
-                            attributes["Bypass Enabled"] = "Yes" if data["BYP EN"] == "T" else "No"
-                        # Signal Type
-                        if "AN" in data:
-                            attributes["Signal Type"] = "Analog" if data["AN"] == "T" else "Digital"
-                        # Status
-                        if "STA" in data:
-                            state_mapping = {"R": "closed", "A": "open"}
-                            mapped_state = state_mapping.get(data["STA"], data["STA"])
-                            attributes["State"] = mapped_state
-                            self._state = mapped_state
-                        # Bypass
-                        if "BYP" in data:
-                            attributes["Bypass"] = (
-                                "Active" if data["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                            )
-                        # Tamper
-                        if "T" in data:
-                            attributes["Tamper"] = "Yes" if data["T"] == "T" else "No"
-                        # Alarm
-                        if "A" in data:
-                            attributes["Alarm"] = "On" if data["A"] == "T" else "Off"
-                        # Fault Memory
-                        if "FM" in data:
-                            attributes["Fault Memory"] = "Yes" if data["FM"] == "T" else "No"
-                        # Resistance
-                        if "OHM" in data:
-                            attributes["Resistance"] = data["OHM"] if data["OHM"] != "NA" else "N/A"
-                        # Voltage Alarm Sensor
-                        if "VAS" in data:
-                            attributes["Voltage Alarm Sensor"] = (
-                                "Active" if data["VAS"] == "T" else "Inactive"
-                            )
-                        # Label
-                        if "LBL" in data and data["LBL"]:
-                            attributes["Label"] = data["LBL"]
-
-                        self._attributes = attributes
-                        # Merge update into raw_data to preserve all fields
-                        self._raw_data.update(data)
-                        self.async_write_ha_state()
-                        break
-
-            elif self._sensor_type == "seism":
-                for data in data_list:
-                    if str(data.get("ID")) == str(self._id):
-                        state_mapping = {"R": "rest", "A": "seismic_activity", "N": "normal"}
-                        raw_state = data.get("STA")
-                        mapped_state = state_mapping.get(raw_state, raw_state or "unknown")
-
-                        attributes = {
-                            "ID": data.get("ID"),
-                            "State": mapped_state,
-                            "Bypass": (
-                                "Active"
-                                if data.get("BYP", "").upper() not in ["NO", "N"]
-                                else "Inactive"
-                            ),
-                            "Tamper": "Yes" if data.get("T") == "T" else "No",
-                            "Alarm": "On" if data.get("A") == "T" else "Off",
-                            "Fault Memory": "Yes" if data.get("FM") == "T" else "No",
-                            "Resistance": data.get("OHM") if data.get("OHM") != "NA" else "N/A",
-                            "Voltage Alarm Sensor": (
-                                "Active" if data.get("VAS") == "T" else "Inactive"
-                            ),
-                        }
-                        if data.get("LBL"):
-                            attributes["Label"] = data.get("LBL")
-
-                        self._state = mapped_state
-                        self._attributes = attributes
-                        # Merge update into raw_data to preserve all fields
-                        self._raw_data.update(data)
-                        self.async_write_ha_state()
-                        break
-
-            elif self._sensor_type == "siren":
-                # Siren status from real-time switch updates with proper state mapping
-                # Only update if the ID matches this specific siren sensor
-                if str(data.get("ID")) == str(self._id):
-                    state_mapping = {"ON": "on", "OFF": "off", "on": "on", "off": "off"}
-                    sta = data.get("STA", "OFF")
-                    self._state = state_mapping.get(sta, sta)
-                    self._attributes = {
-                        "ID": data.get("ID"),
-                        "Description": data.get("DES") or data.get("LBL") or data.get("NM"),
-                        "Category": data.get("CAT"),
-                    }
-                    if "MOD" in data:
-                        self._attributes["Mode"] = data["MOD"]
-                    # Merge update into raw_data to preserve all fields
-                    self._raw_data.update(data)
-                    self.async_write_ha_state()
-                    break
-
+            record_handler = _record_handlers.get(self._sensor_type)
+            if record_handler:
+                record_handler(data)
             else:
                 self._state = data.get("STA", "unknown")
                 self._attributes = data
-                # Merge update into raw_data to preserve all fields
                 self._raw_data.update(data)
+            self.async_write_ha_state()
+            break
 
+    # ------------------------------------------------------------------
+    # Per-type realtime update helpers
+    # ------------------------------------------------------------------
+
+    def _rt_update_system(self, data: dict) -> None:
+        """Apply a system-type realtime update record."""
+        if "ARM" not in data or not isinstance(data["ARM"], dict):
+            return
+        arm_data = data["ARM"]
+        state_code = arm_data.get("S")
+        _LOGGER.debug(f"System sensor update: ID={self._id}, ARM code={state_code}")
+        readable_state = (
+            self._ARM_STATE_MAP.get(state_code, state_code)
+            if state_code is not None
+            else state_code
+        )
+        _LOGGER.debug(f"System sensor state mapping: {state_code} -> {readable_state}")
+        self._state = readable_state
+        self._attributes = {}
+        self._raw_data.update(data)
+
+    def _rt_update_powerlines(self, data: dict) -> None:
+        """Apply a powerlines-type realtime update record."""
+        pcons_val = self._parse_power_float(data.get("PCONS"), "PCONS")
+        pprod_val = self._parse_power_float(data.get("PPROD"), "PPROD")
+        consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
+        self._state = pcons_val if pcons_val is not None else data.get("STATUS", "unknown")
+        self._attributes = {
+            "Consumption": consumo_kwh,
+            "Production": pprod_val,
+            "Status": data.get("STATUS", "unknown"),
+        }
+        self._raw_data.update(data)
+
+    def _rt_update_domus(self, data: dict) -> None:
+        """Apply a domus-type realtime update record."""
+        temperature, humidity, lht, pir, tl, th = self._parse_domus_readings(data)
+        self._state = temperature if temperature is not None else "Unknown"
+        self._attributes = {
+            "temperature": temperature if temperature is not None else "Unknown",
+            "humidity": humidity if humidity is not None else "Unknown",
+            "light": lht,
+            "pir": pir,
+            "tl": tl,
+            "th": th,
+        }
+        self._raw_data.update(data)
+
+    def _rt_update_partitions(self, data: dict) -> None:
+        """Apply a partitions-type realtime update record."""
+        state, attrs = self._build_partition_state_and_attrs(data)
+        self._state = state
+        self._attributes = attrs
+        self._raw_data.update(data)
+
+    def _rt_update_contact(self, data_list: list) -> None:
+        """Apply a door/window realtime update from a data list."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            attributes, mapped_state = self._build_contact_attributes(data)
+            self._state = mapped_state
+            self._attributes = attributes
+            self._raw_data.update(data)
+            self.async_write_ha_state()
+            break
+
+    def _rt_update_cmd(self, data_list: list) -> None:
+        """Apply a cmd sensor realtime update from a data list."""
+        for data in data_list:
+            if str(data.get("ID")) == str(self._id) and data.get("CAT", "").upper() == "CMD":
+                attributes = self._build_cmd_attributes(data)
+                self._state = data.get("STA", "unknown")
+                self._attributes = attributes
+                self._raw_data.update(data)
+                self.async_write_ha_state()
+                break
+
+    def _rt_update_mov(self, data_list: list) -> None:
+        """Apply an imov/emov realtime update from a data list."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            attributes, mapped_state = self._build_mov_attributes(data)
+            if "STA" in data:
+                self._state = mapped_state
+            self._attributes = attributes
+            self._raw_data.update(data)
+            self.async_write_ha_state()
+            break
+
+    def _rt_update_pmc(self, data_list: list) -> None:
+        """Apply a PMC (gate/garage) realtime update from a data list."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            attributes: dict = {}
+            self._apply_zone_header_flags(data, attributes)
+            if "STA" in data:
+                state_mapping = {"R": "closed", "A": "open"}
+                mapped_state = state_mapping.get(data["STA"], data["STA"])
+                attributes["State"] = mapped_state
+                self._state = mapped_state
+            self._apply_zone_fault_flags(data, attributes)
+            self._attributes = attributes
+            self._raw_data.update(data)
+            self.async_write_ha_state()
+            break
+
+    def _rt_update_seism(self, data_list: list) -> None:
+        """Apply a seismic sensor realtime update from a data list."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            state_mapping = {"R": "rest", "A": "seismic_activity", "N": "normal"}
+            raw_state = data.get("STA")
+            mapped_state = state_mapping.get(raw_state, raw_state or "unknown")
+            attributes: dict = {
+                "ID": data.get("ID"),
+                "State": mapped_state,
+            }
+            self._apply_zone_fault_flags(data, attributes)
+            self._state = mapped_state
+            self._attributes = attributes
+            self._raw_data.update(data)
+            self.async_write_ha_state()
+            break
+
+    def _rt_update_siren(self, data_list: list) -> None:
+        """Apply a siren realtime update from a data list."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            state_mapping = {"ON": "on", "OFF": "off", "on": "on", "off": "off"}
+            sta = data.get("STA", "OFF")
+            self._state = state_mapping.get(sta, sta)
+            self._attributes = {
+                "ID": data.get("ID"),
+                "Description": data.get("DES") or data.get("LBL") or data.get("NM"),
+                "Category": data.get("CAT"),
+            }
+            if "MOD" in data:
+                self._attributes["Mode"] = data["MOD"]
+            self._raw_data.update(data)
             self.async_write_ha_state()
             break
 
@@ -1303,268 +1056,152 @@ class KseniaSensorEntity(SensorEntity):
 
     """
     Update the state of the sensor.
-    
+
     This method is called periodically by Home Assistant to refresh the sensor's state.
     It retrieves the latest data from the Ksenia system and updates the sensor's state
     and attributes accordingly.
     """
 
     async def async_update(self):
-        if self._sensor_type == "system":
-            # Poll for fresh system status to ensure exit/entry delays are reflected
-            try:
-                system_data = await self.ws_manager.getSensor("STATUS_SYSTEM")
-                for system in system_data:
-                    if str(system.get("ID")) != str(self._id):
-                        continue
-
-                    # Update from fresh data
-                    if "ARM" in system and isinstance(system["ARM"], dict):
-                        arm_data = system["ARM"]
-                        state_code = arm_data.get("S")
-                        state_mapping = {
-                            "T": "fully_armed",
-                            "T_IN": "fully_armed_entry_delay",
-                            "T_OUT": "fully_armed_exit_delay",
-                            "P": "partially_armed",
-                            "P_IN": "partially_armed_entry_delay",
-                            "P_OUT": "partially_armed_exit_delay",
-                            "D": "disarmed",
-                        }
-                        self._state = state_mapping.get(state_code, state_code)
-                        self._raw_data.update(system)
-                        _LOGGER.debug(f"System sensor polled: ID={self._id}, state={self._state}")
-                    break
-            except Exception as e:
-                _LOGGER.debug(f"Error polling system status: {e}")
-
-        elif self._sensor_type == "partitions":
-            try:
-                sensors = await self.ws_manager.getSensor("STATUS_PARTITIONS")
-                if not sensors:
-                    _LOGGER.warning(
-                        f"Partition sensor poll: STATUS_PARTITIONS returned empty list for partition {self._id}"
-                    )
-                    return
-
-                for sensor in sensors:
-                    if str(sensor.get("ID")) != str(self._id):
-                        continue
-
-                    # mappa gli stati esattamente come in __init__
-                    ARM_MAP = {
-                        "D": "Disarmed",
-                        "DA": "Delayed Arming",
-                        "IA": "Immediate Arming",
-                        "IT": "Input time",
-                        "OT": "Output time",
-                    }
-                    AST_MAP = {
-                        "OK": "No ongoing alarm",
-                        "AL": "Ongoing alarm",
-                        "AM": "Alarm memory",
-                    }
-                    TST_MAP = {
-                        "OK": "No ongoing tampering",
-                        "TAM": "Ongoing tampering",
-                        "TM": "Tampering memory",
-                    }
-
-                    raw_arm = sensor.get("ARM", "")
-                    arm_desc = ARM_MAP.get(raw_arm, raw_arm) if raw_arm else "Unknown"
-                    if raw_arm in ("IT", "OT"):
-                        timer = sensor.get("T", 0)
-                        self._state = f"{arm_desc} ({timer}s)"
-                    else:
-                        self._state = arm_desc if arm_desc else "Unknown"
-
-                    self._attributes = {
-                        "Partition": sensor.get("ID"),
-                        "Description": sensor.get("DES"),
-                        "Arming Mode": raw_arm,
-                        "Arming Description": arm_desc,
-                        "Alarm Mode": sensor.get("AST"),
-                        "Alarm Description": AST_MAP.get(sensor.get("AST", ""), ""),
-                        "Tamper Mode": sensor.get("TST"),
-                        "Tamper Description": TST_MAP.get(sensor.get("TST", ""), ""),
-                        **({"entry_delay": sensor["TIN"]} if sensor.get("TIN") is not None else {}),
-                        **(
-                            {"exit_delay": sensor["TOUT"]} if sensor.get("TOUT") is not None else {}
-                        ),
-                    }
-                    # Merge update into raw_data to preserve all fields
-                    self._raw_data.update(sensor)
-                    _LOGGER.debug(f"Partition sensor polled: ID={self._id}, state={self._state}")
-                    break
-                else:
-                    # No matching partition found in the response
-                    _LOGGER.warning(
-                        f"Partition sensor poll: ID {self._id} not found in STATUS_PARTITIONS response"
-                    )
-            except Exception as e:
-                _LOGGER.warning(f"Error polling partition sensor {self._id}: {e}")
-
-        elif self._sensor_type == "powerlines":
-            sensors = await self.ws_manager.getSensor("POWER_LINES")
-            for sensor in sensors:
-                if sensor["ID"] == self._id:
-                    pcons = sensor.get("PCONS")
-                    try:
-                        pcons_val = (
-                            float(pcons) if pcons and pcons.replace(".", "", 1).isdigit() else None
-                        )
-                    except Exception as e:
-                        _LOGGER.error("Error converting PCONS: %s", e)
-                        pcons_val = None
-                    pprod = sensor.get("PPROD")
-                    try:
-                        pprod_val = (
-                            float(pprod) if pprod and pprod.replace(".", "", 1).isdigit() else None
-                        )
-                    except Exception as e:
-                        _LOGGER.error("Error converting PPROD: %s", e)
-                        pprod_val = None
-                    self._state = (
-                        pcons_val if pcons_val is not None else sensor.get("STATUS", "unknown")
-                    )
-                    self._attributes = {
-                        "Consumption": pcons_val,
-                        "Production": pprod_val,
-                        "Status": sensor.get("STATUS", "unknown"),
-                    }
-                    # Merge update into raw_data to preserve all fields
-                    self._raw_data.update(sensor)
-                    break
-
-        elif self._sensor_type == "domus" and self._sensor_type != "door":
-            sensors = await self.ws_manager.getDom()
-            for sensor in sensors:
-                if sensor["ID"] == self._id:
-                    domus_data = sensor.get("DOMUS", {})
-                    if not isinstance(domus_data, dict):
-                        domus_data = {}
-                    try:
-                        temp_str = domus_data.get("TEM")
-                        temperature = (
-                            float(temp_str.replace("+", ""))
-                            if temp_str and temp_str not in ["NA", ""]
-                            else None
-                        )
-                    except Exception as e:
-                        _LOGGER.error("Error converting temperature: %s", e)
-                        temperature = None
-                    try:
-                        hum_str = domus_data.get("HUM")
-                        humidity = float(hum_str) if hum_str and hum_str not in ["NA", ""] else None
-                    except Exception as e:
-                        _LOGGER.error("Error converting humidity: %s", e)
-                        humidity = None
-                    lht = (
-                        domus_data.get("LHT")
-                        if domus_data.get("LHT") not in [None, "NA", ""]
-                        else "Unknown"
-                    )
-                    pir = (
-                        domus_data.get("PIR")
-                        if domus_data.get("PIR") not in [None, "NA", ""]
-                        else "Unknown"
-                    )
-                    tl = (
-                        domus_data.get("TL")
-                        if domus_data.get("TL") not in [None, "NA", ""]
-                        else "Unknown"
-                    )
-                    th = (
-                        domus_data.get("TH")
-                        if domus_data.get("TH") not in [None, "NA", ""]
-                        else "Unknown"
-                    )
-                    state_value = temperature if temperature is not None else "Unknown"
-                    self._state = state_value
-                    self._attributes = {
-                        "temperature": temperature if temperature is not None else "Unknown",
-                        "humidity": humidity if humidity is not None else "Unknown",
-                        "light": lht,
-                        "pir": pir,
-                        "tl": tl,
-                        "th": th,
-                    }
-                    # Merge update into raw_data to preserve all fields
-                    self._raw_data.update(sensor)
-                    break
-
-        elif self._sensor_type == "cmd":
-            sensors = await self.ws_manager.getSensor("CMD")
-            for sensor in sensors:
-                if sensor["ID"] == self._id and sensor.get("CAT", "").upper() == "CMD":
-                    attributes = {}
-                    if "DES" in sensor:
-                        attributes["Description"] = sensor["DES"]
-                    if "PRT" in sensor:
-                        attributes["Partition"] = sensor["PRT"]
-                    if "CMD" in sensor:
-                        attributes["Command"] = "Trigger" if sensor["CMD"] == "T" else sensor["CMD"]
-                    if "BYP EN" in sensor:
-                        attributes["Bypass Enabled"] = "Yes" if sensor["BYP EN"] == "T" else "No"
-                    if "AN" in sensor:
-                        attributes["Signal Type"] = "Analog" if sensor["AN"] == "T" else "Digital"
-                    if "STA" in sensor:
-                        state_mapping = {"R": "released", "A": "armed", "D": "disarmed"}
-                        attributes["State"] = state_mapping.get(sensor["STA"], sensor["STA"])
-                    if "BYP" in sensor:
-                        attributes["Bypass"] = (
-                            "Active" if sensor["BYP"].upper() not in ["NO", "N"] else "Inactive"
-                        )
-                    if "T" in sensor:
-                        attributes["Tamper"] = "Yes" if sensor["T"] == "T" else "No"
-                    if "A" in sensor:
-                        attributes["Alarm"] = "On" if sensor["A"] == "T" else "Off"
-                    if "FM" in sensor:
-                        attributes["Fault Memory"] = "Yes" if sensor["FM"] == "T" else "No"
-                    if "OHM" in sensor:
-                        attributes["Resistance"] = sensor["OHM"] if sensor["OHM"] != "NA" else "N/A"
-                    if "VAS" in sensor:
-                        attributes["Voltage Alarm Sensor"] = (
-                            "Active" if sensor["VAS"] == "T" else "Inactive"
-                        )
-                    if "LBL" in sensor and sensor["LBL"]:
-                        attributes["Label"] = sensor["LBL"]
-
-                    self._state = sensor.get("STA", "unknown")
-                    self._attributes = attributes
-                    # Merge update into raw_data to preserve all fields
-                    self._raw_data.update(sensor)
-                    break
-        elif self._sensor_type == "siren":
-            # Update siren sensor state from switches data
-            switches = await self.ws_manager.getSwitches()
-            for switch in switches:
-                if str(switch.get("ID")) == str(self._id):
-                    state_mapping = {"ON": "on", "OFF": "off", "on": "on", "off": "off"}
-                    sta = switch.get("STA", "OFF")
-                    self._state = state_mapping.get(sta, sta)
-                    self._attributes = {
-                        "ID": switch.get("ID"),
-                        "Description": switch.get("DES") or switch.get("LBL") or switch.get("NM"),
-                        "Category": switch.get("CAT"),
-                    }
-                    if "MOD" in switch:
-                        self._attributes["Mode"] = switch["MOD"]
-                    self._raw_data.update(switch)
-                    break
-        elif self._sensor_type in ("door", "pmc", "zones", "imov", "window", "emov", "seism"):
+        """Poll the panel for the latest sensor state."""
+        # Zone-type sensors use realtime push only — no polling needed.
+        if self._sensor_type in ("door", "pmc", "zones", "imov", "window", "emov", "seism"):
             return
-
+        if self._sensor_type == "system":
+            await self._poll_system()
+        elif self._sensor_type == "partitions":
+            await self._poll_partitions()
+        elif self._sensor_type == "powerlines":
+            await self._poll_powerlines()
+        elif self._sensor_type == "domus":
+            await self._poll_domus()
+        elif self._sensor_type == "cmd":
+            await self._poll_cmd()
+        elif self._sensor_type == "siren":
+            await self._poll_siren()
         else:
-            # For other sensors, we need to call getSensor with the specific type
-            sensors = await self.ws_manager.getSensor(self._sensor_type.upper())
+            await self._poll_generic()
+
+    # ------------------------------------------------------------------
+    # Per-type polling helpers (called from async_update)
+    # ------------------------------------------------------------------
+
+    async def _poll_system(self) -> None:
+        """Poll STATUS_SYSTEM and update state from ARM data."""
+        try:
+            system_data = await self.ws_manager.getSensor("STATUS_SYSTEM")
+            for system in system_data:
+                if str(system.get("ID")) != str(self._id):
+                    continue
+                if "ARM" in system and isinstance(system["ARM"], dict):
+                    arm_data = system["ARM"]
+                    state_code = arm_data.get("S")
+                    self._state = self._ARM_STATE_MAP.get(state_code, state_code)
+                    self._raw_data.update(system)
+                    _LOGGER.debug(f"System sensor polled: ID={self._id}, state={self._state}")
+                break
+        except Exception as e:
+            _LOGGER.debug(f"Error polling system status: {e}")
+
+    async def _poll_partitions(self) -> None:
+        """Poll STATUS_PARTITIONS and update state/attributes."""
+        try:
+            sensors = await self.ws_manager.getSensor("STATUS_PARTITIONS")
+            if not sensors:
+                _LOGGER.warning(
+                    f"Partition sensor poll: STATUS_PARTITIONS returned empty list for partition {self._id}"
+                )
+                return
             for sensor in sensors:
-                if sensor["ID"] == self._id:
-                    self._state = sensor.get("STA", "unknown")
-                    self._attributes = sensor
-                    # Merge update into raw_data to preserve all fields
-                    self._raw_data.update(sensor)
-                    break
+                if str(sensor.get("ID")) != str(self._id):
+                    continue
+                state, attrs = self._build_partition_state_and_attrs(sensor)
+                self._state = state
+                self._attributes = attrs
+                self._raw_data.update(sensor)
+                _LOGGER.debug(f"Partition sensor polled: ID={self._id}, state={self._state}")
+                break
+            else:
+                _LOGGER.warning(
+                    f"Partition sensor poll: ID {self._id} not found in STATUS_PARTITIONS response"
+                )
+        except Exception as e:
+            _LOGGER.warning(f"Error polling partition sensor {self._id}: {e}")
+
+    async def _poll_powerlines(self) -> None:
+        """Poll POWER_LINES and update state/attributes."""
+        sensors = await self.ws_manager.getSensor("POWER_LINES")
+        for sensor in sensors:
+            if sensor["ID"] == self._id:
+                pcons_val = self._parse_power_float(sensor.get("PCONS"), "PCONS")
+                pprod_val = self._parse_power_float(sensor.get("PPROD"), "PPROD")
+                self._state = (
+                    pcons_val if pcons_val is not None else sensor.get("STATUS", "unknown")
+                )
+                self._attributes = {
+                    "Consumption": pcons_val,
+                    "Production": pprod_val,
+                    "Status": sensor.get("STATUS", "unknown"),
+                }
+                self._raw_data.update(sensor)
+                break
+
+    async def _poll_domus(self) -> None:
+        """Poll domus devices and update state/attributes."""
+        sensors = await self.ws_manager.getDom()
+        for sensor in sensors:
+            if sensor["ID"] == self._id:
+                temperature, humidity, lht, pir, tl, th = self._parse_domus_readings(sensor)
+                self._state = temperature if temperature is not None else "Unknown"
+                self._attributes = {
+                    "temperature": temperature if temperature is not None else "Unknown",
+                    "humidity": humidity if humidity is not None else "Unknown",
+                    "light": lht,
+                    "pir": pir,
+                    "tl": tl,
+                    "th": th,
+                }
+                self._raw_data.update(sensor)
+                break
+
+    async def _poll_cmd(self) -> None:
+        """Poll CMD sensors and update state/attributes."""
+        sensors = await self.ws_manager.getSensor("CMD")
+        for sensor in sensors:
+            if sensor["ID"] == self._id and sensor.get("CAT", "").upper() == "CMD":
+                attributes = self._build_cmd_attributes(sensor)
+                self._state = sensor.get("STA", "unknown")
+                self._attributes = attributes
+                self._raw_data.update(sensor)
+                break
+
+    async def _poll_siren(self) -> None:
+        """Poll switch data and update siren state/attributes."""
+        switches = await self.ws_manager.getSwitches()
+        for switch in switches:
+            if str(switch.get("ID")) == str(self._id):
+                state_mapping = {"ON": "on", "OFF": "off", "on": "on", "off": "off"}
+                sta = switch.get("STA", "OFF")
+                self._state = state_mapping.get(sta, sta)
+                self._attributes = {
+                    "ID": switch.get("ID"),
+                    "Description": switch.get("DES") or switch.get("LBL") or switch.get("NM"),
+                    "Category": switch.get("CAT"),
+                }
+                if "MOD" in switch:
+                    self._attributes["Mode"] = switch["MOD"]
+                self._raw_data.update(switch)
+                break
+
+    async def _poll_generic(self) -> None:
+        """Poll using the sensor type name as the data key (fallback)."""
+        sensors = await self.ws_manager.getSensor(self._sensor_type.upper())
+        for sensor in sensors:
+            if sensor["ID"] == self._id:
+                self._state = sensor.get("STA", "unknown")
+                self._attributes = sensor
+                self._raw_data.update(sensor)
+                break
 
 
 class KseniaAlarmTriggerStatusSensor(SensorEntity):
@@ -1670,7 +1307,7 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
     @property
     def unique_id(self) -> str:
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager._ip}_alarm_trigger_status"
+        return f"{self.ws_manager.ip}_alarm_trigger_status"
 
     @property
     def device_info(self) -> dict | None:
@@ -1868,7 +1505,7 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager._ip}_system_tampering"
+        return f"{self.ws_manager.ip}_system_tampering"
 
     @property
     def device_info(self):
@@ -1887,6 +1524,7 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
 
     @property
     def entity_category(self):
+        """Classify this sensor as a diagnostic entity."""
         return EntityCategory.DIAGNOSTIC
 
     @property
@@ -1919,6 +1557,7 @@ class KseniaEventLogSensor(SensorEntity):
     _attr_translation_key = "event_log"
 
     def __init__(self, ws_manager, device_info=None):
+        """Initialise the event log sensor with the WebSocket manager and optional device info."""
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._state = None
@@ -1927,52 +1566,63 @@ class KseniaEventLogSensor(SensorEntity):
 
     @property
     def unique_id(self):
-        return f"{self.ws_manager._ip}_event_log"
+        """Return a unique ID for the event log sensor."""
+        return f"{self.ws_manager.ip}_event_log"
 
     @property
     def device_info(self):
+        """Return the device info for the event log sensor."""
         return self._device_info
 
     @property
     def native_value(self):
+        """Return the most recent log entry as the sensor state."""
         return self._state
+
+    @staticmethod
+    @staticmethod
+    def _format_log_datetime(entry: dict) -> str:
+        """Return a formatted date-time string from a log entry, or empty string."""
+        date = entry.get("DATA") or entry.get("DATE") or ""
+        time_val = entry.get("TIME") or ""
+        return f"{date} {time_val}".strip()
+
+    @staticmethod
+    def _format_log_entry(entry: dict) -> str:
+        """Format a single event log entry into a human-readable string."""
+        ev = entry.get("EV") or ""
+        typ = entry.get("TYPE") or ""
+        parts = []
+        if ev:
+            parts.append(ev)
+        if typ:
+            parts.append(f"({typ})")
+        dt = KseniaEventLogSensor._format_log_datetime(entry)
+        if dt:
+            parts.append(dt)
+        details = [f"{key}={entry.get(key)}" for key in ("I1", "I2", "IML") if entry.get(key)]
+        if details:
+            parts.append("[" + ", ".join(details) + "]")
+        return " | ".join(parts)
 
     @property
     def extra_state_attributes(self):
-        attrs = {}
+        """Return the five most recent log entries as numbered attributes."""
         latest = self._raw_logs[:5] if self._raw_logs else []
-        for idx, entry in enumerate(latest, start=1):
-            ev = entry.get("EV") or ""
-            typ = entry.get("TYPE") or ""
-            date = entry.get("DATA") or entry.get("DATE") or ""
-            time = entry.get("TIME") or ""
-            parts = []
-            if ev:
-                parts.append(ev)
-            if typ:
-                parts.append(f"({typ})")
-            dt = f"{date} {time}".strip()
-            if dt:
-                parts.append(dt)
-            details = []
-            if entry.get("I1"):
-                details.append(f"I1={entry.get('I1')}")
-            if entry.get("I2"):
-                details.append(f"I2={entry.get('I2')}")
-            if entry.get("IML"):
-                details.append(f"IML={entry.get('IML')}")
-            if details:
-                parts.append("[" + ", ".join(details) + "]")
-            attrs[f"log_{idx}"] = " | ".join(parts)
+        attrs: dict[str, Any] = {
+            f"log_{idx}": self._format_log_entry(entry) for idx, entry in enumerate(latest, start=1)
+        }
         attrs["count"] = len(latest)
         return attrs
 
     @property
     def entity_category(self):
+        """Classify this sensor as a diagnostic entity."""
         return EntityCategory.DIAGNOSTIC
 
     @property
     def icon(self):
+        """Return the icon for the event log sensor."""
         return "mdi:file-document"
 
     @property
@@ -2081,12 +1731,23 @@ class KseniaLastAlarmEventSensor(SensorEntity):
 
     async def _handle_partition_update(self, data_list):
         """Handle partition updates to track trigger source and reset."""
-        current_partition_state = {}
-        triggered_now = []
+        current_partition_state, triggered_now = self._collect_partition_states(data_list)
+        self._process_alarm_trigger(current_partition_state, triggered_now)
+        self._process_alarm_reset(current_partition_state)
+        self._triggered_partitions = triggered_now
+        self._last_partition_state = current_partition_state
+        self.async_write_ha_state()
 
+    def _collect_partition_states(self, data_list: list) -> tuple[dict, list]:
+        """Build current partition state map and list of currently triggering partitions.
+
+        Returns:
+            Tuple of (current_partition_state dict, triggered_now list)
+        """
+        current_partition_state: dict = {}
+        triggered_now: list = []
         for data in data_list:
             partition_id = data.get("ID")
-            # Use raw AST states (OK/AL/AM), default to OK when missing
             ast = data.get("AST", "OK")
             current_partition_state[partition_id] = ast
             if ast == "AL":
@@ -2094,40 +1755,33 @@ class KseniaLastAlarmEventSensor(SensorEntity):
                     partition_id, f"Partition {partition_id}"
                 )
                 triggered_now.append(partition_label)
+        return current_partition_state, triggered_now
 
-        # Detect alarm trigger: transition to AL state
-        became_active = False
-        for partition_id in ("1", "2"):
-            previous_ast = self._last_partition_state.get(partition_id, "OK")
-            current_ast = current_partition_state.get(partition_id, "OK")
-            if previous_ast != "AL" and current_ast == "AL":
-                became_active = True
-
+    def _process_alarm_trigger(self, current_partition_state: dict, triggered_now: list) -> None:
+        """Detect alarm activation transition and record timestamps/partitions."""
+        became_active = any(
+            self._last_partition_state.get(pid, "OK") != "AL"
+            and current_partition_state.get(pid, "OK") == "AL"
+            for pid in ("1", "2")
+        )
         if became_active:
             if not self._alarm_triggered_time:
                 self._alarm_triggered_time = datetime.now().isoformat()
-            # Persist partitions that are active now
             for label in triggered_now:
                 if label not in self._recorded_triggered_partitions:
                     self._recorded_triggered_partitions.append(label)
 
-        # Detect alarm reset: transition from AL/AM to Not triggered
-        # Reset is when previously there was AL and now none are AL
+    def _process_alarm_reset(self, current_partition_state: dict) -> None:
+        """Detect alarm reset transition and record reset timestamp."""
         alarm_was_active = any(self._last_partition_state.get(pid) == "AL" for pid in ("1", "2"))
         alarm_is_cleared = all(current_partition_state.get(pid, "OK") != "AL" for pid in ("1", "2"))
-
         if alarm_was_active and alarm_is_cleared and not self._alarm_reset_time:
             self._alarm_reset_time = datetime.now().isoformat()
-
-        # Update partition state tracking (current view)
-        self._triggered_partitions = triggered_now
-        self._last_partition_state = current_partition_state
-        self.async_write_ha_state()
 
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager._ip}_last_alarm_event"
+        return f"{self.ws_manager.ip}_last_alarm_event"
 
     @property
     def device_info(self):
@@ -2172,6 +1826,7 @@ class KseniaLastAlarmEventSensor(SensorEntity):
 
     @property
     def entity_category(self):
+        """Classify this sensor as a diagnostic entity."""
         return EntityCategory.DIAGNOSTIC
 
     @property
@@ -2257,7 +1912,7 @@ class KseniaLastTamperedZonesSensor(SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager._ip}_last_tampered_zones"
+        return f"{self.ws_manager.ip}_last_tampered_zones"
 
     @property
     def device_info(self):
@@ -2279,6 +1934,7 @@ class KseniaLastTamperedZonesSensor(SensorEntity):
 
     @property
     def entity_category(self):
+        """Classify this sensor as a diagnostic entity."""
         return EntityCategory.DIAGNOSTIC
 
     @property
@@ -2324,9 +1980,12 @@ class KseniaConnectionStatusSensor(SensorEntity):
             return
 
         conn = data_list[0]  # Usually only one connection object
+        self._deep_merge_connection(conn)
+        self._state = self._determine_connection_state()
+        self.async_write_ha_state()
 
-        # Merge with existing data to preserve fields from complete READ responses
-        # Realtime updates often send partial data (only changed fields)
+    def _deep_merge_connection(self, conn: dict) -> None:
+        """Merge a partial connection update into _raw_data, preserving existing fields."""
         if self._raw_data:
             # Deep merge: update existing data with new fields
             for key, value in conn.items():
@@ -2340,28 +1999,25 @@ class KseniaConnectionStatusSensor(SensorEntity):
             # First update - use data as-is
             self._raw_data = conn
 
-        # Determine primary active connection using merged data
+    def _determine_connection_state(self) -> str:
+        """Determine the primary active connection state from merged raw data."""
         eth_link = self._raw_data.get("ETH", {}).get("LINK", "NA")
         mobile_link = self._raw_data.get("MOBILE", {}).get("LINK", "NA")
         cloud_state = self._raw_data.get("CLOUD", {}).get("STATE", "NA")
         inet = self._raw_data.get("INET", "NA")
 
-        # Set state based on active connection type
         if inet == "ETH" and eth_link == "OK":
-            self._state = "ethernet"
-        elif inet == "MOBILE" and mobile_link in ("E", "2", "3", "4"):
-            self._state = "mobile"
-        elif cloud_state == "OPERATIVE":
-            self._state = "cloud"
-        else:
-            self._state = "offline"
-
-        self.async_write_ha_state()
+            return "ethernet"
+        if inet == "MOBILE" and mobile_link in ("E", "2", "3", "4"):
+            return "mobile"
+        if cloud_state == "OPERATIVE":
+            return "cloud"
+        return "offline"
 
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager._ip}_connection_status"
+        return f"{self.ws_manager.ip}_connection_status"
 
     @property
     def device_info(self):
@@ -2422,6 +2078,7 @@ class KseniaConnectionStatusSensor(SensorEntity):
 
     @property
     def entity_category(self):
+        """Classify this sensor as a diagnostic entity."""
         return EntityCategory.DIAGNOSTIC
 
     @property
@@ -2497,59 +2154,15 @@ class KseniaPowerSupplySensor(SensorEntity):
             # Merge into raw_data to preserve fields from previous updates
             self._raw_data.update(panel)
 
-            # Extract voltages from merged data so partial broadcasts
-            # don't wipe previously known values
-            m_val = self._raw_data.get("M")
-            b_val = self._raw_data.get("B")
-
-            _LOGGER.debug(
-                "[PowerSupply] M=%s (type: %s), B=%s (type: %s)",
-                m_val,
-                type(m_val),
-                b_val,
-                type(b_val),
-            )
-
-            if m_val is None or b_val is None:
-                _LOGGER.debug(
-                    "[PowerSupply] Missing voltage fields after merge: M=%s, B=%s, keeping current state",
-                    m_val,
-                    b_val,
-                )
+            if not self._extract_panel_voltages():
                 return
 
-            try:
-                self._main_voltage = float(m_val)
-                self._battery_voltage = float(b_val)
-                _LOGGER.debug(
-                    "[PowerSupply] Parsed voltages: Main=%.1fV, Battery=%.1fV",
-                    self._main_voltage,
-                    self._battery_voltage,
-                )
-            except (ValueError, TypeError) as e:
-                _LOGGER.error(
-                    "[PowerSupply] Failed to parse voltages: %s (M=%s, B=%s)", e, m_val, b_val
-                )
-                return
-
-            # Calculate health state based on voltage thresholds
-            main_ok = self._main_voltage >= 12.0
-            battery_ok = self._battery_voltage >= 12.0
-
-            if main_ok and battery_ok:
-                self._state = "ok"
-            elif main_ok and not battery_ok:
-                self._state = "low_battery"
-            elif not main_ok and battery_ok:
-                self._state = "low_main_power"
-            else:
-                self._state = "critical"
-
+            self._state = self._calculate_power_health_state()
             _LOGGER.debug(
-                "[PowerSupply] State set to: %s (Main OK: %s, Battery OK: %s)",
+                "[PowerSupply] State set to: %s (Main=%.1fV, Battery=%.1fV)",
                 self._state,
-                main_ok,
-                battery_ok,
+                self._main_voltage,
+                self._battery_voltage,
             )
             self.async_write_ha_state()
         except Exception as e:
@@ -2557,10 +2170,58 @@ class KseniaPowerSupplySensor(SensorEntity):
                 "[PowerSupply] Unexpected error in _handle_panel_update: %s", e, exc_info=True
             )
 
+    def _extract_panel_voltages(self) -> bool:
+        """Extract and parse main/battery voltages from merged raw data.
+
+        Returns True if both voltages were successfully parsed, False otherwise.
+        """
+        m_val = self._raw_data.get("M")
+        b_val = self._raw_data.get("B")
+        _LOGGER.debug(
+            "[PowerSupply] M=%s (type: %s), B=%s (type: %s)",
+            m_val,
+            type(m_val),
+            b_val,
+            type(b_val),
+        )
+        if m_val is None or b_val is None:
+            _LOGGER.debug(
+                "[PowerSupply] Missing voltage fields after merge: M=%s, B=%s, keeping current state",
+                m_val,
+                b_val,
+            )
+            return False
+        try:
+            self._main_voltage = float(m_val)
+            self._battery_voltage = float(b_val)
+            _LOGGER.debug(
+                "[PowerSupply] Parsed voltages: Main=%.1fV, Battery=%.1fV",
+                self._main_voltage,
+                self._battery_voltage,
+            )
+            return True
+        except (ValueError, TypeError) as e:
+            _LOGGER.error(
+                "[PowerSupply] Failed to parse voltages: %s (M=%s, B=%s)", e, m_val, b_val
+            )
+            return False
+
+    def _calculate_power_health_state(self) -> str:
+        """Determine power supply health state from stored voltage values."""
+        main_ok = self._main_voltage is not None and self._main_voltage >= 12.0
+        battery_ok = self._battery_voltage is not None and self._battery_voltage >= 12.0
+        if main_ok and battery_ok:
+            return "ok"
+        if main_ok:
+            return "low_battery"
+        if battery_ok:
+            return "low_main_power"
+        return "critical"
+
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager._ip}_power_supply"
+        return f"{self.ws_manager.ip}_power_supply"
 
     @property
     def device_info(self):
@@ -2606,6 +2267,7 @@ class KseniaPowerSupplySensor(SensorEntity):
 
     @property
     def entity_category(self):
+        """Classify this sensor as a diagnostic entity."""
         return EntityCategory.DIAGNOSTIC
 
     @property
@@ -2662,19 +2324,21 @@ class KseniaSystemFaultsSensor(SensorEntity):
 
         faults = data_list[0]  # Usually only one faults object
         self._raw_data = faults
+        self._count_fault_categories(faults)
+        self._apply_fault_state()
+        self.async_write_ha_state()
 
-        # Count faults in each category
+    def _count_fault_categories(self, faults: dict) -> None:
+        """Count faults per category and update attributes in-place."""
         self._attributes["power_supply_faults"] = (
             len(faults.get("PS_MISS", []))
             + len(faults.get("PS_LOW", []))
             + len(faults.get("PS_FAULT", []))
             + len(faults.get("FUSE", []))
         )
-
         self._attributes["battery_faults"] = len(faults.get("LOW_BATT", [])) + len(
             faults.get("BAD_BATT", [])
         )
-
         self._attributes["communication_faults"] = (
             len(faults.get("LOST_BUS", []))
             + len(faults.get("LOST_WLS", []))
@@ -2684,48 +2348,47 @@ class KseniaSystemFaultsSensor(SensorEntity):
             + len(faults.get("MOBILE", []))
             + len(faults.get("LOST_IP_PER", []))
         )
-
         self._attributes["zone_faults"] = len(faults.get("ZONE", []))
-
         self._attributes["sim_faults"] = len(faults.get("SIM_DATE", [])) + len(
             faults.get("SIM_CRE", [])
         )
-
         self._attributes["system_faults"] = (
             len(faults.get("COMMUNICATION", []))
             + len(faults.get("SIAIP_SUP", []))
             + len(faults.get("SYSTEM", []))
         )
 
-        # Calculate total and identify active categories
-        total_faults = (
-            self._attributes["power_supply_faults"]
-            + self._attributes["battery_faults"]
-            + self._attributes["communication_faults"]
-            + self._attributes["zone_faults"]
-            + self._attributes["sim_faults"]
-            + self._attributes["system_faults"]
+    def _apply_fault_state(self) -> None:
+        """Recalculate total faults, category labels, and sensor state from attributes."""
+        total_faults = sum(
+            self._attributes[k]
+            for k in (
+                "power_supply_faults",
+                "battery_faults",
+                "communication_faults",
+                "zone_faults",
+                "sim_faults",
+                "system_faults",
+            )
         )
         self._attributes["total_faults"] = total_faults
 
         # Build list of fault categories with issues
-        fault_categories = []
-        if self._attributes["power_supply_faults"] > 0:
-            fault_categories.append(f"Power supply ({self._attributes['power_supply_faults']})")
-        if self._attributes["battery_faults"] > 0:
-            fault_categories.append(f"Battery ({self._attributes['battery_faults']})")
-        if self._attributes["communication_faults"] > 0:
-            fault_categories.append(f"Communication ({self._attributes['communication_faults']})")
-        if self._attributes["zone_faults"] > 0:
-            fault_categories.append(f"Zone ({self._attributes['zone_faults']})")
-        if self._attributes["sim_faults"] > 0:
-            fault_categories.append(f"SIM ({self._attributes['sim_faults']})")
-        if self._attributes["system_faults"] > 0:
-            fault_categories.append(f"System ({self._attributes['system_faults']})")
-
+        category_labels = [
+            ("power_supply_faults", "Power supply"),
+            ("battery_faults", "Battery"),
+            ("communication_faults", "Communication"),
+            ("zone_faults", "Zone"),
+            ("sim_faults", "SIM"),
+            ("system_faults", "System"),
+        ]
+        fault_categories = [
+            f"{label} ({self._attributes[key]})"
+            for key, label in category_labels
+            if self._attributes[key] > 0
+        ]
         self._attributes["fault_categories"] = fault_categories
 
-        # Set state
         if total_faults == 0:
             self._state = "ok"
         elif total_faults <= 2:
@@ -2734,8 +2397,6 @@ class KseniaSystemFaultsSensor(SensorEntity):
             self._state = "multiple_faults"
         else:
             self._state = "critical_faults"
-
-        self.async_write_ha_state()
 
     def _reset_faults(self):
         """Reset all fault counters."""
@@ -2753,7 +2414,7 @@ class KseniaSystemFaultsSensor(SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager._ip}_system_faults"
+        return f"{self.ws_manager.ip}_system_faults"
 
     @property
     def device_info(self):
@@ -2772,6 +2433,7 @@ class KseniaSystemFaultsSensor(SensorEntity):
 
     @property
     def entity_category(self):
+        """Classify this sensor as a diagnostic entity."""
         return EntityCategory.DIAGNOSTIC
 
     @property
@@ -2902,7 +2564,7 @@ class KseniaFaultMemorySensor(SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager._ip}_fault_memory"
+        return f"{self.ws_manager.ip}_fault_memory"
 
     @property
     def device_info(self):
@@ -2931,6 +2593,7 @@ class KseniaFaultMemorySensor(SensorEntity):
 
     @property
     def entity_category(self):
+        """Classify this sensor as a diagnostic entity."""
         return EntityCategory.DIAGNOSTIC
 
     @property

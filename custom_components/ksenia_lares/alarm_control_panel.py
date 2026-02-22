@@ -281,7 +281,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
     @property
     def unique_id(self):
         """Return unique ID for the entity."""
-        return f"{self.ws_manager._ip}_alarm_control_panel"
+        return f"{self.ws_manager.ip}_alarm_control_panel"
 
     @property
     def device_info(self):
@@ -545,6 +545,43 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         }
         return icon_map.get(self._state, "mdi:shield")
 
+    def _get_bypassed_zones(self) -> list:
+        """Return a list of human-readable bypassed zone strings."""
+        result = []
+        try:
+            for zone in self.ws_manager.get_cached_data("STATUS_ZONES"):
+                zone_byp = zone.get("BYP", "NO")
+                if zone_byp != "NO":
+                    zone_id = zone.get("ID", "Unknown")
+                    zone_label = zone.get("LBL", "") or zone.get("DES", f"Zone {zone_id}")
+                    bypass_type = "Manual" if zone_byp in ("MAN_M", "MAN_T") else "Auto"
+                    result.append(f"{zone_label} ({bypass_type})")
+        except Exception as e:
+            _LOGGER.debug(f"Error loading bypassed zones for attributes: {e}")
+        return result
+
+    _PARTITION_ARM_MAP = {
+        "D": "Disarmed",
+        "IA": "Armed",
+        "DA": "Arming (exit delay)",
+        "IT": "Entry delay active",
+        "OT": "Exit delay active",
+        "AL": "Alarm triggered",
+        "AM": "Alarm memory",
+    }
+
+    def _get_partition_status(self) -> dict:
+        """Return a dict mapping partition_<id> to a readable ARM state string."""
+        result = {}
+        try:
+            for part in self.ws_manager.get_cached_data("STATUS_PARTITIONS"):
+                part_id = part.get("ID", "Unknown")
+                part_arm = part.get("ARM", "Unknown")
+                result[f"partition_{part_id}"] = self._PARTITION_ARM_MAP.get(part_arm, part_arm)
+        except Exception as e:
+            _LOGGER.debug(f"Error loading partition status for attributes: {e}")
+        return result
+
     @property
     def extra_state_attributes(self):
         """Return additional state attributes from system status.
@@ -559,55 +596,14 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         device_description = (
             arm_data.get("D", "Unknown") if isinstance(arm_data, dict) else "Unknown"
         )
-
-        # Map alarm status to readable string
         ast_status = self._system_status.get("AST", "Unknown")
         ast_map = {"OK": "No Alarm", "AL": "Ongoing Alarm", "AM": "Alarm Memory"}
-        readable_alarm_status = ast_map.get(ast_status, ast_status)
-
-        # Get bypassed zones from realtime data
-        bypassed_zones = []
-        try:
-            zones = self.ws_manager.get_cached_data("STATUS_ZONES")
-            for zone in zones:
-                zone_byp = zone.get("BYP", "NO")
-                if zone_byp != "NO":  # Zone is bypassed
-                    zone_id = zone.get("ID", "Unknown")
-                    zone_label = zone.get("LBL", "") or zone.get("DES", f"Zone {zone_id}")
-                    bypass_type = "Manual" if zone_byp in ("MAN_M", "MAN_T") else "Auto"
-                    bypassed_zones.append(f"{zone_label} ({bypass_type})")
-        except Exception as e:
-            _LOGGER.debug(f"Error loading bypassed zones for attributes: {e}")
-
-        # Get partition status from realtime data
-        partition_status = {}
-        try:
-            partitions = self.ws_manager.get_cached_data("STATUS_PARTITIONS")
-            for part in partitions:
-                part_id = part.get("ID", "Unknown")
-                part_arm = part.get("ARM", "Unknown")
-                # Map partition ARM codes to readable descriptions
-                arm_map = {
-                    "D": "Disarmed",
-                    "IA": "Armed",
-                    "DA": "Arming (exit delay)",
-                    "IT": "Entry delay active",
-                    "OT": "Exit delay active",
-                    "AL": "Alarm triggered",
-                    "AM": "Alarm memory",
-                }
-                readable_arm = arm_map.get(part_arm, part_arm)
-                partition_status[f"partition_{part_id}"] = readable_arm
-        except Exception as e:
-            _LOGGER.debug(f"Error loading partition status for attributes: {e}")
-
+        bypassed_zones = self._get_bypassed_zones()
         return {
-            "device_status": device_description,  # Device's description
-            "alarm_condition": readable_alarm_status,  # No Alarm / Ongoing Alarm / Alarm Memory
-            "bypassed_zones": (
-                bypassed_zones if bypassed_zones else "None"
-            ),  # List of bypassed zones with type
-            "partition_status": partition_status,  # Status of each partition
+            "device_status": device_description,
+            "alarm_condition": ast_map.get(ast_status, ast_status),
+            "bypassed_zones": bypassed_zones if bypassed_zones else "None",
+            "partition_status": self._get_partition_status(),
             "scenarios_available": list(self._scenarios.keys()),
             "connection_state": (
                 self.ws_manager.get_connection_state().name

@@ -84,7 +84,7 @@ class KseniaLightEntity(LightEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the light."""
-        return f"{self.ws_manager._ip}_{self._id}"
+        return f"{self.ws_manager.ip}_{self._id}"
 
     @property
     def device_info(self):
@@ -95,6 +95,11 @@ class KseniaLightEntity(LightEntity):
     def name(self):
         """Returns the name of the light."""
         return self._name
+
+    @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self._available
 
     @property
     def is_on(self):
@@ -172,6 +177,7 @@ class KseniaLightEntity(LightEntity):
                     else:
                         self._pending_command = None
                 self._state = remote_state
+                self._available = True
                 # Merge update into raw_data to preserve all fields
                 self._raw_data.update(light)
                 break

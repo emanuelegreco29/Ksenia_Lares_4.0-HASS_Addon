@@ -61,6 +61,40 @@ def _register_device(hass, entry, ip, use_ssl, port, system_info):
     )
 
 
+def _cleanup_ws_manager(hass) -> None:
+    """Remove the ws_manager from hass.data if present."""
+    if DOMAIN in hass.data and "ws_manager" in hass.data[DOMAIN]:
+        hass.data[DOMAIN].pop("ws_manager", None)
+
+
+async def _setup_connection(hass, ip, port, pin, use_ssl) -> WebSocketManager:
+    """Create and connect a WebSocketManager, seeding hass.data.
+
+    Raises ConfigEntryNotReady on connection failure so HA retries with backoff.
+    Raises asyncio.CancelledError if the setup task is cancelled.
+    """
+    ws_manager = WebSocketManager(ip, pin, port, _LOGGER, max_retries=3)
+    hass.data.setdefault(DOMAIN, {})["ws_manager"] = ws_manager
+    try:
+        connection_method = ws_manager.connectSecure if use_ssl else ws_manager.connect
+        _LOGGER.info(f"Starting connection to {ip}:{port}")
+        await connection_method()
+        _LOGGER.info(
+            f"Connection established, waiting for initial data (timeout: {SETUP_TIMEOUT}s)"
+        )
+        await ws_manager.wait_for_initial_data(timeout=SETUP_TIMEOUT)
+        _LOGGER.info("Initial data available, setup continuing")
+        return ws_manager
+    except asyncio.CancelledError:
+        _cleanup_ws_manager(hass)
+        raise
+    except Exception as e:
+        _cleanup_ws_manager(hass)
+        error_msg = f"Failed to connect to Ksenia Lares at {ip}:{port}: {e}"
+        _LOGGER.warning("%s - HA will retry with backoff", error_msg)
+        raise ConfigEntryNotReady(error_msg) from e
+
+
 async def async_setup_entry(hass, entry):
     """Set up Ksenia Lares integration from a config entry.
 
@@ -82,75 +116,33 @@ async def async_setup_entry(hass, entry):
         _SETUP_TASKS[entry.entry_id] = current_task
 
     try:
-        # Extract configuration with fallback to old capitalized keys for backward compatibility
-        # Try lowercase keys first (new format), then capitalized keys (old format)
+        # Extract configuration (fallback to legacy capitalized keys for backward compatibility)
         ip = entry.data.get(CONF_HOST) or entry.data.get("Host")
         pin = entry.data.get(CONF_PIN) or entry.data.get("Pin")
         port = entry.data.get(CONF_PORT) or entry.data.get("Port", 443)
-
-        if not ip or not pin:
-            _LOGGER.error(
-                "Missing required configuration: host and/or pin not found in config entry"
-            )
-            return False
-        # Respect legacy capitalized key "SSL" if present (backward compatibility)
         use_ssl = entry.options.get(CONF_SSL, entry.data.get(CONF_SSL, entry.data.get("SSL", True)))
 
-        # Initialize WebSocket manager with limited retries during setup
-        # This allows ConfigEntryNotReady to be raised so HA can manage retry schedule
-        # After successful connection, internal reconnection logic handles transient issues
-        ws_manager = WebSocketManager(ip, pin, port, _LOGGER, max_retries=3)
-        hass.data.setdefault(DOMAIN, {})["ws_manager"] = ws_manager
+        if not ip or not pin:
+            _LOGGER.error("Missing required configuration: host and/or pin not found")
+            return False
 
-        # Connect to device
-        try:
-            connection_method = ws_manager.connectSecure if use_ssl else ws_manager.connect
-            _LOGGER.info(f"Starting connection to {ip}:{port}")
-            await connection_method()
-            _LOGGER.info(
-                f"Connection method returned, waiting for initial data (timeout: {SETUP_TIMEOUT}s)"
-            )
-            await ws_manager.wait_for_initial_data(timeout=SETUP_TIMEOUT)
-            _LOGGER.info("Initial data available, setup continuing")
-        except asyncio.CancelledError:
-            _LOGGER.info("Setup cancelled - config entry removal requested")
-            if DOMAIN in hass.data and "ws_manager" in hass.data[DOMAIN]:
-                hass.data[DOMAIN].pop("ws_manager", None)
-            raise
-        except Exception as e:
-            # Clean up ws_manager from hass.data since connection failed
-            if DOMAIN in hass.data and "ws_manager" in hass.data[DOMAIN]:
-                hass.data[DOMAIN].pop("ws_manager", None)
+        ws_manager = await _setup_connection(hass, ip, port, pin, use_ssl)
 
-            # Raise ConfigEntryNotReady to trigger HA's retry mechanism with exponential backoff
-            # This allows the integration to keep retrying during HA restarts when device is down
-            error_msg = f"Failed to connect to Ksenia Lares at {ip}:{port}: {e}"
-            _LOGGER.warning("%s - HA will retry with backoff", error_msg)
-            raise ConfigEntryNotReady(error_msg) from e
-
-        # Get device information (gracefully handles errors)
         system_info = await ws_manager.getSystemVersion()
         device_info = _build_device_info(ip, port, use_ssl, system_info)
-
-        # Register device in Home Assistant
         _register_device(hass, entry, ip, use_ssl, port, system_info)
-
-        # Store device info for entities
         hass.data[DOMAIN]["device_info"] = device_info
 
-        # Forward setup to platforms
         platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
         _LOGGER.debug("Setting up platforms: %s", platforms)
         await hass.config_entries.async_forward_entry_setups(entry, platforms)
 
-        _SETUP_TASKS.pop(entry.entry_id, None)  # Clean up task tracking
+        _SETUP_TASKS.pop(entry.entry_id, None)
         return True
     except asyncio.CancelledError:
-        # Setup was cancelled - likely due to deletion request
         _LOGGER.info("Setup task cancelled for entry %s", entry.title)
         _SETUP_TASKS.pop(entry.entry_id, None)
-        if DOMAIN in hass.data and "ws_manager" in hass.data[DOMAIN]:
-            hass.data[DOMAIN].pop("ws_manager", None)
+        _cleanup_ws_manager(hass)
         raise
     except ConfigEntryNotReady:
         _SETUP_TASKS.pop(entry.entry_id, None)

@@ -92,12 +92,17 @@ class KseniaRollEntity(CoverEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the roller blind."""
-        return f"{self.ws_manager._ip}_{self._roll_id}"
+        return f"{self.ws_manager.ip}_{self._roll_id}"
 
     @property
     def device_info(self):
         """Return device information about this entity."""
         return self._device_info
+
+    @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self._available
 
     @property
     def name(self):
@@ -205,6 +210,7 @@ class KseniaRollEntity(CoverEntity):
                     else:
                         self._pending_command = None
                 self._position = new_pos
+                self._available = True
                 # Merge update into raw_data to preserve all fields
                 self._raw_data.update(roll)
                 break

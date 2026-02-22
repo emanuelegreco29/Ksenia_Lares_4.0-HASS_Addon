@@ -94,6 +94,41 @@ class WebSocketManager:
         logger: Logger instance for diagnostics
     """
 
+    async def _await_scenario_response(self, temp_ws, scenario_id) -> bool:
+        """Wait for CMD_USR_RES on a temporary connection, skipping interleaved messages.
+
+        Returns True if the scenario succeeded, False if it failed.
+        Raises TimeoutError if no response arrives within 5 seconds.
+        """
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError(f"Timeout waiting for scenario {scenario_id} response")
+            try:
+                json_resp = await asyncio.wait_for(temp_ws.recv(), timeout=remaining)
+                response = json.loads(json_resp)
+                cmd = response.get("CMD")
+                if cmd == "CMD_USR_RES":
+                    if response.get("PAYLOAD", {}).get("RESULT") == "OK":
+                        self._logger.debug(f"Scenario {scenario_id} executed successfully")
+                        return True
+                    result_detail = response.get("PAYLOAD", {}).get("RESULT_DETAIL", "UNKNOWN")
+                    self._last_command_detail = result_detail
+                    self._logger.error(f"Scenario {scenario_id} execution failed: {result_detail}")
+                    return False
+                self._logger.debug(
+                    f"Ignoring interleaved message while waiting for scenario response: {cmd}"
+                )
+            except TimeoutError:
+                self._logger.error(f"Timeout waiting for scenario {scenario_id} response")
+                raise
+            except json.JSONDecodeError as e:
+                self._logger.debug(
+                    f"Invalid JSON response while waiting for scenario: {e.msg} at pos {e.pos}"
+                )
+        raise TimeoutError(f"Timeout waiting for scenario {scenario_id} response")
+
     async def executeScenario_with_login(self, scenario_id, pin=None):
         """Execute scenario with user-specific PIN using a temporary WebSocket connection.
 
@@ -191,58 +226,9 @@ class WebSocketManager:
             self._logger.debug(f"Sending scenario {scenario_id} command on temporary connection")
             await temp_ws.send(json_cmd)
 
-            # Wait for response, ignoring interleaved REALTIME messages
-            # 5-second timeout for device to process and respond to scenario command
+            # Wait for response on temporary connection (5-second timeout)
             self._logger.debug(f"Waiting for scenario {scenario_id} response (5s timeout)")
-            deadline = time.time() + 5
-
-            while time.time() < deadline:
-                try:
-                    remaining = deadline - time.time()
-                    if remaining <= 0:
-                        raise TimeoutError("Scenario execution timeout")
-
-                    json_resp = await asyncio.wait_for(temp_ws.recv(), timeout=remaining)
-                    response = json.loads(json_resp)
-                    cmd = response.get("CMD")
-
-                    if cmd == "CMD_USR_RES":
-                        # Got the scenario response
-                        if response.get("PAYLOAD", {}).get("RESULT") == "OK":
-                            self._logger.debug(f"Scenario {scenario_id} executed successfully")
-                            return True
-                        else:
-                            result_detail = response.get("PAYLOAD", {}).get(
-                                "RESULT_DETAIL", "UNKNOWN"
-                            )
-                            self._last_command_detail = result_detail
-                            self._logger.error(
-                                f"Scenario {scenario_id} execution failed: {result_detail}"
-                            )
-                            return False
-                    elif cmd == "REALTIME":
-                        # Ignore interleaved REALTIME messages from device
-                        self._logger.debug(
-                            "Ignoring interleaved REALTIME while waiting for scenario response"
-                        )
-                        continue
-                    else:
-                        # Unexpected message type
-                        self._logger.debug(
-                            f"Ignoring interleaved message while waiting for scenario response: {cmd}"
-                        )
-                        continue
-
-                except TimeoutError:
-                    self._logger.error(f"Timeout waiting for scenario {scenario_id} response")
-                    raise
-                except json.JSONDecodeError as e:
-                    self._logger.debug(
-                        f"Invalid JSON response while waiting for scenario: {e.msg} at pos {e.pos}"
-                    )
-                    continue
-
-            raise TimeoutError(f"Timeout waiting for scenario {scenario_id} response")
+            return await self._await_scenario_response(temp_ws, scenario_id)
 
         except TimeoutError:
             self._logger.error(f"Timeout executing scenario {scenario_id}")
@@ -251,24 +237,26 @@ class WebSocketManager:
             self._logger.error(f"Error executing scenario with temporary connection: {e}")
             return False
         finally:
-            # Cleanup: logout and close temporary connection
-            # This is critical to prevent session leaks and resource exhaustion
-            if temp_ws and user_login_id and user_login_id != -1:
-                try:
-                    self._logger.debug(f"Logging out user session {user_login_id}")
-                    # Logout the temporary user session from this connection
-                    await ws_logout(temp_ws, user_login_id, self._logger)
-                except Exception as e:
-                    self._logger.debug(f"Error logging out user session: {e}")
+            await self._cleanup_temp_connection(temp_ws, user_login_id)
 
-            if temp_ws:
-                try:
-                    self._logger.debug("Closing temporary connection")
-                    # Close the temporary connection
-                    # Main connection remains active and unaffected
-                    await temp_ws.close()
-                except Exception as e:
-                    self._logger.debug(f"Error closing temporary connection: {e}")
+    async def _cleanup_temp_connection(self, temp_ws, user_login_id) -> None:
+        """Logout and close a temporary WebSocket connection.
+
+        Critical: prevents session leaks and resource exhaustion.
+        The main connection is not affected.
+        """
+        if temp_ws and user_login_id and user_login_id != -1:
+            try:
+                self._logger.debug(f"Logging out user session {user_login_id}")
+                await ws_logout(temp_ws, user_login_id, self._logger)
+            except Exception as e:
+                self._logger.debug(f"Error logging out user session: {e}")
+        if temp_ws:
+            try:
+                self._logger.debug("Closing temporary connection")
+                await temp_ws.close()
+            except Exception as e:
+                self._logger.debug(f"Error closing temporary connection: {e}")
 
     def __init__(self, ip, pin, port, logger, max_retries=None):
         """Initialize WebSocket manager.
@@ -367,27 +355,6 @@ class WebSocketManager:
             return True
         return self._ws.state == websockets.State.CLOSED
 
-        closed_attr = getattr(self._ws, "closed", None)
-        if isinstance(closed_attr, bool):
-            return closed_attr
-
-        if callable(closed_attr):
-            try:
-                return bool(closed_attr())
-            except Exception:
-                return False
-
-        state = getattr(self._ws, "state", None)
-        if state is not None:
-            try:
-                from websockets.protocol import State
-
-                return state == State.CLOSED
-            except Exception:
-                return str(state).upper().endswith("CLOSED")
-
-        return False
-
     def _validate_message(self, message):
         """Validate message has required fields.
 
@@ -404,6 +371,11 @@ class WebSocketManager:
         if missing:
             raise ValueError(f"Missing required fields: {missing}")
 
+    @property
+    def ip(self) -> str:
+        """Return the IP address of the connected panel."""
+        return self._ip
+
     def get_metrics(self):
         """Get connection and command statistics.
 
@@ -412,7 +384,7 @@ class WebSocketManager:
         """
         return self._metrics.copy()
 
-    def get_connection_state(self):
+    def get_connection_state(self) -> ConnectionState:
         """Get current connection state.
 
         Returns:
@@ -824,6 +796,23 @@ class WebSocketManager:
                 self._logger.error("Connection closed during state refresh - triggering reconnect")
                 asyncio.create_task(self._handle_connection_closed())
 
+    def _seed_initial_cache(self, payload: dict) -> None:
+        """Seed the realtime cache from the initial READ payload.
+
+        Called once after the first successful READ so that entities have
+        cached data before any REALTIME broadcast arrives.
+        """
+        if payload.get("STATUS_PANEL"):
+            self._logger.debug(
+                f"[{time.time():.3f}] Caching STATUS_PANEL: {payload.get('STATUS_PANEL')}"
+            )
+            self._update_realtime_cache("STATUS_PANEL", payload.get("STATUS_PANEL"))
+        if payload.get("STATUS_CONNECTION"):
+            self._logger.debug(
+                f"[{time.time():.3f}] Caching STATUS_CONNECTION: {payload.get('STATUS_CONNECTION')}"
+            )
+            self._update_realtime_cache("STATUS_CONNECTION", payload.get("STATUS_CONNECTION"))
+
     async def _fetch_initial_data(self):
         """Retrieve static configuration and real-time data from panel.
 
@@ -855,23 +844,11 @@ class WebSocketManager:
                     self._logger.debug(f"Static data received: {self._readData}")
 
                 # Seed realtime cache from READ payload so entities can use cached initial data
-                # readData() already returns unwrapped payload, so use it directly
                 payload = self._readData if self._readData else {}
                 self._logger.debug(
                     f"[{time.time():.3f}] Seeding realtime cache from READ payload with keys: {list(payload.keys())}"
                 )
-                if payload.get("STATUS_PANEL"):
-                    self._logger.debug(
-                        f"[{time.time():.3f}] Caching STATUS_PANEL: {payload.get('STATUS_PANEL')}"
-                    )
-                    self._update_realtime_cache("STATUS_PANEL", payload.get("STATUS_PANEL"))
-                if payload.get("STATUS_CONNECTION"):
-                    self._logger.debug(
-                        f"[{time.time():.3f}] Caching STATUS_CONNECTION: {payload.get('STATUS_CONNECTION')}"
-                    )
-                    self._update_realtime_cache(
-                        "STATUS_CONNECTION", payload.get("STATUS_CONNECTION")
-                    )
+                self._seed_initial_cache(payload)
 
                 self._logger.debug(
                     f"[{time.time():.3f}] Starting real-time data subscription (attempt {retry_count + 1}/{max_retries})"
@@ -1128,6 +1105,26 @@ class WebSocketManager:
             self._logger.error(f"Message processing error: {e}", exc_info=True)
             return  # Graceful degradation - continue despite processing errors
 
+    def _unwrap_payload_data(self, payload: Any) -> dict:
+        """Extract the normalised data dict from a message payload.
+
+        Handles three payload shapes used by the device:
+        - {"HomeAssistant": {...}}  → returns the inner dict
+        - {"STATUS_*": ...}        → returns the payload as-is
+        - {single_key: {...}}      → returns the inner dict
+        """
+        if not isinstance(payload, dict):
+            return {}
+        if "HomeAssistant" in payload and isinstance(payload.get("HomeAssistant"), dict):
+            return payload.get("HomeAssistant", {})
+        if any(str(key).startswith("STATUS_") for key in payload):
+            return payload
+        if len(payload) == 1:
+            only_value = next(iter(payload.values()), {})
+            if isinstance(only_value, dict):
+                return only_value
+        return {}
+
     async def handle_message(self, message):
         """Process incoming WebSocket message and update states.
 
@@ -1148,18 +1145,7 @@ class WebSocketManager:
             )
 
         payload = message.get("PAYLOAD", {})
-        data = {}
-        if isinstance(payload, dict):
-            if "HomeAssistant" in payload and isinstance(payload.get("HomeAssistant"), dict):
-                data = payload.get("HomeAssistant", {})
-            elif any(str(key).startswith("STATUS_") for key in payload):
-                data = payload
-            elif len(payload) == 1:
-                only_value = next(iter(payload.values()), {})
-                if isinstance(only_value, dict):
-                    data = only_value
-        if not isinstance(data, dict):
-            data = {}
+        data = self._unwrap_payload_data(payload)
 
         if cmd == "CMD_USR_RES" or cmd == "CLEAR_RES":
             result = payload.get("RESULT") == "OK"
@@ -1176,6 +1162,30 @@ class WebSocketManager:
         elif cmd == "REALTIME":
             # REALTIME is for updates, REALTIME_RES is registration response
             await self._handle_realtime_update(data)
+
+    def _payload_type_matches(
+        self, expected_cmd_prefix: str, req_payload_type: str, response_payload_type: str
+    ) -> bool:
+        """Return True if request and response payload types are compatible.
+
+        Handles known firmware variations where the response PAYLOAD_TYPE differs
+        from the request (e.g., GET_LAST_LOGS → LAST_LOGS on older firmware).
+        """
+        if req_payload_type == response_payload_type:
+            return True
+        if (
+            expected_cmd_prefix == "LOGS"
+            and req_payload_type == "GET_LAST_LOGS"
+            and response_payload_type in ("GET_LAST_LOGS", "LAST_LOGS")
+        ):
+            return True
+        if (
+            expected_cmd_prefix == "REALTIME"
+            and req_payload_type == "REGISTER"
+            and response_payload_type == "REGISTER_ACK"
+        ):
+            return True
+        return False
 
     def _find_pending_by_fallback(self, pending_dict, message, expected_cmd_prefix):
         """Find pending request using fallback matching when ID doesn't match.
@@ -1208,26 +1218,9 @@ class WebSocketManager:
             original_msg = req_data.get("message", {})
             req_payload_type = original_msg.get("PAYLOAD_TYPE", "")
 
-            # Check for direct match or known firmware variations
-            payload_match = False
-            if req_payload_type == response_payload_type:
-                payload_match = True
-            elif (
-                expected_cmd_prefix == "LOGS"
-                and req_payload_type == "GET_LAST_LOGS"
-                and response_payload_type in ("GET_LAST_LOGS", "LAST_LOGS")
+            if self._payload_type_matches(
+                expected_cmd_prefix, req_payload_type, response_payload_type
             ):
-                # LOGS command: older firmware responds with LAST_LOGS, newer with GET_LAST_LOGS
-                payload_match = True
-            elif (
-                expected_cmd_prefix == "REALTIME"
-                and req_payload_type == "REGISTER"
-                and response_payload_type == "REGISTER_ACK"
-            ):
-                # REALTIME registration ack
-                payload_match = True
-
-            if payload_match:
                 candidates.append((msg_id, req_data))
 
         # Only use fallback if exactly one candidate exists (avoid ambiguity)
@@ -1458,6 +1451,29 @@ class WebSocketManager:
                         exc_info=True,
                     )
 
+    def _merge_entity_updates(
+        self, existing_dict: dict, new_entities: list, status_payload_type: str
+    ) -> int:
+        """Merge new_entities into existing_dict (keyed by entity ID).
+
+        Updates fields in-place for known entities; adds new ones.
+        Returns the number of entities processed.
+        """
+        updates_count = 0
+        for new_entity in new_entities:
+            entity_id = str(new_entity.get("ID", ""))
+            if entity_id:
+                if entity_id in existing_dict:
+                    existing_dict[entity_id].update(new_entity)
+                else:
+                    existing_dict[entity_id] = new_entity
+                updates_count += 1
+            else:
+                self._logger.warning(
+                    f"[WS] _update_realtime_cache: Entity without ID field in {status_payload_type}: {new_entity}"
+                )
+        return updates_count
+
     def _update_realtime_cache(self, status_payload_type: str, status_entities: Any) -> None:
         """Update unified cache with real-time data.
 
@@ -1509,31 +1525,12 @@ class WebSocketManager:
             )
         else:
             # Merge incoming partial entity updates with existing cache
-            # Build dict for fast lookup by entity ID: {entity_id: entity}
             existing_dict = {
                 str(entity.get("ID")): entity for entity in existing_entities if "ID" in entity
             }
-
-            # Update/add entities from incoming broadcast
-            updates_count = 0
-            for new_entity in status_entities:
-                entity_id = str(new_entity.get("ID", ""))
-                if entity_id and entity_id != "":
-                    if entity_id in existing_dict:
-                        # Update existing entity - merge fields (new field values overwrite old)
-                        existing_dict[entity_id].update(new_entity)
-                        updates_count += 1
-                    else:
-                        # New entity not previously cached
-                        existing_dict[entity_id] = new_entity
-                        updates_count += 1
-                else:
-                    # Entity without ID field - shouldn't happen but handle gracefully
-                    self._logger.warning(
-                        f"[WS] _update_realtime_cache: Entity without ID field in {status_payload_type}: {new_entity}"
-                    )
-
-            # Convert back to entity list and store in unified cache
+            updates_count = self._merge_entity_updates(
+                existing_dict, status_entities, status_payload_type
+            )
             self._readData[status_payload_type] = list(existing_dict.values())
             self._logger.debug(
                 f"[WS] _update_realtime_cache: Merged {updates_count} entity updates into {status_payload_type} "

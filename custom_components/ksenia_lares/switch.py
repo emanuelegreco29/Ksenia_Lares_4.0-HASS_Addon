@@ -131,7 +131,7 @@ class KseniaSwitchEntity(SwitchEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the switch."""
-        return f"{self.ws_manager._ip}_{self.switch_id}"
+        return f"{self.ws_manager.ip}_{self.switch_id}"
 
     @property
     def device_info(self):
@@ -143,6 +143,11 @@ class KseniaSwitchEntity(SwitchEntity):
         """Return the entity category for this switch."""
         # Switches are controls/outputs, so no category (they're primary controls)
         return None
+
+    @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self._available
 
     @property
     def name(self):
@@ -196,6 +201,7 @@ class KseniaSwitchEntity(SwitchEntity):
         for switch in switches:
             if str(switch.get("ID")) == str(self.switch_id):
                 self._state = switch.get("STA", "off").lower() == "on"
+                self._available = True
                 # Merge update into raw_data to preserve all fields
                 self._raw_data.update(switch)
                 break
@@ -221,7 +227,7 @@ class KseniaZoneBypassSwitch(SwitchEntity):
         self._device_info = device_info
         # Parse bypass status: NO/N means not bypassed, anything else (AUTO, MAN_M, MAN_T) means bypassed
         byp_val = zone_data.get("BYP", "NO")
-        self._state = byp_val.upper() not in ["NO", "N"]
+        self._state = byp_val.upper() != "NO"
         self._raw_data = dict(zone_data)
 
     async def async_added_to_hass(self):
@@ -235,7 +241,7 @@ class KseniaZoneBypassSwitch(SwitchEntity):
                 # Only update bypass state when BYP is present; otherwise keep current state
                 if "BYP" in data:
                     byp_val = str(data.get("BYP", "NO"))
-                    self._state = byp_val.upper() not in ["NO", "N"]
+                    self._state = byp_val.upper() != "NO"
                 self._raw_data.update(data)
                 self.async_write_ha_state()
                 break
@@ -243,7 +249,7 @@ class KseniaZoneBypassSwitch(SwitchEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the zone bypass switch."""
-        return f"{self.ws_manager._ip}_zone_{self.zone_id}_bypass"
+        return f"{self.ws_manager.ip}_zone_{self.zone_id}_bypass"
 
     @property
     def device_info(self):
@@ -254,6 +260,11 @@ class KseniaZoneBypassSwitch(SwitchEntity):
     def entity_category(self):
         """Return the entity category for this switch."""
         return EntityCategory.CONFIG
+
+    @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self._available
 
     @property
     def is_on(self):
@@ -311,6 +322,7 @@ class KseniaZoneBypassSwitch(SwitchEntity):
             if str(zone.get("ID")) == str(self.zone_id):
                 if "BYP" in zone:
                     byp_val = str(zone.get("BYP", "NO"))
-                    self._state = byp_val.upper() not in ["NO", "N"]
+                    self._state = byp_val.upper() != "NO"
+                self._available = True
                 self._raw_data.update(zone)
                 break

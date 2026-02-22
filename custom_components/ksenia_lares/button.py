@@ -81,7 +81,7 @@ class KseniaScenarioButtonEntity(ButtonEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the button."""
-        return f"{self.ws_manager._ip}_{self._scenario_id}"
+        return f"{self.ws_manager.ip}_{self._scenario_id}"
 
     @property
     def device_info(self):
@@ -118,7 +118,7 @@ class KseniaClearButtonEntity(ButtonEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the button."""
-        return f"{self.ws_manager._ip}_clear_{self._clear_type}"
+        return f"{self.ws_manager.ip}_clear_{self._clear_type}"
 
     @property
     def device_info(self):

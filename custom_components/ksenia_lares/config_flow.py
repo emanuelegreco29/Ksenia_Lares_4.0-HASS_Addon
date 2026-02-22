@@ -40,6 +40,36 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    async def _test_connection(self, user_input: dict) -> dict:
+        """Attempt a test connection with user_input credentials.
+
+        Returns an error dict (suitable for the form's ``errors`` parameter) or
+        an empty dict on success.
+        """
+        ws_manager = None
+        try:
+            ws_manager = WebSocketManager(
+                user_input[CONF_HOST],
+                user_input[CONF_PIN],
+                user_input.get(CONF_PORT, DEFAULT_PORT),
+                _LOGGER,
+                max_retries=1,
+            )
+            if user_input.get(CONF_SSL, DEFAULT_SSL):
+                await ws_manager.connectSecure()
+            else:
+                await ws_manager.connect()
+            return {}
+        except AuthenticationError as e:
+            _LOGGER.error(f"Authentication failed: {e}")
+            return {CONF_PIN: "invalid_pin"}
+        except Exception as e:
+            _LOGGER.error(f"Connection test failed: {e}")
+            return {"base": "cannot_connect"}
+        finally:
+            if ws_manager:
+                await ws_manager.stop()
+
     async def async_step_user(self, user_input=None):
         """Handle initial configuration by user."""
         errors = {}
@@ -48,37 +78,10 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not self._validate_host(user_input.get(CONF_HOST)):
                 errors[CONF_HOST] = "invalid_host"
             else:
-                # Test connection before creating entry
-                ws_manager = None
-                try:
-                    ws_manager = WebSocketManager(
-                        user_input[CONF_HOST],
-                        user_input[CONF_PIN],
-                        user_input.get(CONF_PORT, DEFAULT_PORT),
-                        _LOGGER,
-                        max_retries=1,
-                    )
-
-                    # Use regular connect methods (with fail-fast max_retries=1)
-                    if user_input.get(CONF_SSL, DEFAULT_SSL):
-                        await ws_manager.connectSecure()
-                    else:
-                        await ws_manager.connect()
-
-                    # Connection successful
+                errors = await self._test_connection(user_input)
+                if not errors:
                     title = f"Ksenia @ {user_input[CONF_HOST]}"
                     return self.async_create_entry(title=title, data=user_input)
-
-                except AuthenticationError as e:
-                    _LOGGER.error(f"Authentication failed: {e}")
-                    errors[CONF_PIN] = "invalid_pin"
-                except Exception as e:
-                    _LOGGER.error(f"Connection test failed: {e}")
-                    errors["base"] = "cannot_connect"
-                finally:
-                    # Clean up test connection
-                    if ws_manager:
-                        await ws_manager.stop()
 
         # Preserve user input in form fields on error
         schema_data = {
@@ -129,38 +132,11 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not self._validate_host(user_input.get(CONF_HOST)):
                 errors[CONF_HOST] = "invalid_host"
             else:
-                # Test connection before updating entry
-                ws_manager = None
-                try:
-                    ws_manager = WebSocketManager(
-                        user_input[CONF_HOST],
-                        user_input[CONF_PIN],
-                        user_input.get(CONF_PORT, DEFAULT_PORT),
-                        _LOGGER,
-                        max_retries=1,
-                    )
-
-                    # Use regular connect methods (with fail-fast max_retries=1)
-                    if user_input.get(CONF_SSL, DEFAULT_SSL):
-                        await ws_manager.connectSecure()
-                    else:
-                        await ws_manager.connect()
-
-                    # Connection successful - update config
+                errors = await self._test_connection(user_input)
+                if not errors:
                     self.hass.config_entries.async_update_entry(config_entry, data=user_input)
                     await self.hass.config_entries.async_reload(config_entry.entry_id)
                     return self.async_abort(reason="reconfigure_successful")
-
-                except AuthenticationError as e:
-                    _LOGGER.error(f"Authentication failed: {e}")
-                    errors[CONF_PIN] = "invalid_pin"
-                except Exception as e:
-                    _LOGGER.error(f"Connection test failed: {e}")
-                    errors["base"] = "cannot_connect"
-                finally:
-                    # Clean up test connection
-                    if ws_manager:
-                        await ws_manager.stop()
 
         # Prepare schema with current values (with fallback to old capitalized keys for backward compatibility)
         schema_data = {
