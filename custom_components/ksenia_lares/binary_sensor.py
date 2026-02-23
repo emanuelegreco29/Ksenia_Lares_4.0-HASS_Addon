@@ -12,7 +12,6 @@ from homeassistant.components.binary_sensor import (
 )
 
 from .const import BINARY_ZONE_CATS, DOMAIN
-from .helpers import KseniaEntity, build_unique_id, get_entity_name, is_hidden_or_siren
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,10 +28,17 @@ _DEVICE_CLASS_MAP = {
     "siren": BinarySensorDeviceClass.SOUND,
 }
 
+# Zone fault/tamper flag mapping: data key → (attribute name, transform function)
+_ZONE_FLAG_MAP = {
+    "T": ("Tamper", lambda v: "Yes" if v == "T" else "No"),
+    "A": ("Alarm", lambda v: "On" if v == "T" else "Off"),
+    "FM": ("Fault Memory", lambda v: "Yes" if v == "T" else "No"),
+    "OHM": ("Resistance", lambda v: v if v != "NA" else "N/A"),
+    "VAS": ("Voltage Alarm Sensor", lambda v: "Active" if v == "T" else "Inactive"),
+}
 
-def _discover_sirens(
-    switches, ws_manager, device_info, base_id, async_add_entities, discovered_ids
-):
+
+def _discover_sirens(switches, ws_manager, device_info, async_add_entities, discovered_ids):
     """Create siren binary sensor entities from newly discovered switches.
 
     Returns the list of new entities added.
@@ -42,11 +48,12 @@ def _discover_sirens(
         unique_id = f"siren_{switch.get('ID')}"
         if unique_id in discovered_ids:
             continue
-        name = get_entity_name(switch, switch.get("ID"), "")
-        if is_hidden_or_siren(switch, name):
-            new_entities.append(
-                KseniaSirenBinarySensorEntity(ws_manager, switch, device_info, base_id)
-            )
+        # Inline _is_siren_switch logic
+        if (
+            switch.get("CNV", "").upper() == "H"
+            or "siren" in (switch.get("DES") or switch.get("LBL") or switch.get("NM") or "").lower()
+        ):
+            new_entities.append(KseniaSirenBinarySensorEntity(ws_manager, switch, device_info))
             discovered_ids.add(unique_id)
 
     if new_entities:
@@ -64,7 +71,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     try:
         ws_manager = hass.data[DOMAIN]["ws_manager"]
         device_info = hass.data[DOMAIN].get("device_info")
-        base_id = hass.data[DOMAIN].get("mac") or ws_manager.ip
         entities = []
 
         # Add zone-based binary sensors
@@ -74,9 +80,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             cat = zone.get("CAT", "").upper()
             if cat in BINARY_ZONE_CATS:
                 entities.append(
-                    KseniaZoneBinarySensorEntity(
-                        ws_manager, zone, cat.lower(), device_info, base_id
-                    )
+                    KseniaZoneBinarySensorEntity(ws_manager, zone, cat.lower(), device_info)
                 )
 
         if entities:
@@ -86,14 +90,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         discovered_ids: set[str] = set()
         switches = await ws_manager.getSwitches()
         if switches:
-            _discover_sirens(
-                switches, ws_manager, device_info, base_id, async_add_entities, discovered_ids
-            )
+            _discover_sirens(switches, ws_manager, device_info, async_add_entities, discovered_ids)
 
         async def _on_switches_update(data_list):
             try:
                 _discover_sirens(
-                    data_list, ws_manager, device_info, base_id, async_add_entities, discovered_ids
+                    data_list, ws_manager, device_info, async_add_entities, discovered_ids
                 )
             except Exception as e:
                 _LOGGER.debug("Error during siren binary sensor discovery: %s", e)
@@ -130,16 +132,9 @@ def _apply_zone_fault_flags(data: dict, attributes: dict) -> None:
     """Populate attributes with zone fault/tamper/alarm flags."""
     if "BYP" in data:
         attributes["Bypass"] = "Active" if data["BYP"].upper() != "NO" else "Inactive"
-    if "T" in data:
-        attributes["Tamper"] = "Yes" if data["T"] == "T" else "No"
-    if "A" in data:
-        attributes["Alarm"] = "On" if data["A"] == "T" else "Off"
-    if "FM" in data:
-        attributes["Fault Memory"] = "Yes" if data["FM"] == "T" else "No"
-    if "OHM" in data:
-        attributes["Resistance"] = data["OHM"] if data["OHM"] != "NA" else "N/A"
-    if "VAS" in data:
-        attributes["Voltage Alarm Sensor"] = "Active" if data["VAS"] == "T" else "Inactive"
+    for key, (attr, transform) in _ZONE_FLAG_MAP.items():
+        if key in data:
+            attributes[attr] = transform(data[key])
     if "LBL" in data and data["LBL"]:
         attributes["Label"] = data["LBL"]
 
@@ -172,45 +167,59 @@ def _parse_is_on(sensor_type: str, data: dict) -> bool | None:
 
 
 # --- Zone Binary Sensor ---
-class KseniaZoneBinarySensorEntity(KseniaEntity, BinarySensorEntity):
+class KseniaZoneBinarySensorEntity(BinarySensorEntity):
     """Binary sensor entity for Ksenia Lares zone contacts and motion sensors."""
 
     _attr_has_entity_name = True
 
-    def __init__(self, ws_manager, sensor_data, sensor_type, device_info=None, base_id=None):
+    def __init__(self, ws_manager, sensor_data, sensor_type, device_info=None):
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
         self._sensor_type = sensor_type
-        self._base_id = base_id or ws_manager.ip
         self._device_info = device_info
         self._raw_data = dict(sensor_data)
         self._attr_device_class = _DEVICE_CLASS_MAP.get(sensor_type)
         self._is_on = _parse_is_on(sensor_type, sensor_data)
         self._extra_attributes = _build_zone_attributes(sensor_data)
-        self._attr_name = get_entity_name(sensor_data, self._id)
+        self._attr_name = (
+            sensor_data.get("NM")
+            or sensor_data.get("LBL")
+            or sensor_data.get("DES")
+            or str(self._id)
+        )
 
     @property
     def unique_id(self):
-        """Return unique ID for zone binary sensor."""
-        return build_unique_id(self._base_id, self._sensor_type, self._id)
+        """Return unique ID for entity migration compatibility from old sensors."""
+        return f"zones_{self._id}"
+
+    @property
+    def device_info(self):
+        return self._device_info
+
+    @property
+    def available(self) -> bool:
+        return self.ws_manager.available
 
     @property
     def is_on(self) -> bool | None:
         return self._is_on
 
     @property
+    def should_poll(self) -> bool:
+        return False
+
+    @property
     def extra_state_attributes(self):
         return {**self._extra_attributes, "raw_data": self._raw_data}
 
     async def async_added_to_hass(self):
-        await super().async_added_to_hass()
         self.ws_manager.register_listener("zones", self._handle_realtime_update)
 
     async def _handle_realtime_update(self, data_list):
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
-            _LOGGER.debug("[zone_binary] Entity %s update: %s", self._id, data)
             new_state = _parse_is_on(self._sensor_type, data)
             if new_state is not None:
                 self._is_on = new_state
@@ -221,23 +230,20 @@ class KseniaZoneBinarySensorEntity(KseniaEntity, BinarySensorEntity):
 
 
 # --- Siren Binary Sensor ---
-class KseniaSirenBinarySensorEntity(KseniaEntity, BinarySensorEntity):
+class KseniaSirenBinarySensorEntity(BinarySensorEntity):
     """Binary sensor entity for Ksenia Lares sirens."""
 
     _attr_has_entity_name = True
 
-    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
+    def __init__(self, ws_manager, sensor_data, device_info=None):
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
         self._sensor_type = "siren"
-        self._base_id = base_id or ws_manager.ip
         self._device_info = device_info
         self._raw_data = dict(sensor_data)
         self._attr_device_class = _DEVICE_CLASS_MAP.get("siren")
         self._is_on = _parse_is_on("siren", sensor_data)
-        label = get_entity_name(
-            sensor_data, sensor_data.get("ID"), f"Siren {sensor_data.get('ID')}"
-        )
+        label = sensor_data.get("DES") or f"Siren {sensor_data.get('ID')}"
         self._extra_attributes = {
             "ID": sensor_data.get("ID"),
             "Description": label,
@@ -249,19 +255,31 @@ class KseniaSirenBinarySensorEntity(KseniaEntity, BinarySensorEntity):
 
     @property
     def unique_id(self):
-        """Return unique ID for siren binary sensor."""
-        return build_unique_id(self._base_id, "siren", self._id)
+        """Return unique ID for siren entity migration compatibility with upstream/main."""
+        # Use the same format as upstream/main: <panel_ip>_alarm_trigger_status
+        return f"{self.ws_manager.ip}_alarm_trigger_status"
+
+    @property
+    def device_info(self):
+        return self._device_info
+
+    @property
+    def available(self) -> bool:
+        return self.ws_manager.available
 
     @property
     def is_on(self) -> bool | None:
         return self._is_on
 
     @property
+    def should_poll(self) -> bool:
+        return False
+
+    @property
     def extra_state_attributes(self):
         return {**self._extra_attributes, "raw_data": self._raw_data}
 
     async def async_added_to_hass(self):
-        await super().async_added_to_hass()
         self.ws_manager.register_listener("switches", self._handle_realtime_update)
         cached = self.ws_manager.get_cached_data("STATUS_OUTPUTS")
         if cached:
@@ -271,7 +289,6 @@ class KseniaSirenBinarySensorEntity(KseniaEntity, BinarySensorEntity):
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
-            _LOGGER.debug("[siren] Entity %s update: %s", self._id, data)
             new_state = _parse_is_on("siren", data)
             if new_state is not None:
                 self._is_on = new_state

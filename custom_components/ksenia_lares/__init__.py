@@ -333,20 +333,8 @@ async def async_setup_entry(hass, entry):
 
         platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
 
-        # TODO: remove this in future relase e.g. v2.5.0
-        # Migrate entities that moved from sensor → binary_sensor domain
-        _rm_sensors_migrated2binarysensor(hass, entry)
-        # Remove stale switch entities (hidden/siren outputs and ROLL outputs migrated to cover)
-        hidden_uids = await _build_hidden_switch_uids(ws_manager, mac, ip)
-        roll_uids = await _build_roll_switch_uids(ws_manager, mac, ip)
-        _rm_stale_switches(hass, entry, hidden_uids, "hidden/siren output")
-        _rm_stale_switches(hass, entry, roll_uids, "ROLL output migrated to cover platform")
-        # Migrate unique_ids from IP-based/legacy to MAC-based format
-        await _migrate_unique_ids(hass, entry, mac, ip, ws_manager)
-
         # Introducing new platform binary sensors after v2.2.4, auto add binary_sensor if user had sensor platform enabled
         # Use a flag in hass.data[DOMAIN] to ensure we only auto-add binary_sensor once
-        # TODO: Remove this in a future release (e.g. v2.5.0) after users have had time to upgrade
         autoadd_flag_key = f"upgraded_to_binary_sensor_platform_{entry.entry_id}"
         if not hass.data.setdefault(DOMAIN, {}).get(autoadd_flag_key):
             hass.data[DOMAIN][autoadd_flag_key] = True

@@ -51,8 +51,14 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 for switch in switches:
                     switch_id = switch.get("ID")
                     if switch_id not in discovered_switch_ids:
-                        name = get_entity_name(switch, switch_id, f"Switch {switch_id}")
-                        if is_hidden_or_siren(switch, name):
+                        name = (
+                            switch.get("DES")
+                            or switch.get("LBL")
+                            or switch.get("NM")
+                            or f"Switch {switch_id}"
+                        )
+                        # Dont add sirens or CNV=H (hidden) outputs as switches
+                        if switch.get("CNV") == "H" or "siren" in name.lower():
                             continue
                         # Add new switch entity for this switch_id
                         new_entities.append(
@@ -75,21 +81,20 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         _LOGGER.error("Error setting up switches: %s", e, exc_info=True)
 
 
-async def _add_output_switches(ws_manager, device_info, base_id, entities):
+async def _add_output_switches(ws_manager, device_info, entities):
     """Add output switches (lights etc.)."""
     switches = await ws_manager.getSwitches()
     _LOGGER.debug("Found %d output switches", len(switches))
 
     for switch in switches:
         switch_id = switch.get("ID")
-        name = get_entity_name(switch, switch_id, f"Switch {switch_id}")
-        if is_hidden_or_siren(switch, name):
+        name = switch.get("DES") or switch.get("LBL") or switch.get("NM") or f"Switch {switch_id}"
+        # Dont add sirens or CNV=H (hidden) outputs as switches, but log them for transparency
+        if switch.get("CNV") == "H" or "siren" in name.lower():
             _LOGGER.debug("Not adding siren or hidden switch: %s", name)
             continue
         # Add all other outputs as switches
-        entities.append(
-            KseniaSwitchEntity(ws_manager, switch_id, name, switch, device_info, base_id)
-        )
+        entities.append(KseniaSwitchEntity(ws_manager, switch_id, name, switch, device_info))
 
 
 async def _add_zone_bypass_switches(ws_manager, device_info, base_id, entities):
@@ -118,7 +123,6 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
         self._cat = (switch_data.get("CAT") or "output").lower()
         self._state = switch_data.get("STA", "off").lower() == "on"
         self._device_info = device_info
-        self._base_id = base_id or ws_manager.ip
         # Store complete raw data for debugging and transparency
         self._raw_data = dict(switch_data)
 
