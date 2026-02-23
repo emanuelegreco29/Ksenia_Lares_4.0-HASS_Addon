@@ -5,7 +5,6 @@ import logging
 from homeassistant.components.button import ButtonEntity
 
 from .const import DOMAIN
-from .websocketmanager import ConnectionState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,7 +74,6 @@ class KseniaScenarioButtonEntity(ButtonEntity):
         self.ws_manager = ws_manager
         self._scenario_id = scenario_id
         self._name = name
-        self._available = True
         self._device_info = device_info
 
     @property
@@ -89,14 +87,18 @@ class KseniaScenarioButtonEntity(ButtonEntity):
         return self._device_info
 
     @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self.ws_manager.available
+
+    @property
     def name(self):
         """Returns the name of the button."""
         return self._name
 
     async def async_press(self):
         """Execute the scenario when the button is pressed."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot execute scenario %s", self._scenario_id)
             return
 
@@ -112,7 +114,6 @@ class KseniaClearButtonEntity(ButtonEntity):
         self.ws_manager = ws_manager
         self._clear_type = clear_type
         self._attr_translation_key = translation_key
-        self._available = True
         self._device_info = device_info
 
     @property
@@ -125,10 +126,14 @@ class KseniaClearButtonEntity(ButtonEntity):
         """Return device information about this entity."""
         return self._device_info
 
+    @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self.ws_manager.available
+
     async def async_press(self):
         """Execute the clear command when the button is pressed."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error(
                 "WebSocket not connected, cannot execute clear command %s", self._clear_type
             )

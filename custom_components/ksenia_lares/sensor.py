@@ -45,6 +45,11 @@ class KseniaRealtimeListenerEntity(SensorEntity, ABC):
         raise NotImplementedError
 
     @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
+
+    @property
     def device_info(self):
         """Return device information."""
         return self._device_info
@@ -322,6 +327,11 @@ class KseniaSensorEntity(SensorEntity):
         self._device_info = device_info
 
         self._dispatch_init(sensor_data, sensor_type)
+
+    @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
 
     def _dispatch_init(self, sensor_data: dict, sensor_type: str) -> None:
         """Dispatch sensor initialisation to the appropriate per-type helper.
@@ -1224,6 +1234,11 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
         }
         self._raw_data = {}
 
+    @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
+
     async def async_added_to_hass(self):
         """Subscribe to partition and zone realtime updates."""
         self.ws_manager.register_listener("partitions", self._handle_partition_update)
@@ -1391,6 +1406,11 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
             "communication_lost": False,
         }
         self._raw_data = {}
+
+    @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
 
     async def async_added_to_hass(self):
         """Subscribe to partition, zone, and tamper realtime updates."""
@@ -1565,6 +1585,11 @@ class KseniaEventLogSensor(SensorEntity):
         self._raw_logs = []
 
     @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
+
+    @property
     def unique_id(self):
         """Return a unique ID for the event log sensor."""
         return f"{self.ws_manager.ip}_event_log"
@@ -1683,6 +1708,11 @@ class KseniaLastAlarmEventSensor(SensorEntity):
         self._alarm_reset_time = None
         self._last_partition_state = {"1": "Not triggered", "2": "Not triggered"}
         self._raw_data = {}
+
+    @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
 
     async def async_added_to_hass(self):
         """Subscribe to zone and partition realtime updates."""
@@ -1876,6 +1906,11 @@ class KseniaLastTamperedZonesSensor(SensorEntity):
         self._last_tampered_zones = []
         self._raw_data = {}
 
+    @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
+
     async def async_added_to_hass(self):
         """Subscribe to zone realtime updates to detect tamper state changes."""
         self.ws_manager.register_listener("zones", self._handle_zone_update)
@@ -1961,6 +1996,11 @@ class KseniaConnectionStatusSensor(SensorEntity):
         self._device_info = device_info
         self._state = "Unknown"
         self._raw_data = {}
+
+    @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
 
     async def async_added_to_hass(self):
         """Subscribe to connection realtime updates and read cached initial data."""
@@ -2115,6 +2155,11 @@ class KseniaPowerSupplySensor(SensorEntity):
         self._battery_voltage = None
         self._raw_data = {}
         self._listener_registered = False
+
+    @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
 
     async def async_added_to_hass(self):
         """Subscribe to panel realtime updates and read cached initial data."""
@@ -2312,6 +2357,11 @@ class KseniaSystemFaultsSensor(SensorEntity):
         }
         self._raw_data = {}
 
+    @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
+
     async def async_added_to_hass(self):
         """Subscribe to faults realtime updates."""
         self.ws_manager.register_listener("faults", self._handle_faults_update)
@@ -2469,6 +2519,11 @@ class KseniaFaultMemorySensor(SensorEntity):
         self._fault_list = []
         self._raw_data = {}
         self._listener_registered = False
+
+    @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
 
     async def async_added_to_hass(self):
         """Subscribe to system realtime updates and read cached initial data."""

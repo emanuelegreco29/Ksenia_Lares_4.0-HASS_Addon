@@ -289,6 +289,11 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         return self._device_info
 
     @property
+    def available(self) -> bool:
+        """Return True if the WebSocket connection to the panel is active."""
+        return self.ws_manager.available
+
+    @property
     def alarm_state(self):
         """Return the current alarm state."""
         return self._state

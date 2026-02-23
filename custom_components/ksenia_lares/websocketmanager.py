@@ -376,6 +376,11 @@ class WebSocketManager:
         """Return the IP address of the connected panel."""
         return self._ip
 
+    @property
+    def available(self) -> bool:
+        """Return True if the connection is active and authenticated."""
+        return self._connection_state == ConnectionState.CONNECTED
+
     def get_metrics(self):
         """Get connection and command statistics.
 

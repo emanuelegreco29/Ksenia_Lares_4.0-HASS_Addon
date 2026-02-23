@@ -7,7 +7,6 @@ from homeassistant.components.light import LightEntity
 from homeassistant.components.light.const import ColorMode
 
 from .const import DOMAIN
-from .websocketmanager import ConnectionState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,7 +74,6 @@ class KseniaLightEntity(LightEntity):
             or f"Light {self._id}"
         )
         self._state = light_data.get("STA", "off").lower() == "on"
-        self._available = True
         self._pending_command = None
         self._device_info = device_info
         # Store complete raw data for debugging and transparency
@@ -99,7 +97,7 @@ class KseniaLightEntity(LightEntity):
     @property
     def available(self):
         """Return True if the entity is available."""
-        return self._available
+        return self.ws_manager.available
 
     @property
     def is_on(self):
@@ -127,10 +125,8 @@ class KseniaLightEntity(LightEntity):
         Sends a turn-on command to the WebSocket manager for the specific light ID,
         updates the light's state, and notifies Home Assistant of the state change.
         """
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot turn on light %s", self._id)
-            self._available = False
             return
 
         await self.ws_manager.turnOnOutput(self._id)
@@ -144,10 +140,8 @@ class KseniaLightEntity(LightEntity):
         Sends a turn-off command to the WebSocket manager for the specific light ID,
         updates the light's state, and notifies Home Assistant of the state change.
         """
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot turn off light %s", self._id)
-            self._available = False
             return
 
         await self.ws_manager.turnOffOutput(self._id)
@@ -177,7 +171,6 @@ class KseniaLightEntity(LightEntity):
                     else:
                         self._pending_command = None
                 self._state = remote_state
-                self._available = True
                 # Merge update into raw_data to preserve all fields
                 self._raw_data.update(light)
                 break

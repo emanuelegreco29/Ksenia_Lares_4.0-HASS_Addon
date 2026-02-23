@@ -6,7 +6,6 @@ import time
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 
 from .const import DOMAIN
-from .websocketmanager import ConnectionState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,7 +82,6 @@ class KseniaRollEntity(CoverEntity):
         self._name = name
         # POS is the opening percentage (0=closed, 100=opened)
         self._position = roll_data.get("POS", 0)
-        self._available = True
         self._pending_command = None
         self._device_info = device_info
         # Store complete raw data for debugging and transparency
@@ -102,7 +100,7 @@ class KseniaRollEntity(CoverEntity):
     @property
     def available(self):
         """Return True if the entity is available."""
-        return self._available
+        return self.ws_manager.available
 
     @property
     def name(self):
@@ -138,10 +136,8 @@ class KseniaRollEntity(CoverEntity):
 
     async def async_open_cover(self, **kwargs):
         """Open the roller blind."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot open cover %s", self._roll_id)
-            self._available = False
             return
 
         await self.ws_manager.raiseCover(self._roll_id)
@@ -150,10 +146,8 @@ class KseniaRollEntity(CoverEntity):
 
     async def async_close_cover(self, **kwargs):
         """Close the roller blind."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot close cover %s", self._roll_id)
-            self._available = False
             return
 
         await self.ws_manager.lowerCover(self._roll_id)
@@ -162,10 +156,8 @@ class KseniaRollEntity(CoverEntity):
 
     async def async_stop_cover(self, **kwargs):
         """Stop the roller blind."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot stop cover %s", self._roll_id)
-            self._available = False
             return
 
         await self.ws_manager.stopCover(self._roll_id)
@@ -174,10 +166,8 @@ class KseniaRollEntity(CoverEntity):
 
     async def async_set_cover_position(self, **kwargs):
         """Set the position of the roller blind."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot set cover position %s", self._roll_id)
-            self._available = False
             return
 
         position = kwargs.get("position")
@@ -210,7 +200,6 @@ class KseniaRollEntity(CoverEntity):
                     else:
                         self._pending_command = None
                 self._position = new_pos
-                self._available = True
                 # Merge update into raw_data to preserve all fields
                 self._raw_data.update(roll)
                 break

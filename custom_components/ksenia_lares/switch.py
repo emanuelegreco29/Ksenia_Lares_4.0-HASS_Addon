@@ -6,7 +6,6 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 
 from .const import DOMAIN
-from .websocketmanager import ConnectionState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -106,7 +105,6 @@ class KseniaSwitchEntity(SwitchEntity):
         self.switch_id = switch_id
         self._name = name
         self._state = switch_data.get("STA", "off").lower() == "on"
-        self._available = True
         self._device_info = device_info
         # Disable siren switch by default for safety
         self._attr_entity_registry_enabled_default = not (
@@ -147,7 +145,7 @@ class KseniaSwitchEntity(SwitchEntity):
     @property
     def available(self):
         """Return True if the entity is available."""
-        return self._available
+        return self.ws_manager.available
 
     @property
     def name(self):
@@ -164,16 +162,10 @@ class KseniaSwitchEntity(SwitchEntity):
         """Returns the extra state attributes of the switch."""
         return {"raw_data": self._raw_data}
 
-    """
-    Turn on the switch.
-    """
-
     async def async_turn_on(self, **kwargs):
         """Turn on the switch."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot turn on switch %s", self.switch_id)
-            self._available = False
             return
 
         await self.ws_manager.turnOnOutput(self.switch_id)
@@ -182,10 +174,8 @@ class KseniaSwitchEntity(SwitchEntity):
 
     async def async_turn_off(self, **kwargs):
         """Turn off the switch."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot turn off switch %s", self.switch_id)
-            self._available = False
             return
 
         await self.ws_manager.turnOffOutput(self.switch_id)
@@ -201,7 +191,6 @@ class KseniaSwitchEntity(SwitchEntity):
         for switch in switches:
             if str(switch.get("ID")) == str(self.switch_id):
                 self._state = switch.get("STA", "off").lower() == "on"
-                self._available = True
                 # Merge update into raw_data to preserve all fields
                 self._raw_data.update(switch)
                 break
@@ -223,9 +212,8 @@ class KseniaZoneBypassSwitch(SwitchEntity):
         self.ws_manager = ws_manager
         self.zone_id = zone_id
         self._attr_translation_placeholders = {"zone_name": name}
-        self._available = True
         self._device_info = device_info
-        # Parse bypass status: NO/N means not bypassed, anything else (AUTO, MAN_M, MAN_T) means bypassed
+        # Parse bypass status: NO means not bypassed, anything else (AUTO, MAN_M, MAN_T) means bypassed
         byp_val = zone_data.get("BYP", "NO")
         self._state = byp_val.upper() != "NO"
         self._raw_data = dict(zone_data)
@@ -264,7 +252,7 @@ class KseniaZoneBypassSwitch(SwitchEntity):
     @property
     def available(self):
         """Return True if the entity is available."""
-        return self._available
+        return self.ws_manager.available
 
     @property
     def is_on(self):
@@ -283,10 +271,8 @@ class KseniaZoneBypassSwitch(SwitchEntity):
 
     async def async_turn_on(self, **kwargs):
         """Bypass the zone."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot bypass zone %s", self.zone_id)
-            self._available = False
             return
 
         success = await self.ws_manager.bypass_zone(self.zone_id, "MAN_M")
@@ -296,10 +282,8 @@ class KseniaZoneBypassSwitch(SwitchEntity):
 
     async def async_turn_off(self, **kwargs):
         """Unbypass the zone."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot unbypass zone %s", self.zone_id)
-            self._available = False
             return
 
         success = await self.ws_manager.bypass_zone(self.zone_id, "NO")
@@ -323,6 +307,5 @@ class KseniaZoneBypassSwitch(SwitchEntity):
                 if "BYP" in zone:
                     byp_val = str(zone.get("BYP", "NO"))
                     self._state = byp_val.upper() != "NO"
-                self._available = True
                 self._raw_data.update(zone)
                 break
