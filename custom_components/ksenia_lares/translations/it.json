@@ -72,13 +72,6 @@
           "disarmed": "Disinserito"
         }
       },
-      "siren_status": {
-        "name": "Stato Sirena {label}",
-        "state": {
-          "on": "Accesa",
-          "off": "Spenta"
-        }
-      },
       "event_log": {
         "name": "Registro Eventi"
       },
@@ -148,31 +141,6 @@
           "ongoing_alarm": "Attivato",
           "alarm_memory": "Memoria alarme"
         }
-      },
-      "magnetic_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "closed": "Chiuso",
-          "open": "Aperto",
-          "unknown": "Sconosciuto"
-        }
-      },
-      "movement_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "off": "Libero",
-          "on": "Movimento Rilevato",
-          "unknown": "Sconosciuto"
-        }
-      },
-      "seismic_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "rest": "Riposo",
-          "seismic_activity": "Attività Sismica",
-          "normal": "Normale",
-          "unknown": "Sconosciuto"
-        }
       }
     },
     "switch": {
@@ -212,6 +180,7 @@
       "options": {
         "alarm_control_panel": "Pannello di Controllo Allarme",
         "sensor": "Sensore",
+        "binary_sensor": "Sensore Binario",
         "switch": "Interruttore",
         "light": "Luce",
         "cover": "Copertura",

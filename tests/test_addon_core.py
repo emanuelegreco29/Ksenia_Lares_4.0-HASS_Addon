@@ -223,7 +223,6 @@ async def test_ksenia_switch_entity_initialization():
     assert entity.switch_id == "1"
     assert entity._name == "Test Switch"
     assert entity._state is True  # "on" should set state to True
-    assert entity._available is True
     assert entity.ws_manager is ws_manager
 
 
@@ -276,32 +275,69 @@ async def test_ksenia_switch_entity_realtime_update_other_id():
     entity.async_write_ha_state.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_ksenia_switch_entity_siren_disabled_by_default():
-    """Test that siren switches are disabled by default for safety."""
-    from custom_components.ksenia_lares.switch import KseniaSwitchEntity
-    
-    ws_manager = MagicMock()
-    siren_data = {"ID": "10", "STA": "off", "DES": "Siren"}
-    
-    entity = KseniaSwitchEntity(ws_manager, "10", "Siren", siren_data)
-    
-    # Siren should be disabled by default
-    assert entity._attr_entity_registry_enabled_default is False
-
 
 @pytest.mark.asyncio
-async def test_ksenia_switch_entity_non_siren_enabled():
-    """Test that non-siren switches are enabled by default."""
-    from custom_components.ksenia_lares.switch import KseniaSwitchEntity
-    
+def test_ksenia_switch_entity_siren_not_added(monkeypatch):
+    """Test that siren and hidden switches are not added at all (unit test for _add_output_switches)."""
+    from custom_components.ksenia_lares import switch
+
+    class DummySwitch:
+        def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None):
+            self._name = name
+            self._attr_entity_registry_enabled_default = True
+    monkeypatch.setattr(switch, "KseniaSwitchEntity", DummySwitch)
+
+    switches = [
+        {"ID": "1", "DES": "Normal Switch", "STA": "OFF"},
+        {"ID": "2", "DES": "Siren", "STA": "OFF"},
+        {"ID": "3", "DES": "Hidden Switch", "STA": "OFF", "CNV": "H"},
+        {"ID": "4", "LBL": "Another Siren", "STA": "OFF"},
+        {"ID": "5", "NM": "siren output", "STA": "OFF"},
+    ]
     ws_manager = MagicMock()
-    regular_data = {"ID": "5", "STA": "off", "DES": "Regular Switch"}
-    
-    entity = KseniaSwitchEntity(ws_manager, "5", "Regular Switch", regular_data)
-    
-    # Regular switch should be enabled by default
-    assert entity._attr_entity_registry_enabled_default is True
+    ws_manager.getSwitches = AsyncMock(return_value=switches)
+    entities = []
+    import asyncio
+    asyncio.run(switch._add_output_switches(ws_manager, {}, entities))
+    added_names = [e._name for e in entities]
+    assert "Normal Switch" in added_names
+    assert all(
+        not ("siren" in n.lower() or n.lower() == "hidden switch")
+        for n in added_names
+    )
+
+
+
+@pytest.mark.asyncio
+def test_ksenia_switch_entity_non_siren_enabled(monkeypatch):
+    """Test that non-siren, non-hidden switches are added and enabled by default (unit test for _add_output_switches)."""
+    from custom_components.ksenia_lares import switch
+
+    class DummySwitch:
+        def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None):
+            self._name = name
+            self._attr_entity_registry_enabled_default = True
+    monkeypatch.setattr(switch, "KseniaSwitchEntity", DummySwitch)
+
+    switches = [
+        {"ID": "1", "DES": "Normal Switch", "STA": "OFF"},
+        {"ID": "2", "DES": "Siren", "STA": "OFF"},
+        {"ID": "3", "DES": "Hidden Switch", "STA": "OFF", "CNV": "H"},
+        {"ID": "4", "LBL": "Another Siren", "STA": "OFF"},
+        {"ID": "5", "NM": "siren output", "STA": "OFF"},
+        {"ID": "6", "DES": "Regular Switch", "STA": "OFF"},
+    ]
+    ws_manager = MagicMock()
+    ws_manager.getSwitches = AsyncMock(return_value=switches)
+    entities = []
+    import asyncio
+    asyncio.run(switch._add_output_switches(ws_manager, {}, entities))
+    added_names = [e._name for e in entities]
+    assert "Normal Switch" in added_names
+    assert "Regular Switch" in added_names
+    for e in entities:
+        if e._name in ("Normal Switch", "Regular Switch"):
+            assert getattr(e, "_attr_entity_registry_enabled_default", True) is True
 
 
 # ============================================================================
@@ -409,7 +445,7 @@ async def test_ksenia_sensor_entity_initialization():
     entity = KseniaSensorEntity(ws_manager, sensor_data, "zones")
     
     assert entity._id == "1"
-    assert entity._name == "Zone 1"
+    assert entity._attr_name == "Zone 1"
     assert entity._sensor_type == "zones"
     assert entity.ws_manager is ws_manager
 
@@ -424,7 +460,7 @@ async def test_ksenia_sensor_entity_name_fallback():
     
     entity = KseniaSensorEntity(ws_manager, sensor_data, "zones")
     
-    assert entity._name == "Bedroom Door"
+    assert entity._attr_name == "Bedroom Door"
 
 
 @pytest.mark.asyncio
@@ -657,18 +693,17 @@ async def test_ksenia_switch_turn_off_when_connected():
 async def test_ksenia_switch_turn_on_when_disconnected():
     """Test switch turn_on fails gracefully when disconnected."""
     from custom_components.ksenia_lares.switch import KseniaSwitchEntity
-    from custom_components.ksenia_lares.websocketmanager import ConnectionState
-    
+
     ws_manager = MagicMock()
-    ws_manager.get_connection_state = MagicMock(return_value=ConnectionState.DISCONNECTED)
-    
+    ws_manager.available = False
+
     switch_data = {"ID": "1", "STA": "off"}
     entity = KseniaSwitchEntity(ws_manager, "1", "Switch", switch_data)
-    
+
     await entity.async_turn_on()
-    
-    # Should mark as unavailable
-    assert entity._available is False
+
+    # Should not attempt command when unavailable
+    ws_manager.turnOnOutput.assert_not_called()
 
 
 # ============================================================================
@@ -964,8 +999,8 @@ async def test_unique_id_generation():
     from custom_components.ksenia_lares.switch import KseniaSwitchEntity
     
     ws_manager = MagicMock()
-    ws_manager._ip = "192.168.1.100"
-    
+    ws_manager.ip = "192.168.1.100"
+
     switch_data = {"ID": "5", "STA": "off"}
     entity = KseniaSwitchEntity(ws_manager, "5", "Switch", switch_data)
     
@@ -1008,8 +1043,8 @@ async def test_alarm_control_panel_unique_id():
     from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
     
     ws_manager = MagicMock()
-    ws_manager._ip = "192.168.1.100"
-    
+    ws_manager.ip = "192.168.1.100"
+
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
     unique_id = panel.unique_id

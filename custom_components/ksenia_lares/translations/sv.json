@@ -72,13 +72,6 @@
           "disarmed": "Avaktiverat"
         }
       },
-      "siren_status": {
-        "name": "Sirenstatus {label}",
-        "state": {
-          "on": "På",
-          "off": "Av"
-        }
-      },
       "event_log": {
         "name": "Händelselogg"
       },
@@ -148,31 +141,6 @@
           "ongoing_alarm": "Alarm utlöst",
           "alarm_memory": "Alarm minne"
         }
-      },
-      "magnetic_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "closed": "Stängd",
-          "open": "Öppen",
-          "unknown": "Okänd"
-        }
-      },
-      "movement_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "off": "Fri",
-          "on": "Rörelse Upptäckt",
-          "unknown": "Okänd"
-        }
-      },
-      "seismic_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "rest": "Vila",
-          "seismic_activity": "Seismisk Aktivitet",
-          "normal": "Normal",
-          "unknown": "Okänd"
-        }
       }
     },
     "switch": {
@@ -212,6 +180,7 @@
       "options": {
         "alarm_control_panel": "Larmpanel",
         "sensor": "Sensor",
+        "binary_sensor": "Binär Sensor",
         "switch": "Brytare",
         "light": "Ljus",
         "cover": "Lucka",

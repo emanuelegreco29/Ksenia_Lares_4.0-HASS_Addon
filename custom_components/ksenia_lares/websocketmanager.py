@@ -588,7 +588,10 @@ class WebSocketManager:
             try:
                 self._logger.debug(f"[{time.time():.3f}] Connecting to WebSocket: {uri}")
                 self._ws = await ws_connect(
-                    uri, ssl=ssl, subprotocols=[Subprotocol("KS_WSOCK")], ping_interval=30
+                    uri,
+                    ssl=ssl,
+                    subprotocols=[Subprotocol("KS_WSOCK")],
+                    ping_interval=30,
                 )
                 self._logger.debug(f"[{time.time():.3f}] WebSocket connection established")
 
@@ -835,7 +838,11 @@ class WebSocketManager:
                     f"[{time.time():.3f}] Starting real-time data subscription (attempt {retry_count + 1}/{max_retries})"
                 )
                 realtime_response = await realtime(
-                    self._ws, self._loginId, self._logger, self._ws_lock, self._pending_realtime
+                    self._ws,
+                    self._loginId,
+                    self._logger,
+                    self._ws_lock,
+                    self._pending_realtime,
                 )
                 self._logger.debug(
                     f"[{time.time():.3f}] Real-time data subscription registered successfully"
@@ -1144,7 +1151,10 @@ class WebSocketManager:
             await self._handle_data_update(data)
 
     def _payload_type_matches(
-        self, expected_cmd_prefix: str, req_payload_type: str, response_payload_type: str
+        self,
+        expected_cmd_prefix: str,
+        req_payload_type: str,
+        response_payload_type: str,
     ) -> bool:
         """Return True if request and response payload types are compatible.
 
@@ -1369,13 +1379,13 @@ class WebSocketManager:
                 f"Resolving REALTIME registration {message_id}, future state before set_result: {fut_state} (fallback_used={fallback_used})"
             )
             # Mark registration complete if panel confirmed success
-            result = message.get("PAYLOAD", {}).get("RESULT")
-            if result == "OK":
+            result = message.get("PAYLOAD_TYPE")
+            if result == "REGISTER_ACK":
                 self._realtime_registered = True
                 self._logger.debug("REALTIME registration confirmed by panel")
             else:
                 self._logger.warning(
-                    f"REALTIME registration response RESULT={result} (expected OK)"
+                    f"REALTIME registration response PAYLOAD_TYPE={result} (expected 'REGISTER_ACK')"
                 )
             try:
                 if not realtime_data["future"].done():
@@ -1408,9 +1418,7 @@ class WebSocketManager:
                 f"[WS] _handle_data_update received non-dict data: {type(data).__name__}"
             )
             return
-        self._logger.debug(
-            f"[WS] _handle_data_update received data with keys: {list(data.keys())}"
-        )
+        self._logger.debug(f"[WS] _handle_data_update received data with keys: {list(data.keys())}")
         # Map status keys to listener types and cache updates
         status_handlers = {
             "STATUS_OUTPUTS": ["lights", "switches", "covers"],
@@ -1538,7 +1546,8 @@ class WebSocketManager:
                     await callback(data)
                 except Exception as e:
                     self._logger.error(
-                        f"[WS] Error in listener callback for {listener_type}: {e}", exc_info=True
+                        f"[WS] Error in listener callback for {listener_type}: {e}",
+                        exc_info=True,
                     )
 
     @staticmethod

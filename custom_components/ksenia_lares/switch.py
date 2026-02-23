@@ -14,7 +14,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up Ksenia Lares switch entities.
 
     Creates switches for:
-    - Outputs (generic switches, sirens disabled by default)
+    - Outputs (generic switches) - sirens and CNV=H (hidden) is not added
     - Zone bypass controls (for zones that support bypass)
     """
     try:
@@ -30,6 +30,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         # Add zone bypass switches
         await _add_zone_bypass_switches(ws_manager, device_info, entities)
 
+        # Add the new entities to Home Assistant platform
         async_add_entities(entities, update_before_add=True)
         _LOGGER.info(f"Initial switch setup: {initial_output_count} output switches")
 
@@ -56,6 +57,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                             or switch.get("NM")
                             or f"Switch {switch_id}"
                         )
+                        # Dont add sirens or CNV=H (hidden) outputs as switches
+                        if switch.get("CNV") == "H" or "siren" in name.lower():
+                            continue
+                        # Add new switch entity for this switch_id
                         new_entities.append(
                             KseniaSwitchEntity(ws_manager, switch_id, name, switch, device_info)
                         )
@@ -75,13 +80,18 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
 
 async def _add_output_switches(ws_manager, device_info, entities):
-    """Add output switches (lights, sirens, etc.)."""
+    """Add output switches (lights etc.)."""
     switches = await ws_manager.getSwitches()
     _LOGGER.debug("Found %d output switches", len(switches))
 
     for switch in switches:
         switch_id = switch.get("ID")
         name = switch.get("DES") or switch.get("LBL") or switch.get("NM") or f"Switch {switch_id}"
+        # Dont add sirens or CNV=H (hidden) outputs as switches, but log them for transparency
+        if switch.get("CNV") == "H" or "siren" in name.lower():
+            _LOGGER.debug("Not adding siren or hidden switch: %s", name)
+            continue
+        # Add all other outputs as switches
         entities.append(KseniaSwitchEntity(ws_manager, switch_id, name, switch, device_info))
 
 
@@ -106,10 +116,6 @@ class KseniaSwitchEntity(SwitchEntity):
         self._name = name
         self._state = switch_data.get("STA", "off").lower() == "on"
         self._device_info = device_info
-        # Disable siren switch by default for safety
-        self._attr_entity_registry_enabled_default = not (
-            "siren" in name.lower() or "sirena" in name.lower()
-        )
         # Store complete raw data for debugging and transparency
         self._raw_data = dict(switch_data)
 

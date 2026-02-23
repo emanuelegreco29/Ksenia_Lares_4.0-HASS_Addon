@@ -15,7 +15,18 @@ CONF_PLATFORMS = "platforms"
 # Defaults
 DEFAULT_PORT = 443
 DEFAULT_SSL = True
-DEFAULT_PLATFORMS = ["light", "cover", "switch", "sensor", "button", "alarm_control_panel"]
+DEFAULT_PLATFORMS = [
+    "light",
+    "cover",
+    "switch",
+    "sensor",
+    "binary_sensor",
+    "button",
+    "alarm_control_panel",
+]
+
+# Categories of zones that should be treated as binary sensors (shared by sensor.py and binary_sensor.py)
+BINARY_ZONE_CATS = {"DOOR", "WINDOW", "IMOV", "EMOV", "PMC", "SMOKE", "SEISM", "CMD", "GEN"}
 
 # Entity types
 ENTITY_TYPES = {

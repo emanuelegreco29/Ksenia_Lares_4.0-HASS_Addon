@@ -134,6 +134,21 @@ async def async_setup_entry(hass, entry):
         hass.data[DOMAIN]["device_info"] = device_info
 
         platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
+
+        # Introducing new platform binary sensors after v2.2.4, auto add binary_sensor if user had sensor platform enabled
+        # Use a flag in hass.data[DOMAIN] to ensure we only auto-add binary_sensor once
+        autoadd_flag_key = f"upgraded_to_binary_sensor_platform_{entry.entry_id}"
+        if not hass.data.setdefault(DOMAIN, {}).get(autoadd_flag_key):
+            hass.data[DOMAIN][autoadd_flag_key] = True
+            if "sensor" in platforms and "binary_sensor" not in platforms:
+                platforms = list(platforms) + ["binary_sensor"]
+                new_data = dict(entry.data)
+                new_data[CONF_PLATFORMS] = platforms
+                hass.config_entries.async_update_entry(entry, data=new_data)
+                _LOGGER.info(
+                    "Auto-enabled binary_sensor platform for Ksenia Lares integration upgrade."
+                )
+
         _LOGGER.debug("Setting up platforms: %s", platforms)
         await hass.config_entries.async_forward_entry_setups(entry, platforms)
 
