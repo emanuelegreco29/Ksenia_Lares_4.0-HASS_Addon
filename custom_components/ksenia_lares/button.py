@@ -4,8 +4,7 @@ import logging
 
 from homeassistant.components.button import ButtonEntity
 
-from .const import DOMAIN, ClearCommand
-from .helpers import KseniaEntity, build_unique_id, get_entity_name
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,7 +72,7 @@ class KseniaScenarioButtonEntity(KseniaEntity, ButtonEntity):
     def __init__(self, ws_manager, scenario_id, name, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._scenario_id = scenario_id
-        self._attr_name = name
+        self._name = name
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
 
@@ -86,6 +85,11 @@ class KseniaScenarioButtonEntity(KseniaEntity, ButtonEntity):
     def device_info(self):
         """Return device information about this entity."""
         return self._device_info
+
+    @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self.ws_manager.available
 
     @property
     def name(self):
@@ -122,6 +126,11 @@ class KseniaClearButtonEntity(KseniaEntity, ButtonEntity):
     def device_info(self):
         """Return device information about this entity."""
         return self._device_info
+
+    @property
+    def available(self):
+        """Return True if the entity is available."""
+        return self.ws_manager.available
 
     async def async_press(self):
         """Execute the clear command when the button is pressed."""

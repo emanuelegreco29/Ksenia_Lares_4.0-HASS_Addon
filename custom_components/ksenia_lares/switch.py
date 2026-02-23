@@ -6,7 +6,6 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 
 from .const import DOMAIN
-from .helpers import KseniaEntity, build_unique_id, get_entity_name, is_hidden_or_siren
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -158,7 +157,7 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
     @property
     def available(self):
         """Return True if the entity is available."""
-        return self._available
+        return self.ws_manager.available
 
     @property
     def name(self):
@@ -201,7 +200,6 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
         for switch in switches:
             if str(switch.get("ID")) == str(self.switch_id):
                 self._state = switch.get("STA", "off").lower() == "on"
-                self._available = True
                 # Merge update into raw_data to preserve all fields
                 self._raw_data.update(switch)
                 break
@@ -224,7 +222,6 @@ class KseniaZoneBypassSwitch(SwitchEntity):
         self.zone_id = zone_id
         self._attr_translation_placeholders = {"zone_name": name}
         self._device_info = device_info
-        self._base_id = base_id or ws_manager.ip
         # Parse bypass status: NO means not bypassed, anything else (AUTO, MAN_M, MAN_T) means bypassed
         byp_val = zone_data.get("BYP", "NO")
         self._state = byp_val.upper() != "NO"
@@ -266,7 +263,7 @@ class KseniaZoneBypassSwitch(SwitchEntity):
     @property
     def available(self):
         """Return True if the entity is available."""
-        return self._available
+        return self.ws_manager.available
 
     @property
     def is_on(self):
@@ -321,6 +318,5 @@ class KseniaZoneBypassSwitch(SwitchEntity):
                 if "BYP" in zone:
                     byp_val = str(zone.get("BYP", "NO"))
                     self._state = byp_val.upper() != "NO"
-                self._available = True
                 self._raw_data.update(zone)
                 break

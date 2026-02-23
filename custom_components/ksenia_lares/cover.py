@@ -6,7 +6,6 @@ import time
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 
 from .const import DOMAIN
-from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,10 +77,9 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
     def __init__(self, ws_manager, roll_id, name, roll_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._roll_id = roll_id
-        self._base_id = base_id or ws_manager.ip
-        self._attr_name = name
-        # POS is the opening percentage (0=closed, 100=opened), None until known
-        self._position = roll_data.get("POS")
+        self._name = name
+        # POS is the opening percentage (0=closed, 100=opened)
+        self._position = roll_data.get("POS", 0)
         self._pending_command = None
         self._device_info = device_info
         # Store complete raw data for debugging and transparency
@@ -130,7 +128,7 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
     @property
     def available(self):
         """Return True if the entity is available."""
-        return self._available
+        return self.ws_manager.available
 
     @property
     def name(self):
@@ -230,7 +228,6 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
                     else:
                         self._pending_command = None
                 self._position = new_pos
-                self._available = True
                 # Merge update into raw_data to preserve all fields
                 self._raw_data.update(roll)
                 break

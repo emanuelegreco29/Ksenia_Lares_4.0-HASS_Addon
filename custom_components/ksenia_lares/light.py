@@ -7,7 +7,6 @@ from homeassistant.components.light import LightEntity
 from homeassistant.components.light.const import ColorMode
 
 from .const import DOMAIN
-from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,7 +125,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
     @property
     def available(self):
         """Return True if the entity is available."""
-        return self._available
+        return self.ws_manager.available
 
     @property
     def is_on(self):
@@ -200,7 +199,6 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
                     else:
                         self._pending_command = None
                 self._state = remote_state
-                self._available = True
                 # Merge update into raw_data to preserve all fields
                 self._raw_data.update(light)
                 break
