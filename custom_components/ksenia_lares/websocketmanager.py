@@ -18,6 +18,7 @@ from enum import Enum
 from typing import Any, TypedDict
 
 import websockets
+from websockets.asyncio.client import connect as ws_connect
 from websockets.typing import Subprotocol
 
 from .wscall import (
@@ -180,7 +181,7 @@ class WebSocketManager:
             # Open temporary WebSocket connection with 5-second timeout
             # This connection is only for this specific scenario execution
             temp_ws = await asyncio.wait_for(
-                websockets.connect(uri, ssl=ssl_ctx, subprotocols=[Subprotocol("KS_WSOCK")]),
+                ws_connect(uri, ssl=ssl_ctx, subprotocols=[Subprotocol("KS_WSOCK")]),
                 timeout=5,
             )
 
@@ -631,7 +632,7 @@ class WebSocketManager:
         while self._retries < self._max_retries:
             try:
                 self._logger.debug(f"[{time.time():.3f}] Connecting to WebSocket: {uri}")
-                self._ws = await websockets.connect(
+                self._ws = await ws_connect(
                     uri, ssl=ssl, subprotocols=[Subprotocol("KS_WSOCK")], ping_interval=30
                 )
                 self._logger.debug(f"[{time.time():.3f}] WebSocket connection established")
@@ -844,23 +845,6 @@ class WebSocketManager:
                 self._logger.error("Connection closed during state refresh - triggering reconnect")
                 asyncio.create_task(self._handle_connection_closed())
 
-    def _seed_initial_cache(self, payload: dict) -> None:
-        """Seed the realtime cache from the initial READ payload.
-
-        Called once after the first successful READ so that entities have
-        cached data before any REALTIME broadcast arrives.
-        """
-        if payload.get("STATUS_PANEL"):
-            self._logger.debug(
-                f"[{time.time():.3f}] Caching STATUS_PANEL: {payload.get('STATUS_PANEL')}"
-            )
-            self._update_realtime_cache("STATUS_PANEL", payload.get("STATUS_PANEL"))
-        if payload.get("STATUS_CONNECTION"):
-            self._logger.debug(
-                f"[{time.time():.3f}] Caching STATUS_CONNECTION: {payload.get('STATUS_CONNECTION')}"
-            )
-            self._update_realtime_cache("STATUS_CONNECTION", payload.get("STATUS_CONNECTION"))
-
     async def _fetch_initial_data(self):
         """Retrieve static configuration and real-time data from panel.
 
@@ -890,13 +874,6 @@ class WebSocketManager:
                 self._logger.debug(f"[{time.time():.3f}] Static data received successfully")
                 if self._debug_mode:
                     self._logger.debug(f"Static data received: {self._readData}")
-
-                # Seed realtime cache from READ payload so entities can use cached initial data
-                payload = self._readData if self._readData else {}
-                self._logger.debug(
-                    f"[{time.time():.3f}] Seeding realtime cache from READ payload with keys: {list(payload.keys())}"
-                )
-                self._seed_initial_cache(payload)
 
                 self._logger.debug(
                     f"[{time.time():.3f}] Starting real-time data subscription (attempt {retry_count + 1}/{max_retries})"
@@ -1226,33 +1203,6 @@ class WebSocketManager:
             await self._handle_data_update(data)
 
     def _payload_type_matches(
-        self,
-        expected_cmd_prefix: str,
-        req_payload_type: str,
-        response_payload_type: str,
-    ) -> bool:
-        """Return True if request and response payload types are compatible.
-
-        Handles known firmware variations where the response PAYLOAD_TYPE differs
-        from the request (e.g., GET_LAST_LOGS → LAST_LOGS on older firmware).
-        """
-        if req_payload_type == response_payload_type:
-            return True
-        if (
-            expected_cmd_prefix == "LOGS"
-            and req_payload_type == "GET_LAST_LOGS"
-            and response_payload_type in ("GET_LAST_LOGS", "LAST_LOGS")
-        ):
-            return True
-        if (
-            expected_cmd_prefix == "REALTIME"
-            and req_payload_type == "REGISTER"
-            and response_payload_type == "REGISTER_ACK"
-        ):
-            return True
-        return False
-
-    def _payload_type_matches(
         self, expected_cmd_prefix: str, req_payload_type: str, response_payload_type: str
     ) -> bool:
         """Return True if request and response payload types are compatible.
@@ -1478,13 +1428,13 @@ class WebSocketManager:
                 f"Resolving REALTIME registration {message_id}, future state before set_result: {fut_state} (fallback_used={fallback_used})"
             )
             # Mark registration complete if panel confirmed success
-            result = message.get("PAYLOAD_TYPE")
-            if result == "REGISTER_ACK":
+            result = message.get("PAYLOAD", {}).get("RESULT")
+            if result == "OK":
                 self._realtime_registered = True
                 self._logger.debug("REALTIME registration confirmed by panel")
             else:
                 self._logger.warning(
-                    f"REALTIME registration response PAYLOAD_TYPE={result} (expected 'REGISTER_ACK')"
+                    f"REALTIME registration response RESULT={result} (expected OK)"
                 )
             try:
                 if not realtime_data["future"].done():
@@ -1517,7 +1467,9 @@ class WebSocketManager:
                 f"[WS] _handle_data_update received non-dict data: {type(data).__name__}"
             )
             return
-        self._logger.debug(f"[WS] _handle_data_update received data with keys: {list(data.keys())}")
+        self._logger.debug(
+            f"[WS] _handle_data_update received data with keys: {list(data.keys())}"
+        )
         # Map status keys to listener types and cache updates
         status_handlers = {
             "STATUS_OUTPUTS": ["lights", "switches", "covers"],
@@ -1553,27 +1505,6 @@ class WebSocketManager:
         self, existing_dict: dict, new_entities: list, status_payload_type: str
     ) -> int:
         """Merge new_entities into existing_dict (keyed by entity ID).
-
-        Updates fields in-place for known entities; adds new ones.
-        Returns the number of entities processed.
-        """
-        updates_count = 0
-        for new_entity in new_entities:
-            entity_id = str(new_entity.get("ID", ""))
-            if entity_id:
-                if entity_id in existing_dict:
-                    existing_dict[entity_id].update(new_entity)
-                else:
-                    existing_dict[entity_id] = new_entity
-                updates_count += 1
-            else:
-                self._logger.warning(
-                    f"[WS] _update_realtime_cache: Entity without ID field in {status_payload_type}: {new_entity}"
-                )
-        return updates_count
-
-    def _update_realtime_cache(self, status_payload_type: str, status_entities: Any) -> None:
-        """Update unified cache with real-time data.
 
         Updates fields in-place for known entities; adds new ones.
         Returns the number of entities processed.
