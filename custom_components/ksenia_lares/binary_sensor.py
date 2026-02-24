@@ -191,7 +191,10 @@ class KseniaZoneBinarySensorEntity(BinarySensorEntity):
     @property
     def unique_id(self):
         """Return unique ID for entity migration compatibility from old sensors."""
-        return f"zones_{self._id}"
+        # Backwards compatibility hack
+        if self._sensor_type == "gen" or self._sensor_type == "smoke":
+            return f"zones_{self._id}"
+        return f"{self._sensor_type}_{self._id}"
 
     @property
     def device_info(self):
@@ -243,7 +246,7 @@ class KseniaSirenBinarySensorEntity(BinarySensorEntity):
         self._raw_data = dict(sensor_data)
         self._attr_device_class = _DEVICE_CLASS_MAP.get("siren")
         self._is_on = _parse_is_on("siren", sensor_data)
-        label = sensor_data.get("DES") or f"Siren {sensor_data.get('ID')}"
+        label = sensor_data.get("DES") or sensor_data.get("LBL") or sensor_data.get("NM") or f"Siren {sensor_data.get('ID')}"
         self._extra_attributes = {
             "ID": sensor_data.get("ID"),
             "Description": label,
@@ -257,7 +260,7 @@ class KseniaSirenBinarySensorEntity(BinarySensorEntity):
     def unique_id(self):
         """Return unique ID for siren entity migration compatibility with upstream/main."""
         # Use the same format as upstream/main: <panel_ip>_alarm_trigger_status
-        return f"{self.ws_manager.ip}_alarm_trigger_status"
+        return f"siren_{self._id}"
 
     @property
     def device_info(self):
