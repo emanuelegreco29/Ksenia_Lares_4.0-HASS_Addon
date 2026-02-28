@@ -68,7 +68,53 @@ def _rm_sensors_migrated2binarysensor(hass, config_entry) -> None:
         )
 
 
-# TODO: remove this 3 below migration functions in future relase e.g. v2.5.0
+# TODO: remove this 4 below migration functions in future relase e.g. v2.5.0
+async def _rm_hidden_output_switches(hass, config_entry, ws_manager, mac, ip) -> None:
+    """Remove switch entities for outputs with CNV=H (hidden).
+
+    Earlier versions created switch entities for all outputs regardless of CNV.
+    Now outputs with CNV=H are excluded (they are sirens/hidden devices), so
+    any previously created switch entities for them must be removed.
+    """
+    try:
+        switches = await ws_manager.getSwitches()
+    except Exception as e:
+        _LOGGER.warning("Could not fetch outputs for hidden switch cleanup: %s", e)
+        return
+
+    hidden_ids = {str(s.get("ID")) for s in switches if s.get("CNV") == "H"}
+    if not hidden_ids:
+        _LOGGER.debug("No hidden outputs (CNV=H) found, no switches to cleanup")
+        return
+
+    # Build all possible unique_id patterns for these IDs (old IP-based and new MAC-based)
+    hidden_uids = set()
+    for sid in hidden_ids:
+        hidden_uids.add(f"{ip}_{sid}")  # old format
+        for s in switches:
+            if str(s.get("ID")) == sid:
+                cat = (s.get("CAT") or "output").lower()
+                hidden_uids.add(build_unique_id(mac, cat, sid))
+                break
+
+    ent_reg = er.async_get(hass)
+    entries = er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
+    removed = 0
+    for entry in entries:
+        if entry.domain != "switch" or entry.platform != DOMAIN:
+            continue
+        if entry.unique_id in hidden_uids:
+            _LOGGER.info(
+                "Removing hidden output switch entity %s (unique_id=%s, CNV=H)",
+                entry.entity_id,
+                entry.unique_id,
+            )
+            ent_reg.async_remove(entry.entity_id)
+            removed += 1
+    if removed:
+        _LOGGER.info("Removed %d hidden output switch entities (CNV=H)", removed)
+
+
 async def _migrate_unique_ids(hass, config_entry, mac, ip, ws_manager) -> None:
     """Migrate entity unique_ids from IP-based/legacy to MAC-based format.
 
@@ -281,11 +327,14 @@ async def async_setup_entry(hass, entry):
         # TODO: remove this in future relase e.g. v2.5.0
         # Migrate entities that moved from sensor → binary_sensor domain
         _rm_sensors_migrated2binarysensor(hass, entry)
+        # Remove switch entities for hidden outputs (CNV=H)
+        await _rm_hidden_output_switches(hass, entry, ws_manager, mac, ip)
         # Migrate unique_ids from IP-based/legacy to MAC-based format
         await _migrate_unique_ids(hass, entry, mac, ip, ws_manager)
 
         # Introducing new platform binary sensors after v2.2.4, auto add binary_sensor if user had sensor platform enabled
         # Use a flag in hass.data[DOMAIN] to ensure we only auto-add binary_sensor once
+        # TODO: Remove this in a future release (e.g. v2.5.0) after users have had time to upgrade
         autoadd_flag_key = f"upgraded_to_binary_sensor_platform_{entry.entry_id}"
         if not hass.data.setdefault(DOMAIN, {}).get(autoadd_flag_key):
             hass.data[DOMAIN][autoadd_flag_key] = True

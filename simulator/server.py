@@ -258,7 +258,7 @@ class SimulatorState:
     def _init_outputs(self) -> Dict[str, Dict[str, Any]]:
         """Initialize output devices."""
         return {
-            OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "STA": "OFF", "LBL": OUTPUT_LABEL_SIREN},
+            OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "STA": "OFF", "LBL": OUTPUT_LABEL_SIREN, "CNV": "H"},
             OUTPUT_LIGHT: {"ID": OUTPUT_LIGHT, "STA": "OFF", "LBL": OUTPUT_LABEL_LIGHT},
         }
 
