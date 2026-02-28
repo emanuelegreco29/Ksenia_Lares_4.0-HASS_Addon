@@ -6,9 +6,11 @@ import logging
 
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 
 from .const import (
+    BINARY_ZONE_CATS,
     CONF_HOST,
     CONF_PIN,
     CONF_PLATFORMS,
@@ -23,6 +25,45 @@ _LOGGER = logging.getLogger(__name__)
 SETUP_TIMEOUT = 60  # Increased to allow for device startup delays and initial data fetch retries
 # Track setup tasks to allow cancellation during removal
 _SETUP_TASKS = {}
+
+# TODO: remove this in future relase e.g. v2.5.0
+def _rm_sensors_migrated2binarysensor(hass, config_entry) -> None:
+    """Remove stale sensor entities whose unique_ids moved to binary_sensor.
+
+    When zones/sirens moved from sensor.py to binary_sensor.py, the entity
+    domain changed.  HA keys entities by (entitydomain, domain, unique_id), so
+    without removing the old sensor entries first, HA creates duplicates.
+
+    HA does not allow cross-platform entity_id changes via async_update_entity,
+    so the only option is to remove the old sensor entry and let the
+    binary_sensor platform recreate it.
+    """
+    ent_reg = er.async_get(hass)
+    entries = er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
+    removed = 0
+    for entry in entries:
+        # a bit confusing but entry.platform is the name of the integration (domain)
+        if entry.domain != "sensor" or entry.platform != DOMAIN:
+            continue
+        uid = entry.unique_id
+        # Check if this unique_id belongs to an entity that moved to binary_sensor
+        # Format is "<prefix>_<id>" where prefix matches a zone cat or "siren"
+        prefix = uid.rsplit("_", 1)[0] if "_" in uid else ""
+        if prefix not in ({cat.lower() for cat in BINARY_ZONE_CATS} | {"siren"}):
+            continue
+        _LOGGER.info(
+            "Removing orphan sensor entity %s (unique_id=%s) "
+            "- will be recreated as binary_sensor",
+            entry.entity_id,
+            uid,
+        )
+        ent_reg.async_remove(entry.entity_id)
+        removed += 1
+    if removed:
+        _LOGGER.info(
+            "Removed %d sensor entities that will be recreated as binary_sensors",
+            removed,
+        )
 
 
 def _build_device_info(ip, port, use_ssl, system_info):
@@ -134,6 +175,11 @@ async def async_setup_entry(hass, entry):
         hass.data[DOMAIN]["device_info"] = device_info
 
         platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
+
+        # TODO: remove this in future relase e.g. v2.5.0
+        # Migrate entities that moved from sensor → binary_sensor domain
+        _rm_sensors_migrated2binarysensor(hass, entry)
+
 
         # Introducing new platform binary sensors after v2.2.4, auto add binary_sensor if user had sensor platform enabled
         # Use a flag in hass.data[DOMAIN] to ensure we only auto-add binary_sensor once
