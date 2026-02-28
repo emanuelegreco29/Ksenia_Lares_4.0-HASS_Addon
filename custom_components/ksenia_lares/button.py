@@ -5,6 +5,7 @@ import logging
 from homeassistant.components.button import ButtonEntity
 
 from .const import DOMAIN
+from .helpers import build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,25 +27,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         await _add_scenario_buttons(ws_manager, device_info, base_id, entities)
 
         # Add system clear command buttons
-        entities.append(
-            KseniaClearButtonEntity(
-                ws_manager,
-                ClearCommand.COMMUNICATIONS,
-                "clear_communications",
-                device_info,
-                base_id,
-            )
-        )
-        entities.append(
-            KseniaClearButtonEntity(
-                ws_manager, ClearCommand.ALARM_CYCLES, "clear_alarms", device_info, base_id
-            )
-        )
-        entities.append(
-            KseniaClearButtonEntity(
-                ws_manager, ClearCommand.FAULTS_MEMORY, "clear_faults_memory", device_info, base_id
-            )
-        )
+        _add_clear_buttons(ws_manager, device_info, base_id, entities)
 
         async_add_entities(entities, update_before_add=True)
     except Exception as e:
@@ -58,16 +41,33 @@ async def _add_scenario_buttons(ws_manager, device_info, base_id, entities):
 
     for scenario in scenarios:
         scenario_id = scenario.get("ID")
-        name = get_entity_name(scenario, scenario_id, f"Scenario {scenario_id}")
+        name = (
+            scenario.get("DES")
+            or scenario.get("LBL")
+            or scenario.get("NM")
+            or f"Scenario {scenario_id}"
+        )
         entities.append(
             KseniaScenarioButtonEntity(ws_manager, scenario_id, name, device_info, base_id)
         )
 
 
+def _add_clear_buttons(ws_manager, device_info, base_id, entities):
+    """Add system clear command buttons."""
+    clear_buttons = [
+        (CLEAR_COMMUNICATIONS, "clear_communications"),
+        (CLEAR_ALARMS, "clear_alarms"),
+        (CLEAR_FAULTS, "clear_faults_memory"),
+    ]
+
+    for clear_type, translation_key in clear_buttons:
+        entities.append(
+            KseniaClearButtonEntity(ws_manager, clear_type, translation_key, device_info, base_id)
+        )
+
+
 class KseniaScenarioButtonEntity(KseniaEntity, ButtonEntity):
     """Button entity for executing Ksenia scenarios."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, ws_manager, scenario_id, name, device_info=None, base_id=None):
         self.ws_manager = ws_manager
@@ -79,7 +79,7 @@ class KseniaScenarioButtonEntity(KseniaEntity, ButtonEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the button."""
-        return f"{self.ws_manager.ip}_{self._scenario_id}"
+        return build_unique_id(self._base_id, "scenario", self._scenario_id)
 
     @property
     def device_info(self):
@@ -120,7 +120,7 @@ class KseniaClearButtonEntity(KseniaEntity, ButtonEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the button."""
-        return f"{self.ws_manager.ip}_clear_{self._clear_type}"
+        return build_unique_id(self._base_id, "clear", self._clear_type)
 
     @property
     def device_info(self):

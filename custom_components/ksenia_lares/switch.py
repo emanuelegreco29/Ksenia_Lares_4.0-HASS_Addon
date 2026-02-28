@@ -6,6 +6,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 
 from .const import DOMAIN
+from .helpers import build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,8 +25,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         entities = []
 
         # Add output switches
+        output_count = len(entities)
         await _add_output_switches(ws_manager, device_info, base_id, entities)
-        initial_output_count = len(entities)
+        initial_output_count = len(entities) - output_count
 
         # Add zone bypass switches
         await _add_zone_bypass_switches(ws_manager, device_info, base_id, entities)
@@ -81,7 +83,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         _LOGGER.error("Error setting up switches: %s", e, exc_info=True)
 
 
-async def _add_output_switches(ws_manager, device_info, entities):
+async def _add_output_switches(ws_manager, device_info, base_id, entities):
     """Add output switches (lights etc.)."""
     switches = await ws_manager.getSwitches()
     _LOGGER.debug("Found %d output switches", len(switches))
@@ -94,7 +96,9 @@ async def _add_output_switches(ws_manager, device_info, entities):
             _LOGGER.debug("Not adding siren or hidden switch: %s", name)
             continue
         # Add all other outputs as switches
-        entities.append(KseniaSwitchEntity(ws_manager, switch_id, name, switch, device_info))
+        entities.append(
+            KseniaSwitchEntity(ws_manager, switch_id, name, switch, device_info, base_id)
+        )
 
 
 async def _add_zone_bypass_switches(ws_manager, device_info, base_id, entities):
@@ -105,7 +109,7 @@ async def _add_zone_bypass_switches(ws_manager, device_info, base_id, entities):
 
     for zone in bypass_zones:
         zone_id = zone.get("ID")
-        zone_name = get_entity_name(zone, zone_id, f"Zone {zone_id}")
+        zone_name = zone.get("DES") or zone.get("LBL") or zone.get("NM") or f"Zone {zone_id}"
         entities.append(
             KseniaZoneBypassSwitch(ws_manager, zone_id, zone_name, zone, device_info, base_id)
         )
@@ -114,15 +118,14 @@ async def _add_zone_bypass_switches(ws_manager, device_info, base_id, entities):
 class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
     """Switch entity for Ksenia outputs."""
 
-    _attr_has_entity_name = True
-
     def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self.switch_id = switch_id
-        self._attr_name = name
+        self._name = name
         self._cat = (switch_data.get("CAT") or "output").lower()
         self._state = switch_data.get("STA", "off").lower() == "on"
         self._device_info = device_info
+        self._base_id = base_id or ws_manager.ip
         # Store complete raw data for debugging and transparency
         self._raw_data = dict(switch_data)
 
@@ -145,7 +148,7 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the switch."""
-        return f"{self.ws_manager.ip}_{self.switch_id}"
+        return build_unique_id(self._base_id, self._cat, self.switch_id)
 
     @property
     def device_info(self):
@@ -226,6 +229,7 @@ class KseniaZoneBypassSwitch(SwitchEntity):
         self.zone_id = zone_id
         self._attr_translation_placeholders = {"zone_name": name}
         self._device_info = device_info
+        self._base_id = base_id or ws_manager.ip
         # Parse bypass status: NO means not bypassed, anything else (AUTO, MAN_M, MAN_T) means bypassed
         byp_val = zone_data.get("BYP", "NO")
         self._state = byp_val.upper() != "NO"
@@ -252,7 +256,7 @@ class KseniaZoneBypassSwitch(SwitchEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the zone bypass switch."""
-        return f"{self.ws_manager.ip}_zone_{self.zone_id}_bypass"
+        return build_unique_id(self._base_id, "zone_bypass", self.zone_id)
 
     @property
     def device_info(self):

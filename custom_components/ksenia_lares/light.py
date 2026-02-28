@@ -7,6 +7,7 @@ from homeassistant.components.light import LightEntity
 from homeassistant.components.light.const import ColorMode
 
 from .const import DOMAIN
+from .helpers import build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,8 +66,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class KseniaLightEntity(KseniaEntity, LightEntity):
     """Light entity for Ksenia Lares system."""
 
-    _attr_has_entity_name = True
-
     def __init__(self, ws_manager, light_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._id = light_data.get("ID")
@@ -110,7 +109,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the light."""
-        return f"{self.ws_manager.ip}_{self._id}"
+        return build_unique_id(self._base_id, "light", self._id)
 
     @property
     def device_info(self):

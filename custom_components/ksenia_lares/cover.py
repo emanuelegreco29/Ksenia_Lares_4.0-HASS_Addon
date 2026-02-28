@@ -6,6 +6,7 @@ import time
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 
 from .const import DOMAIN
+from .helpers import build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         entities = []
         for roll in rolls:
             roll_id = roll.get("ID")
-            name = get_entity_name(roll, roll_id, f"Roller Blind {roll_id}")
+            name = roll.get("DES") or roll.get("LBL") or roll.get("NM") or f"Roller Blind {roll_id}"
             entities.append(KseniaRollEntity(ws_manager, roll_id, name, roll, device_info, base_id))
 
         async_add_entities(entities, update_before_add=True)
@@ -72,11 +73,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class KseniaRollEntity(KseniaEntity, CoverEntity):
     """Cover entity for Ksenia roller blinds/shutters."""
 
-    _attr_has_entity_name = True
-
     def __init__(self, ws_manager, roll_id, name, roll_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._roll_id = roll_id
+        self._base_id = base_id or ws_manager.ip
         self._name = name
         # POS is the opening percentage (0=closed, 100=opened)
         self._position = roll_data.get("POS", 0)
@@ -118,7 +118,7 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the roller blind."""
-        return f"{self.ws_manager.ip}_{self._roll_id}"
+        return build_unique_id(self._base_id, "cover", self._roll_id)
 
     @property
     def device_info(self):

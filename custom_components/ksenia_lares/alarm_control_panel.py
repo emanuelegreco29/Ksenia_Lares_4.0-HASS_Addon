@@ -16,8 +16,8 @@ from homeassistant.components.alarm_control_panel.const import (
 )
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN, PartitionArmStatus
-from .helpers import KseniaEntity, build_unique_id
+from .const import DOMAIN
+from .helpers import build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
         # Create single alarm panel entity for entire device
         entity = KseniaAlarmControlPanel(ws_manager, scenario_map, device_info, base_id)
-        async_add_entities([entity])
+        async_add_entities([entity], update_before_add=True)
     except Exception as e:
         _LOGGER.error("Error setting up alarm control panel: %s", e, exc_info=True)
 
@@ -95,7 +95,7 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         self._scenarios = scenario_map
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = None  # Unknown until real data arrives from device
+        self._state = AlarmControlPanelState.DISARMED
         self._system_status = {}  # Track system status from STATUS_SYSTEM
         self._partitions_status = []  # Track partition status from STATUS_PARTITIONS
         self._attr_changed_by = "Unknown"
@@ -327,7 +327,7 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
     @property
     def unique_id(self):
         """Return unique ID for the entity."""
-        return f"{self.ws_manager.ip}_alarm_control_panel"
+        return build_unique_id(self._base_id, "alarm_control_panel")
 
     @property
     def device_info(self):

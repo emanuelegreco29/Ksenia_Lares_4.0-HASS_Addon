@@ -9,6 +9,7 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import EntityCategory
 
 from .const import BINARY_ZONE_CATS, DOMAIN
+from .helpers import build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,15 +24,17 @@ class KseniaRealtimeListenerEntity(SensorEntity, ABC):
     _entity_type: str  # Must be set by subclass
     _component_name: str  # Display name for logging
 
-    def __init__(self, ws_manager, device_info=None):
+    def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize realtime listener entity.
 
         Args:
             ws_manager: WebSocketManager instance
             device_info: Device information for grouping entities
+            base_id: MAC address or IP for unique_id generation
         """
         self.ws_manager = ws_manager
         self._device_info = device_info
+        self._base_id = base_id or ws_manager.ip
 
     async def async_added_to_hass(self):
         """Register listener for real-time updates."""
@@ -73,9 +76,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         base_id = hass.data[DOMAIN].get("mac") or ws_manager.ip
         entities = []
 
-        initial_counts = await _add_all_device_sensors(ws_manager, device_info, entities)
-        _add_status_sensors(ws_manager, device_info, entities)
-        _add_diagnostic_sensors(ws_manager, device_info, entities)
+        initial_counts = await _add_all_device_sensors(ws_manager, device_info, base_id, entities)
+        _add_status_sensors(ws_manager, device_info, base_id, entities)
+        _add_diagnostic_sensors(ws_manager, device_info, base_id, entities)
         async_add_entities(entities, update_before_add=True)
 
         _LOGGER.info(
@@ -91,39 +94,39 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         _LOGGER.error("Error setting up sensors: %s", e, exc_info=True)
 
 
-async def _add_all_device_sensors(ws_manager, device_info, entities: list) -> dict:
+async def _add_all_device_sensors(ws_manager, device_info, base_id, entities: list) -> dict:
     """Add all device-type sensor groups and return per-type counts."""
     initial_counts: dict = {}
 
     before = len(entities)
-    await _add_domus_sensors(ws_manager, device_info, entities)
+    await _add_domus_sensors(ws_manager, device_info, base_id, entities)
     initial_counts["domus"] = len(entities) - before
 
     before = len(entities)
-    await _add_powerline_sensors(ws_manager, device_info, entities)
+    await _add_powerline_sensors(ws_manager, device_info, base_id, entities)
     initial_counts["powerlines"] = len(entities) - before
 
     before = len(entities)
-    await _add_partition_sensors(ws_manager, device_info, entities)
+    await _add_partition_sensors(ws_manager, device_info, base_id, entities)
     initial_counts["partitions"] = len(entities) - before
 
     before = len(entities)
-    await _add_zone_sensors(ws_manager, device_info, entities)
+    await _add_zone_sensors(ws_manager, device_info, base_id, entities)
     initial_counts["zones"] = len(entities) - before
 
     before = len(entities)
-    await _add_system_sensors(ws_manager, device_info, entities)
+    await _add_system_sensors(ws_manager, device_info, base_id, entities)
     initial_counts["systems"] = len(entities) - before
 
     return initial_counts
 
 
-async def _add_domus_sensors(ws_manager, device_info, entities):
+async def _add_domus_sensors(ws_manager, device_info, base_id, entities):
     """Add domus (environmental) sensors."""
     domus = await ws_manager.getDom()
     _LOGGER.debug("Found %d domus devices", len(domus))
     for sensor in domus:
-        entities.append(KseniaSensorEntity(ws_manager, sensor, "domus", device_info))
+        entities.append(KseniaSensorEntity(ws_manager, sensor, "domus", device_info, base_id))
 
 
 async def _add_powerline_sensors(ws_manager, device_info, base_id, entities):
@@ -131,7 +134,7 @@ async def _add_powerline_sensors(ws_manager, device_info, base_id, entities):
     powerlines = await ws_manager.getSensor("POWER_LINES")
     _LOGGER.debug("Found %d power lines", len(powerlines))
     for sensor in powerlines:
-        entities.append(KseniaPowerlineSensor(ws_manager, sensor, device_info, base_id))
+        entities.append(KseniaSensorEntity(ws_manager, sensor, "powerlines", device_info, base_id))
 
 
 async def _add_partition_sensors(ws_manager, device_info, base_id, entities):
@@ -139,10 +142,10 @@ async def _add_partition_sensors(ws_manager, device_info, base_id, entities):
     partitions = await ws_manager.getSensor("PARTITIONS")
     _LOGGER.debug("Found %d partitions", len(partitions))
     for sensor in partitions:
-        entities.append(KseniaPartitionSensor(ws_manager, sensor, device_info, base_id))
+        entities.append(KseniaSensorEntity(ws_manager, sensor, "partitions", device_info, base_id))
 
 
-async def _add_zone_sensors(ws_manager, device_info, entities):
+async def _add_zone_sensors(ws_manager, device_info, base_id, entities):
     """Add analog zone sensors (all other zone types are in binary_sensor.py)."""
     zones = await ws_manager.getSensor("ZONES")
     _LOGGER.debug("Found %d zones", len(zones))
@@ -151,7 +154,7 @@ async def _add_zone_sensors(ws_manager, device_info, entities):
         if cat in BINARY_ZONE_CATS:
             continue
         # Remaining zones (e.g. CAT=AN) use raw STA value
-        entities.append(KseniaSensorEntity(ws_manager, sensor, "zones", device_info))
+        entities.append(KseniaSensorEntity(ws_manager, sensor, "zones", device_info, base_id))
 
 
 async def _add_system_sensors(ws_manager, device_info, base_id, entities):
@@ -159,10 +162,10 @@ async def _add_system_sensors(ws_manager, device_info, base_id, entities):
     systems = await ws_manager.getSystem()
     _LOGGER.debug("Found %d system sensors", len(systems))
     for sensor in systems:
-        entities.append(KseniaAlarmSystemStatusSensor(ws_manager, sensor, device_info))
+        entities.append(KseniaAlarmSystemStatusSensor(ws_manager, sensor, device_info, base_id))
 
 
-def _add_status_sensors(ws_manager, device_info, entities):
+def _add_status_sensors(ws_manager, device_info, base_id, entities):
     """Add aggregated status sensors."""
     entities.extend(
         [
@@ -219,11 +222,12 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
     :param sensor_type: Type of the sensor (domus, powerlines, partitions, zones, system)
     """
 
-    def __init__(self, ws_manager, sensor_data, sensor_type, device_info=None):
+    def __init__(self, ws_manager, sensor_data, sensor_type, device_info=None, base_id=None):
         """Initialise the sensor entity with its manager, raw data, and type."""
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
         self._sensor_type = sensor_type
+        self._base_id = base_id or ws_manager.ip
         self._attr_name = (
             sensor_data.get("NM")
             or sensor_data.get("LBL")
@@ -937,10 +941,11 @@ class KseniaAlarmSystemStatusSensor(SensorEntity):
         "D": "disarmed",
     }
 
-    def __init__(self, ws_manager, sensor_data, device_info=None):
+    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
         """Initialize the alarm system status sensor."""
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
+        self._base_id = base_id or ws_manager.ip
         self._device_info = device_info
         self._raw_data = dict(sensor_data)
         self._attributes: dict = {}
@@ -969,7 +974,7 @@ class KseniaAlarmSystemStatusSensor(SensorEntity):
     @property
     def unique_id(self) -> str:
         """Return unique ID for the sensor."""
-        return f"system_{self._id}"
+        return build_unique_id(self._base_id, "system", self._id)
 
     @property
     def device_info(self) -> dict | None:
@@ -1052,15 +1057,12 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
 
     _attr_translation_key = "alarm_trigger_status"
 
-    _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = [key.value for key in TriggeredStatus]
-
     def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize the alarm trigger status sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = TriggeredStatus.NOT_TRIGGERED
+        self._state = "not_triggered"
         self._alarmed_zones = []  # Track current alarmed zones
         self._zone_names = {}  # Map zone IDs to names
         self._partition_labels = {}  # Map partition IDs to labels
@@ -1150,7 +1152,7 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
     @property
     def unique_id(self) -> str:
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager.ip}_alarm_trigger_status"
+        return build_unique_id(self._base_id, "alarm_trigger_status")
 
     @property
     def device_info(self) -> dict | None:
@@ -1190,7 +1192,7 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = SystemTamperingStatus.OK
+        self._state = "ok"
         self._tampered_zones = []  # Track current tampered zones
         self._zone_names = {}  # Map zone IDs to names
         self._partition_tst_states: dict = {}  # Map partition ID to TST value
@@ -1321,7 +1323,7 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager.ip}_system_tampering"
+        return build_unique_id(self._base_id, "system_tampering")
 
     @property
     def device_info(self):
@@ -1367,7 +1369,7 @@ class KseniaEventLogSensor(KseniaEntity, SensorEntity):
 
     _attr_translation_key = "event_log"
 
-    def __init__(self, ws_manager, device_info=None):
+    def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialise the event log sensor with the WebSocket manager and optional device info."""
         self.ws_manager = ws_manager
         self._device_info = device_info
@@ -1384,7 +1386,7 @@ class KseniaEventLogSensor(KseniaEntity, SensorEntity):
     @property
     def unique_id(self):
         """Return a unique ID for the event log sensor."""
-        return f"{self.ws_manager.ip}_event_log"
+        return build_unique_id(self._base_id, "event_log")
 
     @property
     def device_info(self):
@@ -1603,7 +1605,7 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager.ip}_last_alarm_event"
+        return build_unique_id(self._base_id, "last_alarm_event")
 
     @property
     def device_info(self):
@@ -1714,7 +1716,7 @@ class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager.ip}_last_tampered_zones"
+        return build_unique_id(self._base_id, "last_tampered_zones")
 
     @property
     def device_info(self):
@@ -1758,7 +1760,7 @@ class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = None
+        self._state = "Unknown"
         self._raw_data = {}
 
     @property
@@ -1820,7 +1822,7 @@ class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager.ip}_connection_status"
+        return build_unique_id(self._base_id, "connection_status")
 
     @property
     def device_info(self):
@@ -1910,7 +1912,7 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = None
+        self._state = "Unknown"
         self._main_voltage = None
         self._battery_voltage = None
         self._raw_data = {}
@@ -2028,7 +2030,7 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager.ip}_power_supply"
+        return build_unique_id(self._base_id, "power_supply")
 
     @property
     def device_info(self):
@@ -2103,7 +2105,7 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = SystemFaults.OK
+        self._state = "ok"
         self._attributes = {
             "power_supply_faults": 0,
             "battery_faults": 0,
@@ -2224,7 +2226,7 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager.ip}_system_faults"
+        return build_unique_id(self._base_id, "system_faults")
 
     @property
     def device_info(self):
@@ -2377,7 +2379,7 @@ class KseniaFaultMemorySensor(KseniaEntity, SensorEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the sensor."""
-        return f"{self.ws_manager.ip}_fault_memory"
+        return build_unique_id(self._base_id, "fault_memory")
 
     @property
     def device_info(self):

@@ -20,51 +20,12 @@ from .const import (
     DOMAIN,
     SETUP_TIMEOUT,
 )
-from .helpers import build_device_info, build_unique_id, get_entity_name, is_hidden_or_siren
+from .helpers import build_unique_id
 from .websocketmanager import WebSocketManager
 
 _LOGGER = logging.getLogger(__name__)
 # Track setup tasks to allow cancellation during removal
 _SETUP_TASKS = {}
-
-# TODO: remove this in future relase e.g. v2.5.0
-def _rm_sensors_migrated2binarysensor(hass, config_entry) -> None:
-    """Remove stale sensor entities whose unique_ids moved to binary_sensor.
-
-    When zones/sirens moved from sensor.py to binary_sensor.py, the entity
-    domain changed.  HA keys entities by (entitydomain, domain, unique_id), so
-    without removing the old sensor entries first, HA creates duplicates.
-
-    HA does not allow cross-platform entity_id changes via async_update_entity,
-    so the only option is to remove the old sensor entry and let the
-    binary_sensor platform recreate it.
-    """
-    ent_reg = er.async_get(hass)
-    entries = er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
-    removed = 0
-    for entry in entries:
-        # a bit confusing but entry.platform is the name of the integration (domain)
-        if entry.domain != "sensor" or entry.platform != DOMAIN:
-            continue
-        uid = entry.unique_id
-        # Check if this unique_id belongs to an entity that moved to binary_sensor
-        # Format is "<prefix>_<id>" where prefix matches a zone cat or "siren"
-        prefix = uid.rsplit("_", 1)[0] if "_" in uid else ""
-        if prefix not in ({cat.lower() for cat in BINARY_ZONE_CATS} | {"siren"}):
-            continue
-        _LOGGER.info(
-            "Removing orphan sensor entity %s (unique_id=%s) "
-            "- will be recreated as binary_sensor",
-            entry.entity_id,
-            uid,
-        )
-        ent_reg.async_remove(entry.entity_id)
-        removed += 1
-    if removed:
-        _LOGGER.info(
-            "Removed %d sensor entities that will be recreated as binary_sensors",
-            removed,
-        )
 
 
 # TODO: remove this in future relase e.g. v2.5.0
@@ -107,71 +68,7 @@ def _rm_sensors_migrated2binarysensor(hass, config_entry) -> None:
         )
 
 
-# TODO: remove this 6 below migration functions in future relase e.g. v2.5.0
-def _rm_stale_switches(hass, config_entry, uids_to_remove, reason) -> None:
-    """Remove switch entities whose unique_id matches the given set.
-
-    Used during setup to clean up switches that should no longer exist
-    (hidden/siren outputs, ROLL outputs migrated to cover platform, etc.).
-    """
-    if not uids_to_remove:
-        return
-
-    ent_reg = er.async_get(hass)
-    entries = er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
-    removed = 0
-    for entry in entries:
-        if entry.domain != "switch" or entry.platform != DOMAIN:
-            continue
-        if entry.unique_id in uids_to_remove:
-            _LOGGER.info(
-                "Removing switch entity %s (unique_id=%s) - %s",
-                entry.entity_id,
-                entry.unique_id,
-                reason,
-            )
-            ent_reg.async_remove(entry.entity_id)
-            removed += 1
-    if removed:
-        _LOGGER.info("Removed %d stale switch entities (%s)", removed, reason)
-
-
-async def _build_hidden_switch_uids(ws_manager, mac, ip) -> set:
-    """Build unique_id set for hidden/siren output switches to remove."""
-    try:
-        switches = await ws_manager.getSwitches()
-    except Exception as e:
-        _LOGGER.warning("Could not fetch outputs for hidden switch cleanup: %s", e)
-        return set()
-
-    uids = set()
-    for s in switches:
-        name = get_entity_name(s, s.get("ID"), "")
-        if is_hidden_or_siren(s, name):
-            sid = str(s.get("ID"))
-            uids.add(f"{ip}_{sid}")  # old format
-            cat = (s.get("CAT") or "output").lower()
-            uids.add(build_unique_id(mac, cat, sid))
-    return uids
-
-
-async def _build_roll_switch_uids(ws_manager, mac, ip) -> set:
-    """Build unique_id set for ROLL output switches to remove (now on cover platform)."""
-    try:
-        rolls = await ws_manager.getRolls()
-    except Exception as e:
-        _LOGGER.warning("Could not fetch rolls for switch cleanup: %s", e)
-        return set()
-
-    uids = set()
-    for r in rolls:
-        sid = str(r.get("ID"))
-        uids.add(f"{ip}_{sid}")  # old IP-based format
-        uids.add(build_unique_id(mac, "roll", sid))  # MAC-based format
-        uids.add(build_unique_id(mac, "output", sid))  # generic output format
-    return uids
-
-
+# TODO: remove this 3 below migration functions in future relase e.g. v2.5.0
 async def _migrate_unique_ids(hass, config_entry, mac, ip, ws_manager) -> None:
     """Migrate entity unique_ids from IP-based/legacy to MAC-based format.
 
@@ -234,11 +131,7 @@ def _compute_new_unique_id(uid, mac, ip_prefix, domain, switch_cat_map):
     if domain == "sensor" and "_" in uid:
         prefix, entity_id = uid.rsplit("_", 1)
         if prefix in {"domus", "powerlines", "partitions", "system"}:
-            new_uid = build_unique_id(mac, prefix, entity_id)
-            # Domus sensors now use measurement suffix (e.g. domus_1_temperature)
-            if prefix == "domus":
-                new_uid += "_temperature"
-            return new_uid
+            return build_unique_id(mac, prefix, entity_id)
 
     return None
 
@@ -271,6 +164,19 @@ def _migrate_ip_based_uid(suffix, mac, domain, switch_cat_map):
         return build_unique_id(mac, "scenario", suffix)
 
     return None
+
+
+def _build_device_info(ip, port, use_ssl, system_info):
+    """Build device information dictionary for Home Assistant entities."""
+    protocol = "https" if use_ssl else "http"
+    return {
+        "identifiers": {(DOMAIN, ip)},
+        "name": "Ksenia Lares",
+        "manufacturer": system_info.get("BRAND", "Ksenia"),
+        "model": system_info.get("MODEL", "Lares 4.0"),
+        "sw_version": system_info.get("VER_LITE", {}).get("FW", "Unknown"),
+        "configuration_url": f"{protocol}://{ip}:{port}",
+    }
 
 
 def _register_device(hass, entry, ip, use_ssl, port, system_info):
@@ -375,7 +281,8 @@ async def async_setup_entry(hass, entry):
         # TODO: remove this in future relase e.g. v2.5.0
         # Migrate entities that moved from sensor → binary_sensor domain
         _rm_sensors_migrated2binarysensor(hass, entry)
-
+        # Migrate unique_ids from IP-based/legacy to MAC-based format
+        await _migrate_unique_ids(hass, entry, mac, ip, ws_manager)
 
         # Introducing new platform binary sensors after v2.2.4, auto add binary_sensor if user had sensor platform enabled
         # Use a flag in hass.data[DOMAIN] to ensure we only auto-add binary_sensor once

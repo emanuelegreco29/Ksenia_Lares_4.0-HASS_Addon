@@ -12,6 +12,7 @@ from homeassistant.components.binary_sensor import (
 )
 
 from .const import BINARY_ZONE_CATS, DOMAIN
+from .helpers import build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,7 +39,9 @@ _ZONE_FLAG_MAP = {
 }
 
 
-def _discover_sirens(switches, ws_manager, device_info, async_add_entities, discovered_ids):
+def _discover_sirens(
+    switches, ws_manager, device_info, base_id, async_add_entities, discovered_ids
+):
     """Create siren binary sensor entities from newly discovered switches.
 
     Returns the list of new entities added.
@@ -53,7 +56,9 @@ def _discover_sirens(switches, ws_manager, device_info, async_add_entities, disc
             switch.get("CNV", "").upper() == "H"
             or "siren" in (switch.get("DES") or switch.get("LBL") or switch.get("NM") or "").lower()
         ):
-            new_entities.append(KseniaSirenBinarySensorEntity(ws_manager, switch, device_info))
+            new_entities.append(
+                KseniaSirenBinarySensorEntity(ws_manager, switch, device_info, base_id)
+            )
             discovered_ids.add(unique_id)
 
     if new_entities:
@@ -71,6 +76,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     try:
         ws_manager = hass.data[DOMAIN]["ws_manager"]
         device_info = hass.data[DOMAIN].get("device_info")
+        base_id = hass.data[DOMAIN].get("mac") or ws_manager.ip
         entities = []
 
         # Add zone-based binary sensors
@@ -80,7 +86,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             cat = zone.get("CAT", "").upper()
             if cat in BINARY_ZONE_CATS:
                 entities.append(
-                    KseniaZoneBinarySensorEntity(ws_manager, zone, cat.lower(), device_info)
+                    KseniaZoneBinarySensorEntity(
+                        ws_manager, zone, cat.lower(), device_info, base_id
+                    )
                 )
 
         if entities:
@@ -90,12 +98,14 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         discovered_ids: set[str] = set()
         switches = await ws_manager.getSwitches()
         if switches:
-            _discover_sirens(switches, ws_manager, device_info, async_add_entities, discovered_ids)
+            _discover_sirens(
+                switches, ws_manager, device_info, base_id, async_add_entities, discovered_ids
+            )
 
         async def _on_switches_update(data_list):
             try:
                 _discover_sirens(
-                    data_list, ws_manager, device_info, async_add_entities, discovered_ids
+                    data_list, ws_manager, device_info, base_id, async_add_entities, discovered_ids
                 )
             except Exception as e:
                 _LOGGER.debug("Error during siren binary sensor discovery: %s", e)
@@ -172,10 +182,11 @@ class KseniaZoneBinarySensorEntity(BinarySensorEntity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, ws_manager, sensor_data, sensor_type, device_info=None):
+    def __init__(self, ws_manager, sensor_data, sensor_type, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
         self._sensor_type = sensor_type
+        self._base_id = base_id or ws_manager.ip
         self._device_info = device_info
         self._raw_data = dict(sensor_data)
         self._attr_device_class = _DEVICE_CLASS_MAP.get(sensor_type)
@@ -190,11 +201,8 @@ class KseniaZoneBinarySensorEntity(BinarySensorEntity):
 
     @property
     def unique_id(self):
-        """Return unique ID for entity migration compatibility from old sensors."""
-        # Backwards compatibility hack
-        if self._sensor_type == "gen" or self._sensor_type == "smoke":
-            return f"zones_{self._id}"
-        return f"{self._sensor_type}_{self._id}"
+        """Return unique ID for zone binary sensor."""
+        return build_unique_id(self._base_id, self._sensor_type, self._id)
 
     @property
     def device_info(self):
@@ -238,15 +246,21 @@ class KseniaSirenBinarySensorEntity(BinarySensorEntity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, ws_manager, sensor_data, device_info=None):
+    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
         self._sensor_type = "siren"
+        self._base_id = base_id or ws_manager.ip
         self._device_info = device_info
         self._raw_data = dict(sensor_data)
         self._attr_device_class = _DEVICE_CLASS_MAP.get("siren")
         self._is_on = _parse_is_on("siren", sensor_data)
-        label = sensor_data.get("DES") or sensor_data.get("LBL") or sensor_data.get("NM") or f"Siren {sensor_data.get('ID')}"
+        label = (
+            sensor_data.get("DES")
+            or sensor_data.get("LBL")
+            or sensor_data.get("NM")
+            or f"Siren {sensor_data.get('ID')}"
+        )
         self._extra_attributes = {
             "ID": sensor_data.get("ID"),
             "Description": label,
@@ -258,9 +272,8 @@ class KseniaSirenBinarySensorEntity(BinarySensorEntity):
 
     @property
     def unique_id(self):
-        """Return unique ID for siren entity migration compatibility with upstream/main."""
-        # Use the same format as upstream/main: <panel_ip>_alarm_trigger_status
-        return f"siren_{self._id}"
+        """Return unique ID for siren binary sensor."""
+        return build_unique_id(self._base_id, "siren", self._id)
 
     @property
     def device_info(self):
