@@ -18,6 +18,7 @@ from homeassistant.components.alarm_control_panel.const import (
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
+from .helpers import build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     try:
         ws_manager = hass.data[DOMAIN]["ws_manager"]
         device_info = hass.data[DOMAIN].get("device_info")
+        base_id = hass.data[DOMAIN].get("mac") or ws_manager.ip
 
         # Discover scenarios and build CAT-based mapping
         scenarios = await ws_manager.getScenarios()
@@ -64,7 +66,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             return
 
         # Create single alarm panel entity for entire device
-        entity = KseniaAlarmControlPanel(ws_manager, scenario_map, device_info)
+        entity = KseniaAlarmControlPanel(ws_manager, scenario_map, device_info, base_id)
         async_add_entities([entity], update_before_add=True)
     except Exception as e:
         _LOGGER.error("Error setting up alarm control panel: %s", e, exc_info=True)
@@ -80,7 +82,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "alarm_control_panel"
 
-    def __init__(self, ws_manager, scenario_map, device_info=None):
+    def __init__(self, ws_manager, scenario_map, device_info=None, base_id=None):
         """Initialize the alarm control panel.
 
         Args:
@@ -88,10 +90,12 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             scenario_map: Dictionary mapping scenario CAT→ID
                 Example: {"DISARM": "1", "ARM": "2", "PARTIAL": "3"}
             device_info: Device information for grouping entities
+            base_id: MAC address or IP for unique_id generation
         """
         self.ws_manager = ws_manager
         self._scenarios = scenario_map
         self._device_info = device_info
+        self._base_id = base_id or ws_manager.ip
         self._state = AlarmControlPanelState.DISARMED
         self._system_status = {}  # Track system status from STATUS_SYSTEM
         self._partitions_status = []  # Track partition status from STATUS_PARTITIONS
@@ -281,7 +285,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
     @property
     def unique_id(self):
         """Return unique ID for the entity."""
-        return f"{self.ws_manager.ip}_alarm_control_panel"
+        return build_unique_id(self._base_id, "alarm_control_panel")
 
     @property
     def device_info(self):

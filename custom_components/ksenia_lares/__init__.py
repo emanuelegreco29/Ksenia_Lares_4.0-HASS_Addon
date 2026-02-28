@@ -19,12 +19,14 @@ from .const import (
     DEFAULT_PLATFORMS,
     DOMAIN,
 )
+from .helpers import build_unique_id
 from .websocketmanager import WebSocketManager
 
 _LOGGER = logging.getLogger(__name__)
 SETUP_TIMEOUT = 60  # Increased to allow for device startup delays and initial data fetch retries
 # Track setup tasks to allow cancellation during removal
 _SETUP_TASKS = {}
+
 
 # TODO: remove this in future relase e.g. v2.5.0
 def _rm_sensors_migrated2binarysensor(hass, config_entry) -> None:
@@ -49,7 +51,7 @@ def _rm_sensors_migrated2binarysensor(hass, config_entry) -> None:
         # Check if this unique_id belongs to an entity that moved to binary_sensor
         # Format is "<prefix>_<id>" where prefix matches a zone cat or "siren"
         prefix = uid.rsplit("_", 1)[0] if "_" in uid else ""
-        if prefix not in ({cat.lower() for cat in BINARY_ZONE_CATS} | {"siren"}):
+        if prefix not in ({cat.lower() for cat in BINARY_ZONE_CATS} | {"siren", "zones"}):
             continue
         _LOGGER.info(
             "Removing orphan sensor entity %s (unique_id=%s) "
@@ -64,6 +66,104 @@ def _rm_sensors_migrated2binarysensor(hass, config_entry) -> None:
             "Removed %d sensor entities that will be recreated as binary_sensors",
             removed,
         )
+
+
+# TODO: remove this 3 below migration functions in future relase e.g. v2.5.0
+async def _migrate_unique_ids(hass, config_entry, mac, ip, ws_manager) -> None:
+    """Migrate entity unique_ids from IP-based/legacy to MAC-based format.
+
+    Preserves entity history by updating unique_ids in-place via the entity
+    registry rather than removing and re-creating entities.
+
+    Only runs when MAC is available. Skips entities already migrated.
+    """
+    if not mac:
+        _LOGGER.debug("No MAC address available, skipping unique_id migration")
+        return
+
+    # Build CAT lookup map from device data for switch resolution
+    switch_cat_map = {}  # switch_id → cat (lowercase)
+    try:
+        for s in await ws_manager.getSwitches():
+            switch_cat_map[str(s.get("ID"))] = (s.get("CAT") or "output").lower()
+    except Exception as e:
+        _LOGGER.warning("Could not fetch device data for migration CAT lookup: %s", e)
+
+    ent_reg = er.async_get(hass)
+    entries = er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
+    migrated = 0
+    mac_prefix = f"{mac}_"
+    ip_prefix = f"{ip}_"
+
+    for entry in entries:
+        if entry.platform != DOMAIN:
+            continue
+        uid = entry.unique_id
+        if uid.startswith(mac_prefix):
+            continue  # already migrated
+
+        new_uid = _compute_new_unique_id(uid, mac, ip_prefix, entry.domain, switch_cat_map)
+        if new_uid and new_uid != uid:
+            _LOGGER.info(
+                "Migrating unique_id: %s → %s (entity: %s)",
+                uid,
+                new_uid,
+                entry.entity_id,
+            )
+            ent_reg.async_update_entity(entry.entity_id, new_unique_id=new_uid)
+            migrated += 1
+
+    if migrated:
+        _LOGGER.info("Migrated %d entity unique_ids to MAC-based format", migrated)
+
+
+def _compute_new_unique_id(uid, mac, ip_prefix, domain, switch_cat_map):
+    """Compute new MAC-based unique_id from an old one.
+
+    Returns the new unique_id, or None if the pattern is not recognized.
+    """
+    # --- IP-based UIDs: {ip}_{suffix} ---
+    if uid.startswith(ip_prefix):
+        suffix = uid[len(ip_prefix) :]
+        return _migrate_ip_based_uid(suffix, mac, domain, switch_cat_map)
+
+    # --- Non-IP sensor UIDs: {prefix}_{id} (e.g. domus_1, system_3) ---
+    if domain == "sensor" and "_" in uid:
+        prefix, entity_id = uid.rsplit("_", 1)
+        if prefix in {"domus", "powerlines", "partitions", "system"}:
+            return build_unique_id(mac, prefix, entity_id)
+
+    return None
+
+
+def _migrate_ip_based_uid(suffix, mac, domain, switch_cat_map):
+    """Migrate a {ip}_{suffix} unique_id to MAC-based format."""
+    if domain == "alarm_control_panel":
+        return build_unique_id(mac, "alarm_control_panel")
+
+    if domain == "sensor":
+        return build_unique_id(mac, suffix)
+
+    if domain == "switch":
+        if suffix.startswith("zone_") and suffix.endswith("_bypass"):
+            zone_id = suffix[5:-7]
+            return build_unique_id(mac, "zone_bypass", zone_id)
+        # Output switch → resolve CAT from device data
+        cat = switch_cat_map.get(suffix, "output")
+        return build_unique_id(mac, cat, suffix)
+
+    if domain == "light":
+        return build_unique_id(mac, "light", suffix)
+
+    if domain == "cover":
+        return build_unique_id(mac, "cover", suffix)
+
+    if domain == "button":
+        if suffix.startswith("clear_"):
+            return build_unique_id(mac, "clear", suffix[6:])
+        return build_unique_id(mac, "scenario", suffix)
+
+    return None
 
 
 def _build_device_info(ip, port, use_ssl, system_info):
@@ -173,13 +273,16 @@ async def async_setup_entry(hass, entry):
         device_info = _build_device_info(ip, port, use_ssl, system_info)
         _register_device(hass, entry, ip, use_ssl, port, system_info)
         hass.data[DOMAIN]["device_info"] = device_info
+        mac = system_info.get("MAC")
+        hass.data[DOMAIN]["mac"] = mac
 
         platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
 
         # TODO: remove this in future relase e.g. v2.5.0
         # Migrate entities that moved from sensor → binary_sensor domain
         _rm_sensors_migrated2binarysensor(hass, entry)
-
+        # Migrate unique_ids from IP-based/legacy to MAC-based format
+        await _migrate_unique_ids(hass, entry, mac, ip, ws_manager)
 
         # Introducing new platform binary sensors after v2.2.4, auto add binary_sensor if user had sensor platform enabled
         # Use a flag in hass.data[DOMAIN] to ensure we only auto-add binary_sensor once

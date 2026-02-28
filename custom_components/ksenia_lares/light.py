@@ -7,6 +7,7 @@ from homeassistant.components.light import LightEntity
 from homeassistant.components.light.const import ColorMode
 
 from .const import DOMAIN
+from .helpers import build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,11 +21,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     try:
         ws_manager = hass.data[DOMAIN]["ws_manager"]
         device_info = hass.data[DOMAIN].get("device_info")
+        base_id = hass.data[DOMAIN].get("mac") or ws_manager.ip
 
         lights = await ws_manager.getLights()
         _LOGGER.debug("Found %d lights", len(lights))
 
-        entities = [KseniaLightEntity(ws_manager, light, device_info) for light in lights]
+        entities = [KseniaLightEntity(ws_manager, light, device_info, base_id) for light in lights]
         async_add_entities(entities, update_before_add=True)
 
         # Track discovered light IDs and set up listener-based discovery
@@ -43,7 +45,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 for light in lights:
                     light_id = light.get("ID")
                     if light_id not in discovered_light_ids:
-                        new_entities.append(KseniaLightEntity(ws_manager, light, device_info))
+                        new_entities.append(
+                            KseniaLightEntity(ws_manager, light, device_info, base_id)
+                        )
                         discovered_light_ids.add(light_id)
 
                 if new_entities:
@@ -62,9 +66,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class KseniaLightEntity(LightEntity):
     """Light entity for Ksenia Lares system."""
 
-    def __init__(self, ws_manager, light_data, device_info=None):
+    def __init__(self, ws_manager, light_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._id = light_data.get("ID")
+        self._base_id = base_id or ws_manager.ip
         _LOGGER.debug("Initializing KseniaLightEntity with data: %s", light_data)
         # Use the name given by Ksenia, otherwise "Light <ID>"
         self._name = (
@@ -82,7 +87,7 @@ class KseniaLightEntity(LightEntity):
     @property
     def unique_id(self):
         """Returns a unique ID for the light."""
-        return f"{self.ws_manager.ip}_{self._id}"
+        return build_unique_id(self._base_id, "light", self._id)
 
     @property
     def device_info(self):

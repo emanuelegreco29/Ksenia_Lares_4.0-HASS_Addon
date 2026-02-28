@@ -282,7 +282,7 @@ def test_ksenia_switch_entity_siren_not_added(monkeypatch):
     from custom_components.ksenia_lares import switch
 
     class DummySwitch:
-        def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None):
+        def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None, base_id=None):
             self._name = name
             self._attr_entity_registry_enabled_default = True
     monkeypatch.setattr(switch, "KseniaSwitchEntity", DummySwitch)
@@ -298,7 +298,7 @@ def test_ksenia_switch_entity_siren_not_added(monkeypatch):
     ws_manager.getSwitches = AsyncMock(return_value=switches)
     entities = []
     import asyncio
-    asyncio.run(switch._add_output_switches(ws_manager, {}, entities))
+    asyncio.run(switch._add_output_switches(ws_manager, {}, "test_base", entities))
     added_names = [e._name for e in entities]
     assert "Normal Switch" in added_names
     assert all(
@@ -314,7 +314,7 @@ def test_ksenia_switch_entity_non_siren_enabled(monkeypatch):
     from custom_components.ksenia_lares import switch
 
     class DummySwitch:
-        def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None):
+        def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None, base_id=None):
             self._name = name
             self._attr_entity_registry_enabled_default = True
     monkeypatch.setattr(switch, "KseniaSwitchEntity", DummySwitch)
@@ -331,7 +331,7 @@ def test_ksenia_switch_entity_non_siren_enabled(monkeypatch):
     ws_manager.getSwitches = AsyncMock(return_value=switches)
     entities = []
     import asyncio
-    asyncio.run(switch._add_output_switches(ws_manager, {}, entities))
+    asyncio.run(switch._add_output_switches(ws_manager, {}, "test_base", entities))
     added_names = [e._name for e in entities]
     assert "Normal Switch" in added_names
     assert "Regular Switch" in added_names
