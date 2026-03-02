@@ -792,7 +792,6 @@ class WebSocketManager:
         except websockets.exceptions.ConnectionClosed as e:
             self._logger.error(f"Connection lost during state refresh: {e}")
             self._connection_state = ConnectionState.DISCONNECTED
-            self._running = False
             asyncio.create_task(self._handle_connection_closed())
         except TimeoutError:
             self._logger.warning("State refresh timeout - connection may be stale")
@@ -1659,7 +1658,6 @@ class WebSocketManager:
                 # Connection closed during command send - trigger reconnection
                 self._logger.error(f"Connection lost sending command: {e.__class__.__name__}: {e}")
                 self._connection_state = ConnectionState.DISCONNECTED
-                self._running = False
                 # Reject the pending command
                 cmd_id = command_data.get("command_id")
                 if cmd_id and cmd_id in self._pending_commands:

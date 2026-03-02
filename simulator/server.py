@@ -1127,6 +1127,7 @@ async def home(request: Request) -> str:
                         <tr><th>Setting</th><th>Value</th><th>Action</th></tr>
                         <tr><td>Entry Delay (seconds)</td><td><input id="entry-delay" type="number" value="{ENTRY_DELAY}"></td><td><button onclick="setDelays()">Update</button></td></tr>
                         <tr><td>Exit Delay (seconds)</td><td><input id="exit-delay" type="number" value="{EXIT_DELAY}"></td><td></td></tr>
+                        <tr><td>Reconnect Test</td><td>Force WebSocket drop</td><td><button onclick="forceDisconnectWs()">Drop WS Clients</button></td></tr>
                     </table>
 
                     <h2>System Status</h2>
@@ -1295,6 +1296,16 @@ async def home(request: Request) -> str:
                     const exit = document.getElementById('exit-delay').value;
                     await fetch('/api/config/delays', {{ method: 'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify({{ entry_delay: parseInt(entry), exit_delay: parseInt(exit) }}) }});
                     alert('Delays updated');
+                }}
+                async function forceDisconnectWs() {{
+                    const res = await fetch('/api/ws/disconnect', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ code: 1011, reason: 'simulated_network_drop' }}),
+                    }});
+                    const data = await res.json();
+                    alert(`Forced WS disconnect: closed=${{data.closed}} code=${{data.code}}`);
+                    setTimeout(refreshState, 500);
                 }}
         refreshState();
         setInterval(refreshState, 3000);
@@ -1594,6 +1605,48 @@ async def set_delays(request: Request) -> Dict[str, Any]:
         await state.broadcast_realtime({"STATUS_PARTITIONS": partitions_update})
 
     return {"status": "updated", "entry_delay": ENTRY_DELAY, "exit_delay": EXIT_DELAY}
+
+
+@app.post("/api/ws/disconnect")
+async def force_disconnect_websockets(request: Request) -> Dict[str, Any]:
+    """Force-close all active WebSocket clients for reconnect testing.
+
+    Optional JSON body:
+    - code: close code (default 1011)
+    - reason: close reason (default "simulated_network_drop")
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    close_code = int(body.get("code", 1011))
+    reason = str(body.get("reason", "simulated_network_drop"))
+
+    connections = list(state.connections)
+    closed = 0
+    for ws in connections:
+        try:
+            await ws.close(code=close_code, reason=reason)
+            closed += 1
+        except Exception as e:
+            logger.warning(
+                f"[HTTP API] Failed to close websocket {getattr(ws, 'client', '?')}: {e}"
+            )
+
+    # Ensure stale references are dropped even if a close raises
+    state.connections.clear()
+
+    logger.warning(
+        f"[HTTP API] Forced websocket disconnect executed: closed={closed}, code={close_code}, reason={reason}"
+    )
+    return {
+        "status": "ok",
+        "closed": closed,
+        "code": close_code,
+        "reason": reason,
+    }
 
 
 # ============================================================================

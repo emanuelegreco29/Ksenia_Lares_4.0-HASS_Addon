@@ -105,6 +105,15 @@ curl -X POST http://localhost:8000/api/partitions/1/arm
 curl -X POST http://localhost:8000/api/partitions/1/disarm
 ```
 
+### Force WebSocket Disconnect (Reconnect Testing)
+```bash
+curl -X POST http://localhost:8000/api/ws/disconnect \
+  -H "Content-Type: application/json" \
+  -d '{"code":1011,"reason":"simulated_network_drop"}'
+```
+
+This closes all active WS clients so Home Assistant can exercise runtime reconnect logic.
+
 ## Web UI
 
 **Location**: http://localhost:8000/

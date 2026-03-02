@@ -115,6 +115,72 @@ async def test_system_version_timeout_handling():
     assert result == {}
 
 
+@pytest.mark.asyncio
+async def test_refresh_disconnect_schedules_reconnect_without_shutdown(monkeypatch):
+    """Ensure disconnect triggers reconnect """
+    from custom_components.ksenia_lares import websocketmanager as ws_module
+    from custom_components.ksenia_lares.websocketmanager import ConnectionState, WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._running = True
+    manager._connection_state = ConnectionState.CONNECTED
+    manager._ws = MagicMock()
+    manager._is_ws_closed = MagicMock(return_value=False)
+
+    create_task_mock = MagicMock()
+
+    monkeypatch.setattr(ws_module.websockets.exceptions, "ConnectionClosed", RuntimeError)
+    monkeypatch.setattr(ws_module, "readData", AsyncMock(side_effect=RuntimeError("drop")))
+    monkeypatch.setattr(ws_module.asyncio, "create_task", create_task_mock)
+
+    await manager._refresh_all_state()
+
+    assert manager._running is True
+    assert manager._connection_state == ConnectionState.DISCONNECTED
+    create_task_mock.assert_called_once()
+    scheduled_coro = create_task_mock.call_args[0][0]
+    scheduled_coro.close()
+
+
+@pytest.mark.asyncio
+async def test_command_send_disconnect_schedules_reconnect_without_shutdown(monkeypatch):
+    """Ensure command-send disconnect triggers reconnect """
+    from custom_components.ksenia_lares import websocketmanager as ws_module
+    from custom_components.ksenia_lares.websocketmanager import ConnectionState, WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._running = True
+    manager._connection_state = ConnectionState.CONNECTED
+    manager._ws = MagicMock()
+    manager._loginId = 3
+
+    command_future = asyncio.Future()
+    command_data = {
+        "output_id": "1",
+        "command": "ON",
+        "future": command_future,
+        "command_id": "42",
+    }
+    manager._pending_commands["42"] = {"future": asyncio.Future()}
+
+    create_task_mock = MagicMock()
+
+    monkeypatch.setattr(ws_module.websockets.exceptions, "ConnectionClosed", RuntimeError)
+    monkeypatch.setattr(ws_module, "setOutput", AsyncMock(side_effect=RuntimeError("drop")))
+    monkeypatch.setattr(ws_module.asyncio, "create_task", create_task_mock)
+
+    await manager._dispatch_output_command(command_data)
+
+    assert manager._running is True
+    assert manager._connection_state == ConnectionState.DISCONNECTED
+    assert "42" not in manager._pending_commands
+    assert command_future.done()
+    assert isinstance(command_future.exception(), RuntimeError)
+    create_task_mock.assert_called_once()
+    scheduled_coro = create_task_mock.call_args[0][0]
+    scheduled_coro.close()
+
+
 def test_sensor_imports():
     """Test that sensor entities can be imported."""
     from custom_components.ksenia_lares.sensor import (
