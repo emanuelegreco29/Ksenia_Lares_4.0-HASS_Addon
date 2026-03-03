@@ -539,13 +539,29 @@ class WebSocketManager:
         Args:
             timeout: Maximum seconds to wait for data
 
+        Returns:
+            True when both READ data and REALTIME registration are available,
+            False on timeout or when disconnected.
+
         Note:
-            Does not raise TimeoutError; caller should check if data is available.
+            Does not raise TimeoutError.
         """
-        start_time = time.time()
+        if self._readData is not None and self._realtime_registered:
+            return True
+
+        start_time = time.monotonic()
         while self._readData is None or not self._realtime_registered:
-            if time.time() - start_time >= timeout:
-                self._logger.warning(f"Initial data wait timeout after {timeout}s")
+            if self._connection_state in (ConnectionState.DISCONNECTED, ConnectionState.ERROR):
+                self._logger.debug(
+                    "Initial data unavailable: connection state=%s",
+                    self._connection_state.value,
+                )
+                return False
+
+            if time.monotonic() - start_time >= timeout:
+                self._logger.info(f"Initial data wait timeout after {timeout}s")
+                return False
+
             await asyncio.sleep(0.5)
 
     async def connect(self):
@@ -2013,7 +2029,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getLights, returning empty list"
@@ -2042,7 +2058,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getRolls, returning empty list"
@@ -2079,7 +2095,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getSwitches, returning empty list"
@@ -2140,7 +2156,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning("Initial data not available for getDom, returning empty list")
                 return []
@@ -2172,7 +2188,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     f"Initial data not available for getSensor({sName}), returning empty list"
@@ -2245,7 +2261,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getSystem, returning empty list"
