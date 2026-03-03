@@ -58,6 +58,7 @@ DOMUS_LABEL = "Living Room Domus"
 # Output labels
 OUTPUT_LABEL_SIREN = "Outdoor siren"
 OUTPUT_LABEL_LIGHT = "Hall light"
+OUTPUT_LABEL_COVER = "Living Room Blinds"
 
 # Partition labels
 PARTITION_LABEL_SHELL = "Shell/Perimeter Protection"
@@ -86,6 +87,7 @@ ZONE_4 = "4"
 # Output IDs
 OUTPUT_SIREN = "1"
 OUTPUT_LIGHT = "2"
+OUTPUT_COVER = "3"
 
 # ============================================================================
 # Utility Functions
@@ -260,6 +262,7 @@ class SimulatorState:
         return {
             OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "STA": "OFF", "LBL": OUTPUT_LABEL_SIREN, "CNV": "H"},
             OUTPUT_LIGHT: {"ID": OUTPUT_LIGHT, "STA": "OFF", "LBL": OUTPUT_LABEL_LIGHT},
+            OUTPUT_COVER: {"ID": OUTPUT_COVER, "STA": "OFF", "LBL": OUTPUT_LABEL_COVER, "CAT": "ROLL", "POS": "0"},
         }
 
     def _init_zone_config(self) -> Dict[str, Dict[str, Any]]:
@@ -1082,6 +1085,16 @@ async def home(request: Request) -> str:
             f"<td><button onclick=updateDomus('{sid}')>Send</button></td></tr>"
         )
     domus_rows = "".join(domus_rows_parts)
+    covers = [o for o in state.outputs.values() if o.get("CAT") == "ROLL"]
+    covers_rows = "".join(
+        f"<tr><td>{c['ID']}</td><td>{c['LBL']}</td><td>{c.get('POS', '0')}</td>"
+        f"<td><button onclick=coverCmd('{c['ID']}','UP')>Open</button>"
+        f"<button onclick=coverCmd('{c['ID']}','DOWN')>Close</button>"
+        f"<button onclick=coverCmd('{c['ID']}','ALT')>Stop</button>"
+        f"<input id='cover-pos-{c['ID']}' type='number' min='0' max='100' value='{c.get('POS', '0')}' style='width:50px'>"
+        f"<button onclick=coverSetPos('{c['ID']}')>Set</button></td></tr>"
+        for c in covers
+    )
     scenarios = [
         {"ID": "1", "DES": SCENARIO_LABEL_DISARM},
         {"ID": "2", "DES": SCENARIO_LABEL_ARM_AWAY},
@@ -1147,6 +1160,9 @@ async def home(request: Request) -> str:
 
                     <h2>Domus Sensors</h2>
                       <table><tr><th>ID</th><th>Label</th><th>Temp (°C)</th><th>Humidity (%)</th><th>Light (lux)</th><th>PIR</th><th>TL</th><th>TH</th><th>Action</th></tr><tbody id="domus-body">{domus_rows}</tbody></table>
+
+                    <h2>Covers</h2>
+                      <table><tr><th>ID</th><th>Label</th><th>Position (%)</th><th>Action</th></tr><tbody id="covers-body">{covers_rows}</tbody></table>
                 </div>
 
                 <div class="status">
@@ -1246,6 +1262,35 @@ async def home(request: Request) -> str:
                     refreshState();
                 }}
 
+                let coverDirty = false;
+
+                function renderCovers(covers) {{
+                    if (coverDirty) return;
+                    const tbody = document.getElementById('covers-body');
+                    tbody.innerHTML = covers.map(c =>
+                        `<tr><td>${{c.ID}}</td><td>${{c.LBL}}</td><td>${{c.POS || '0'}}</td>`+
+                        `<td><button onclick=coverCmd('${{c.ID}}','UP')>Open</button>`+
+                        `<button onclick=coverCmd('${{c.ID}}','DOWN')>Close</button>`+
+                        `<button onclick=coverCmd('${{c.ID}}','ALT')>Stop</button>`+
+                        `<input id='cover-pos-${{c.ID}}' type='number' min='0' max='100' value='${{c.POS || 0}}' style='width:50px'>`+
+                        `<button onclick=coverSetPos('${{c.ID}}')>Set</button></td></tr>`
+                    ).join('');
+                    tbody.querySelectorAll('input').forEach(el => el.addEventListener('input', () => {{ coverDirty = true; }}));
+                }}
+
+                async function coverCmd(id, cmd) {{
+                    await fetch(`/api/covers/${{id}}/command`, {{ method: 'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify({{ cmd }}) }});
+                    coverDirty = false;
+                    refreshState();
+                }}
+
+                async function coverSetPos(id) {{
+                    const pos = document.getElementById(`cover-pos-${{id}}`).value;
+                    await fetch(`/api/covers/${{id}}/command`, {{ method: 'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify({{ cmd: pos }}) }});
+                    coverDirty = false;
+                    refreshState();
+                }}
+
                 function renderLogs(logs) {{
                     if (!logs || logs.length === 0) {{
                         return 'No logs';
@@ -1265,6 +1310,7 @@ async def home(request: Request) -> str:
                     renderAlarmStatus(data.partitions || []);
                     document.getElementById('system-status').innerHTML = renderSystem(data.system);
                     renderDomus(data.bus_ha_sensors || []);
+                    renderCovers(data.covers || []);
                     document.getElementById('logs').innerHTML = renderLogs(data.logs);
                 }}
                 async function toggleOutput(id) {{
@@ -1359,6 +1405,7 @@ async def api_state() -> Dict[str, Any]:
 
     return {
         "outputs": list(state.outputs.values()),
+        "covers": [o for o in state.outputs.values() if o.get("CAT") == "ROLL"],
         "zones": list(state.zones.values()),
         "partitions": [get_partition_status_data(p) for p in state.partitions.values()],
         "system": [{"ID": "1", "INFO": [], "ARM": system_arm}],
@@ -1422,6 +1469,29 @@ async def api_update_domus(domus_id: str, values: Dict[str, str]) -> Response:
         sensor["DOMUS"].update(values)
         await state.broadcast_realtime({"STATUS_BUS_HA_SENSORS": [sensor]})
         return JSONResponse(content=sensor)
+
+
+@app.post("/api/covers/{cover_id}/command", response_model=None)
+async def api_cover_command(cover_id: str, request: Request) -> Response:
+    """Send a command to a cover (open/close/stop/set position)."""
+    body = await request.json()
+    cmd = str(body.get("cmd", "")).upper()
+    async with state.lock:
+        cover = state.outputs.get(cover_id)
+        if not cover or cover.get("CAT") != "ROLL":
+            return JSONResponse(status_code=404, content={"detail": "Cover not found"})
+        if cmd == "UP":
+            cover["POS"] = "100"
+        elif cmd == "DOWN":
+            cover["POS"] = "0"
+        elif cmd == "ALT":
+            pass  # stop — keep current position
+        elif cmd.isdigit():
+            cover["POS"] = str(max(0, min(100, int(cmd))))
+        else:
+            return JSONResponse(status_code=400, content={"detail": f"Unknown command: {cmd}"})
+        await state.broadcast_realtime({"STATUS_OUTPUTS": [cover]})
+        return JSONResponse(content=cover)
 
 
 @app.post("/api/partitions/{partition_id}/arm", response_model=None)
@@ -1751,7 +1821,24 @@ async def handle_websocket_cmd_set_output(ws: WebSocket, msg_id: str, payload: D
     sta = str(output.get("STA", "OFF")).upper()
     async with state.lock:
         if oid in state.outputs:
-            state.outputs[oid]["STA"] = sta
+            device = state.outputs[oid]
+            if device.get("CAT") == "ROLL":
+                # Cover commands: UP, DOWN, ALT (stop), or numeric position
+                if sta == "UP":
+                    device["POS"] = "100"
+                    device["STA"] = "OFF"
+                elif sta == "DOWN":
+                    device["POS"] = "0"
+                    device["STA"] = "OFF"
+                elif sta == "ALT":
+                    device["STA"] = "OFF"
+                elif sta.isdigit():
+                    device["POS"] = str(max(0, min(100, int(sta))))
+                    device["STA"] = "OFF"
+                else:
+                    device["STA"] = sta
+            else:
+                device["STA"] = sta
             await state.broadcast_realtime({"STATUS_OUTPUTS": [state.outputs[oid]]})
     response = build_message(
         cmd="CMD_USR_RES",
