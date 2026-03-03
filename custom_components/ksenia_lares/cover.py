@@ -6,7 +6,7 @@ import time
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 
 from .const import DOMAIN
-from .helpers import build_unique_id
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         _LOGGER.error("Error setting up covers: %s", e, exc_info=True)
 
 
-class KseniaRollEntity(CoverEntity):
+class KseniaRollEntity(KseniaEntity, CoverEntity):
     """Cover entity for Ksenia roller blinds/shutters."""
 
     def __init__(self, ws_manager, roll_id, name, roll_data, device_info=None, base_id=None):
@@ -90,20 +90,36 @@ class KseniaRollEntity(CoverEntity):
         # Store complete raw data for debugging and transparency
         self._raw_data = dict(roll_data)
 
+    async def async_added_to_hass(self):
+        """Subscribe to realtime cover updates."""
+        await super().async_added_to_hass()
+        self.ws_manager.register_listener("covers", self._handle_realtime_update)
+
+    async def _handle_realtime_update(self, data_list):
+        """Process realtime STATUS_OUTPUTS updates for this cover."""
+        for data in data_list:
+            if str(data.get("ID")) == str(self._roll_id):
+                _LOGGER.debug("[cover] Entity %s update: %s", self._roll_id, data)
+                try:
+                    new_pos = int(data.get("POS", 0))
+                except Exception:
+                    new_pos = 0
+                # If there's a recent pending command, keep the local state
+                if self._pending_command is not None:
+                    cmd, ts = self._pending_command
+                    if time.time() - ts < 2:
+                        return
+                    else:
+                        self._pending_command = None
+                self._position = new_pos
+                self._raw_data.update(data)
+                self.async_write_ha_state()
+                break
+
     @property
     def unique_id(self):
         """Returns a unique ID for the roller blind."""
         return build_unique_id(self._base_id, "cover", self._roll_id)
-
-    @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
-    def available(self):
-        """Return True if the entity is available."""
-        return self.ws_manager.available
 
     @property
     def name(self):
@@ -180,34 +196,7 @@ class KseniaRollEntity(CoverEntity):
         self._pending_command = ("set", time.time())
         self.async_write_ha_state()
 
-    """
-    Updates the state of the roller blind by retrieving the full list of
-    roller blinds and finding the one with the matching ID.
-
-    If a recent command is pending (< 2 seconds), it keeps the local state.
-    """
-
-    async def async_update(self):
-        rolls = await self.ws_manager.getRolls()
-        _LOGGER.debug("async_update: full rolls data: %s", rolls)
-        for roll in rolls:
-            if str(roll.get("ID")) == str(self._roll_id):
-                try:
-                    new_pos = int(roll.get("POS", 0))
-                except Exception:
-                    new_pos = 0
-                if self._pending_command is not None:
-                    cmd, ts = self._pending_command
-                    if time.time() - ts < 2:
-                        return
-                    else:
-                        self._pending_command = None
-                self._position = new_pos
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(roll)
-                break
-
     @property
     def should_poll(self) -> bool:
-        """Covers use periodic polling for multi-client reconciliation."""
-        return True
+        """No polling needed — state is fully listener-driven."""
+        return False

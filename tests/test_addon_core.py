@@ -617,6 +617,36 @@ async def test_ksenia_light_entity_off_state():
     assert entity.is_on is False
 
 
+@pytest.mark.asyncio
+async def test_light_entity_availability_listener_via_async_added_to_hass():
+    """Verify availability listener is registered per-entity in async_added_to_hass."""
+    from custom_components.ksenia_lares.light import KseniaLightEntity
+
+    listeners: dict[str, list] = {}
+
+    def _register_listener(entity_type, callback):
+        listeners.setdefault(entity_type, []).append(callback)
+
+    ws_manager = MagicMock()
+    ws_manager.ip = "192.168.1.50"
+    ws_manager.register_listener = MagicMock(side_effect=_register_listener)
+
+    light_data = {"ID": "1", "DES": "Kitchen Light", "STA": "off", "CAT": "LIGHT"}
+    entity = KseniaLightEntity(ws_manager, light_data)
+    entity.hass = object()
+    entity.async_write_ha_state = MagicMock()
+
+    await entity.async_added_to_hass()
+
+    # Should register both "lights" (realtime) and "connection" (availability) listeners
+    assert "lights" in listeners
+    assert "connection" in listeners
+
+    # Trigger connection change and verify state write
+    await listeners["connection"][0]({"state": "disconnected", "available": False})
+    entity.async_write_ha_state.assert_called_once()
+
+
 # ============================================================================
 # Cover Entity Tests
 # ============================================================================
@@ -1455,12 +1485,119 @@ async def test_alarm_control_panel_arm_without_code():
 
 @pytest.mark.asyncio
 async def test_alarm_control_panel_should_poll():
-    """Test should_poll is disabled (uses listeners)."""
+    """Test should_poll is disabled (fully listener-driven)."""
     from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
-    
+
     ws_manager = MagicMock()
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
-    
-    assert panel.should_poll is True
-    assert panel.scan_interval.total_seconds() == 60
+
+    assert panel.should_poll is False
+
+
+# ============================================================================
+# Reconnection & Prolonged Connection Loss Callback Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_prolonged_loss_callback_invoked_only_once():
+    """Test _invoke_prolonged_loss_callback_once calls the callback exactly once."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    callback = AsyncMock()
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock(), on_prolonged_connection_loss=callback)
+
+    await manager._invoke_prolonged_loss_callback_once()
+    await manager._invoke_prolonged_loss_callback_once()
+
+    callback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_prolonged_loss_callback_not_invoked_when_not_set():
+    """Test _invoke_prolonged_loss_callback_once is safe when no callback is set."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    # Should not raise
+    await manager._invoke_prolonged_loss_callback_once()
+    assert manager._prolonged_loss_callback_invoked is False
+
+
+@pytest.mark.asyncio
+async def test_prolonged_loss_callback_resets_after_successful_reconnect():
+    """Test prolonged_loss_callback_invoked flag resets when connection succeeds."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    callback = AsyncMock()
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock(), on_prolonged_connection_loss=callback)
+
+    # Simulate prolonged loss callback was invoked
+    manager._prolonged_loss_callback_invoked = True
+
+    # Simulate successful connection resets the flag
+    # (In real code, _connect_with_uri sets _prolonged_loss_callback_invoked = False on success)
+    manager._prolonged_loss_callback_invoked = False
+    manager._retries = 0
+
+    # Now the callback should be invocable again
+    await manager._invoke_prolonged_loss_callback_once()
+    callback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_initial_data_returns_false_on_disconnect():
+    """Test wait_for_initial_data returns False when connection is disconnected."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager, ConnectionState
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._connection_state = ConnectionState.DISCONNECTED
+    manager._readData = None
+
+    result = await manager.wait_for_initial_data(timeout=1)
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_initial_data_returns_true_when_ready():
+    """Test wait_for_initial_data returns True immediately when data is available."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager, ConnectionState
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._connection_state = ConnectionState.CONNECTED
+    manager._readData = {"STATUS_ZONES": []}
+    manager._realtime_registered = True
+
+    result = await manager.wait_for_initial_data(timeout=1)
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_notify_connection_state_after_cleanup_in_handle_connection_closed():
+    """Test _handle_connection_closed notifies listeners after clearing cache."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager, ConnectionState
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._connection_state = ConnectionState.CONNECTED
+    manager._running = True
+    manager._readData = {"STATUS_ZONES": [{"ID": "1"}]}
+    manager._realtime_registered = True
+    manager._ws = MagicMock()
+
+    # Track what state the listener sees when notified
+    observed_readData = []
+
+    async def connection_listener(payload):
+        observed_readData.append(manager._readData)
+
+    manager.listeners["connection"] = [connection_listener]
+
+    # Prevent actual reconnection
+    manager._reconnecting = True
+
+    await manager._handle_connection_closed()
+
+    # Listener should have seen _readData as None (cleared before notification)
+    assert len(observed_readData) == 1
+    assert observed_readData[0] is None

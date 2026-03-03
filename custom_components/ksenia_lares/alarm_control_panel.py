@@ -5,7 +5,6 @@ Scenarios are discovered from SCENARIOS configuration using CAT (category) field
 """
 
 import logging
-from datetime import timedelta
 
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
@@ -18,7 +17,7 @@ from homeassistant.components.alarm_control_panel.const import (
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from .helpers import build_unique_id
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,7 +71,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         _LOGGER.error("Error setting up alarm control panel: %s", e, exc_info=True)
 
 
-class KseniaAlarmControlPanel(AlarmControlPanelEntity):
+class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
     """Alarm control panel entity for Ksenia Lares device.
 
     Manages all partitions as a single device entity using scenarios.
@@ -102,6 +101,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
 
     async def async_added_to_hass(self):
         """Subscribe to system and partition status realtime updates."""
+        await super().async_added_to_hass()
         _LOGGER.debug("[KseniaACP] Registering listener for 'systems' realtime updates")
         self.ws_manager.register_listener("systems", self._handle_system_status_update)
         _LOGGER.debug("[KseniaACP] Registering listener for 'partitions' realtime updates")
@@ -288,16 +288,6 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         return build_unique_id(self._base_id, "alarm_control_panel")
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
-    @property
     def alarm_state(self):
         """Return the current alarm state."""
         return self._state
@@ -337,44 +327,8 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
 
     @property
     def should_poll(self) -> bool:
-        """Poll periodically as fallback for missed realtime updates."""
-        return True
-
-    @property
-    def scan_interval(self):
-        """Poll every 60 seconds as fallback."""
-        return timedelta(seconds=60)
-
-    async def async_update(self):
-        """Fallback polling to ensure state is current.
-
-        Requests latest system and partition status if realtime update missed.
-        HA will automatically call async_write_ha_state() after this method returns.
-        """
-        try:
-            # Fetch fresh system status to ensure exit/entry delays are reflected
-            # This is critical because the device may not broadcast STATUS_SYSTEM updates
-            # during countdown periods
-            system_data = await self.ws_manager.getSensor("STATUS_SYSTEM")
-            if system_data and len(system_data) > 0:
-                self._system_status.update(system_data[0])
-
-            # Also fetch partition status to detect alarm states
-            # Partition alarm status is only available in STATUS_PARTITIONS
-            try:
-                partitions = self.ws_manager.get_cached_data("STATUS_PARTITIONS")
-                if partitions:
-                    self._partitions_status = partitions
-            except Exception as partition_err:
-                _LOGGER.debug(f"Could not fetch partition status during polling: {partition_err}")
-
-            if system_data:
-                self._compute_state_from_system()
-                _LOGGER.debug(f"Polling update: alarm state = {self._state}")
-            else:
-                _LOGGER.debug("No system status available in polling update")
-        except Exception as e:
-            _LOGGER.debug(f"Polling update failed for alarm panel: {e}", exc_info=True)
+        """No polling needed — state is fully listener-driven."""
+        return False
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         """Disarm all partitions.

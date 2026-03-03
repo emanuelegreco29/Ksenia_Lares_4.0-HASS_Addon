@@ -1,61 +1,16 @@
 """Sensors for Ksenia Lares integration."""
 
 import logging
-from abc import ABC
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import EntityCategory
 
 from .const import BINARY_ZONE_CATS, DOMAIN
-from .helpers import build_unique_id
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class KseniaRealtimeListenerEntity(SensorEntity, ABC):
-    """Base class for sensor entities that listen to realtime updates.
-
-    Handles common listener registration and logging patterns for entities
-    that need to respond to real-time data changes from the panel.
-    """
-
-    _entity_type: str  # Must be set by subclass
-    _component_name: str  # Display name for logging
-
-    def __init__(self, ws_manager, device_info=None, base_id=None):
-        """Initialize realtime listener entity.
-
-        Args:
-            ws_manager: WebSocketManager instance
-            device_info: Device information for grouping entities
-            base_id: MAC address or IP for unique_id generation
-        """
-        self.ws_manager = ws_manager
-        self._device_info = device_info
-        self._base_id = base_id or ws_manager.ip
-
-    async def async_added_to_hass(self):
-        """Register listener for real-time updates."""
-        _LOGGER.debug(
-            f"[{self._component_name}] Registering listener for '{self._entity_type}' updates"
-        )
-        self.ws_manager.register_listener(self._entity_type, self._handle_realtime_update)
-
-    async def _handle_realtime_update(self, data):
-        """Handle real-time data update. Must be implemented by subclass."""
-        raise NotImplementedError
-
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
-    @property
-    def device_info(self):
-        """Return device information."""
-        return self._device_info
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -190,7 +145,7 @@ def _add_diagnostic_sensors(ws_manager, device_info, base_id, entities):
     )
 
 
-class KseniaSensorEntity(SensorEntity):
+class KseniaSensorEntity(KseniaEntity, SensorEntity):
     """Base sensor entity for Ksenia Lares devices."""
 
     _attr_has_entity_name = True
@@ -236,11 +191,6 @@ class KseniaSensorEntity(SensorEntity):
         )
         self._device_info = device_info
         self._dispatch_init(sensor_data, sensor_type)
-
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
 
     def _dispatch_init(self, sensor_data: dict, sensor_type: str) -> None:
         """Dispatch sensor initialisation to the appropriate per-type helper.
@@ -404,6 +354,7 @@ class KseniaSensorEntity(SensorEntity):
 
     async def async_added_to_hass(self):
         """Register the appropriate realtime listener with the WebSocket manager once added to HA."""
+        await super().async_added_to_hass()
         self.ws_manager.register_listener(self._sensor_type, self._handle_realtime_update)
 
     """
@@ -423,6 +374,7 @@ class KseniaSensorEntity(SensorEntity):
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
+            _LOGGER.debug("[%s] Entity %s update: %s", self._sensor_type, self._id, data)
             record_handler = _record_handlers.get(self._sensor_type)
             if record_handler:
                 record_handler(data)
@@ -477,11 +429,6 @@ class KseniaSensorEntity(SensorEntity):
         return build_unique_id(self._base_id, self._sensor_type, self._id)
 
     @property
-    def device_info(self) -> dict | None:
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def entity_category(self) -> EntityCategory | None:
         """Return the entity category for this sensor."""
         # Powerlines are diagnostic sensors
@@ -514,105 +461,11 @@ class KseniaSensorEntity(SensorEntity):
 
     @property
     def should_poll(self) -> bool:
-        """Indicates if the sensor should be polled to retrieve its state."""
-        return True
-
-    """
-    Update the state of the sensor.
-
-    This method is called periodically by Home Assistant to refresh the sensor's state.
-    It retrieves the latest data from the Ksenia system and updates the sensor's state
-    and attributes accordingly.
-    """
-
-    async def async_update(self):
-        """Poll the panel for the latest sensor state."""
-        if self._sensor_type == "partitions":
-            await self._poll_partitions()
-        elif self._sensor_type == "powerlines":
-            await self._poll_powerlines()
-        elif self._sensor_type == "domus":
-            await self._poll_domus()
-        else:
-            await self._poll_generic()
-
-    # ------------------------------------------------------------------
-    # Per-type polling helpers (called from async_update)
-    # ------------------------------------------------------------------
-
-    async def _poll_partitions(self) -> None:
-        """Poll STATUS_PARTITIONS and update state/attributes."""
-        try:
-            sensors = await self.ws_manager.getSensor("STATUS_PARTITIONS")
-            if not sensors:
-                _LOGGER.warning(
-                    f"Partition sensor poll: STATUS_PARTITIONS returned empty list for partition {self._id}"
-                )
-                return
-            for sensor in sensors:
-                if str(sensor.get("ID")) != str(self._id):
-                    continue
-                state, attrs = self._build_partition_state_and_attrs(sensor)
-                self._state = state
-                self._attributes = attrs
-                self._raw_data.update(sensor)
-                _LOGGER.debug(f"Partition sensor polled: ID={self._id}, state={self._state}")
-                break
-            else:
-                _LOGGER.warning(
-                    f"Partition sensor poll: ID {self._id} not found in STATUS_PARTITIONS response"
-                )
-        except Exception as e:
-            _LOGGER.warning(f"Error polling partition sensor {self._id}: {e}")
-
-    async def _poll_powerlines(self) -> None:
-        """Poll POWER_LINES and update state/attributes."""
-        sensors = await self.ws_manager.getSensor("POWER_LINES")
-        for sensor in sensors:
-            if sensor["ID"] == self._id:
-                pcons_val = self._parse_power_float(sensor.get("PCONS"), "PCONS")
-                pprod_val = self._parse_power_float(sensor.get("PPROD"), "PPROD")
-                self._state = (
-                    pcons_val if pcons_val is not None else sensor.get("STATUS", "unknown")
-                )
-                self._attributes = {
-                    "Consumption": pcons_val,
-                    "Production": pprod_val,
-                    "Status": sensor.get("STATUS", "unknown"),
-                }
-                self._raw_data.update(sensor)
-                break
-
-    async def _poll_domus(self) -> None:
-        """Poll domus devices and update state/attributes."""
-        sensors = await self.ws_manager.getDom()
-        for sensor in sensors:
-            if sensor["ID"] == self._id:
-                temperature, humidity, lht, pir, tl, th = self._parse_domus_readings(sensor)
-                self._state = temperature if temperature is not None else "Unknown"
-                self._attributes = {
-                    "temperature": temperature if temperature is not None else "Unknown",
-                    "humidity": humidity if humidity is not None else "Unknown",
-                    "light": lht,
-                    "pir": pir,
-                    "tl": tl,
-                    "th": th,
-                }
-                self._raw_data.update(sensor)
-                break
-
-    async def _poll_generic(self) -> None:
-        """Poll using the sensor type name as the data key (fallback)."""
-        sensors = await self.ws_manager.getSensor(self._sensor_type.upper())
-        for sensor in sensors:
-            if sensor["ID"] == self._id:
-                self._state = sensor.get("STA", "unknown")
-                self._attributes = sensor
-                self._raw_data.update(sensor)
-                break
+        """No polling needed — state is fully listener-driven."""
+        return False
 
 
-class KseniaAlarmSystemStatusSensor(SensorEntity):
+class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
     """Sensor entity for the system-wide alarm status (armed/disarmed/etc).
 
     Uses HA translation key for its name rather than dynamic device data.
@@ -667,16 +520,6 @@ class KseniaAlarmSystemStatusSensor(SensorEntity):
         return build_unique_id(self._base_id, "system", self._id)
 
     @property
-    def device_info(self) -> dict | None:
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
-    @property
     def native_value(self) -> str | None:
         """Return the state of the sensor."""
         return self._state
@@ -695,11 +538,12 @@ class KseniaAlarmSystemStatusSensor(SensorEntity):
 
     @property
     def should_poll(self) -> bool:
-        """Return True — system status is polled."""
-        return True
+        """No polling needed — state is fully listener-driven."""
+        return False
 
     async def async_added_to_hass(self):
         """Register realtime listener for system updates."""
+        await super().async_added_to_hass()
         self.ws_manager.register_listener("systems", self._handle_realtime_update)
 
     async def _handle_realtime_update(self, data_list):
@@ -722,25 +566,8 @@ class KseniaAlarmSystemStatusSensor(SensorEntity):
             self.async_write_ha_state()
             break
 
-    async def async_update(self):
-        """Poll STATUS_SYSTEM and update state from ARM data."""
-        try:
-            system_data = await self.ws_manager.getSensor("STATUS_SYSTEM")
-            for system in system_data:
-                if str(system.get("ID")) != str(self._id):
-                    continue
-                if "ARM" in system and isinstance(system["ARM"], dict):
-                    arm_data = system["ARM"]
-                    state_code = arm_data.get("S")
-                    self._state = self._ARM_STATE_MAP.get(state_code, state_code)
-                    self._raw_data.update(system)
-                    _LOGGER.debug("System sensor polled: ID=%s, state=%s", self._id, self._state)
-                break
-        except Exception as e:
-            _LOGGER.debug("Error polling system status: %s", e)
 
-
-class KseniaAlarmTriggerStatusSensor(SensorEntity):
+class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
     """Aggregated sensor showing system-wide alarm trigger status across all partitions."""
 
     _attr_has_entity_name = True
@@ -761,13 +588,9 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
         }
         self._raw_data = {}
 
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
     async def async_added_to_hass(self):
         """Subscribe to partition and zone realtime updates."""
+        await super().async_added_to_hass()
         self.ws_manager.register_listener("partitions", self._handle_partition_update)
         self.ws_manager.register_listener("zones", self._handle_zone_update)
         # Build zone name map from static data
@@ -852,11 +675,6 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
         return build_unique_id(self._base_id, "alarm_trigger_status")
 
     @property
-    def device_info(self) -> dict | None:
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def native_value(self) -> str | None:
         """Returns the state of the sensor."""
         return self._state
@@ -877,31 +695,11 @@ class KseniaAlarmTriggerStatusSensor(SensorEntity):
 
     @property
     def should_poll(self) -> bool:
-        """Poll periodically as fallback for missed realtime updates."""
-        return True
-
-    @property
-    def scan_interval(self):
-        """Poll every 30 seconds as fallback."""
-        return timedelta(seconds=30)
-
-    async def async_update(self):
-        """Fallback polling to ensure state is current."""
-        try:
-            # Get latest partition data
-            partitions = await self.ws_manager.getSensor("STATUS_PARTITIONS")
-            if partitions:
-                await self._handle_partition_update(partitions)
-
-            # Get latest zone data
-            zones = await self.ws_manager.getSensor("STATUS_ZONES")
-            if zones:
-                await self._handle_zone_update(zones)
-        except Exception as e:
-            _LOGGER.debug(f"Polling update failed: {e}")
+        """No polling needed — state is fully listener-driven."""
+        return False
 
 
-class KseniaAlarmTamperStatusSensor(SensorEntity):
+class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system-wide tampering status from partitions, zones, and peripherals."""
 
     _attr_has_entity_name = True
@@ -935,13 +733,9 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
         }
         self._raw_data = {}
 
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
     async def async_added_to_hass(self):
         """Subscribe to partition, zone, and tamper realtime updates."""
+        await super().async_added_to_hass()
         self.ws_manager.register_listener("partitions", self._handle_partition_update)
         self.ws_manager.register_listener("zones", self._handle_zone_update)
         self.ws_manager.register_listener("tampers", self._handle_tampers_update)
@@ -1056,11 +850,6 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
         return build_unique_id(self._base_id, "system_tampering")
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -1097,7 +886,7 @@ class KseniaAlarmTamperStatusSensor(SensorEntity):
         return False
 
 
-class KseniaEventLogSensor(SensorEntity):
+class KseniaEventLogSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing last event log EV and attributes with last 5 logs."""
 
     _attr_has_entity_name = True
@@ -1114,26 +903,15 @@ class KseniaEventLogSensor(SensorEntity):
         self._raw_logs = []
 
     @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
-    @property
     def unique_id(self):
         """Return a unique ID for the event log sensor."""
         return build_unique_id(self._base_id, "event_log")
-
-    @property
-    def device_info(self):
-        """Return the device info for the event log sensor."""
-        return self._device_info
 
     @property
     def native_value(self):
         """Return the most recent log entry as the sensor state."""
         return self._state
 
-    @staticmethod
     @staticmethod
     def _format_log_datetime(entry: dict) -> str:
         """Return a formatted date-time string from a log entry, or empty string."""
@@ -1181,7 +959,7 @@ class KseniaEventLogSensor(SensorEntity):
 
     @property
     def should_poll(self) -> bool:
-        """Poll periodically to fetch latest logs."""
+        """Poll periodically to fetch latest logs (not yet listener-driven)."""
         return True
 
     async def async_update(self):
@@ -1215,7 +993,7 @@ class KseniaEventLogSensor(SensorEntity):
             _LOGGER.error(f"Error updating Event log sensor: {e}")
 
 
-class KseniaLastAlarmEventSensor(SensorEntity):
+class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor tracking the last alarm event with zones, partitions, and timestamps."""
 
     _attr_has_entity_name = True
@@ -1239,13 +1017,9 @@ class KseniaLastAlarmEventSensor(SensorEntity):
         self._last_partition_state = {"1": "Not triggered", "2": "Not triggered"}
         self._raw_data = {}
 
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
     async def async_added_to_hass(self):
         """Subscribe to zone and partition realtime updates."""
+        await super().async_added_to_hass()
         self.ws_manager.register_listener("zones", self._handle_zone_update)
         self.ws_manager.register_listener("partitions", self._handle_partition_update)
 
@@ -1344,11 +1118,6 @@ class KseniaLastAlarmEventSensor(SensorEntity):
         return build_unique_id(self._base_id, "last_alarm_event")
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -1396,31 +1165,11 @@ class KseniaLastAlarmEventSensor(SensorEntity):
 
     @property
     def should_poll(self) -> bool:
-        """Poll periodically to sync current alarm state."""
-        return True
-
-    @property
-    def scan_interval(self):
-        """Poll every 30 seconds."""
-        return timedelta(seconds=30)
-
-    async def async_update(self):
-        """Poll to sync current alarm state and detect ongoing alarms."""
-        try:
-            # Get current partition state
-            partitions = await self.ws_manager.getSensor("STATUS_PARTITIONS")
-            if partitions:
-                await self._handle_partition_update(partitions)
-
-            # Get current zone state
-            zones = await self.ws_manager.getSensor("STATUS_ZONES")
-            if zones:
-                await self._handle_zone_update(zones)
-        except Exception as e:
-            _LOGGER.debug(f"Polling update failed for last alarm event: {e}")
+        """No polling needed — state is fully listener-driven."""
+        return False
 
 
-class KseniaLastTamperedZonesSensor(SensorEntity):
+class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing the last zones that triggered a tamper event (persistent)."""
 
     _attr_has_entity_name = True
@@ -1437,13 +1186,9 @@ class KseniaLastTamperedZonesSensor(SensorEntity):
         self._last_tampered_zones = []
         self._raw_data = {}
 
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
     async def async_added_to_hass(self):
         """Subscribe to zone realtime updates to detect tamper state changes."""
+        await super().async_added_to_hass()
         self.ws_manager.register_listener("zones", self._handle_zone_update)
         # Build zone name map
         try:
@@ -1481,11 +1226,6 @@ class KseniaLastTamperedZonesSensor(SensorEntity):
         return build_unique_id(self._base_id, "last_tampered_zones")
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -1514,7 +1254,7 @@ class KseniaLastTamperedZonesSensor(SensorEntity):
         return False
 
 
-class KseniaConnectionStatusSensor(SensorEntity):
+class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system connection status and details."""
 
     _attr_has_entity_name = True
@@ -1529,13 +1269,9 @@ class KseniaConnectionStatusSensor(SensorEntity):
         self._state = "Unknown"
         self._raw_data = {}
 
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
     async def async_added_to_hass(self):
         """Subscribe to connection realtime updates and read cached initial data."""
+        await super().async_added_to_hass()
         self.ws_manager.register_listener("connection", self._handle_connection_update)
         # Populate with cached initial data if available
         cached = self.ws_manager.get_cached_data("STATUS_CONNECTION")
@@ -1590,11 +1326,6 @@ class KseniaConnectionStatusSensor(SensorEntity):
     def unique_id(self):
         """Returns a unique ID for the sensor."""
         return build_unique_id(self._base_id, "connection_status")
-
-    @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
 
     @property
     def native_value(self):
@@ -1671,7 +1402,7 @@ class KseniaConnectionStatusSensor(SensorEntity):
         return False
 
 
-class KseniaPowerSupplySensor(SensorEntity):
+class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing power supply health (main and battery voltages)."""
 
     _attr_has_entity_name = True
@@ -1689,14 +1420,10 @@ class KseniaPowerSupplySensor(SensorEntity):
         self._raw_data = {}
         self._listener_registered = False
 
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
     async def async_added_to_hass(self):
         """Subscribe to panel realtime updates and read cached initial data."""
         try:
+            await super().async_added_to_hass()
             self.ws_manager.register_listener("panel", self._handle_panel_update)
             self._listener_registered = True
             _LOGGER.debug("[PowerSupply] Registered panel listener")
@@ -1705,7 +1432,8 @@ class KseniaPowerSupplySensor(SensorEntity):
             _LOGGER.debug("[PowerSupply] Attempting to read cached realtime data")
             if self.ws_manager.has_cached_data:
                 _LOGGER.debug(
-                    "[PowerSupply] Cached data keys: %s", list(self.ws_manager._readData.keys())
+                    "[PowerSupply] Cached data keys: %s",
+                    list((self.ws_manager._readData or {}).keys()),
                 )
             cached = self.ws_manager.get_cached_data("STATUS_PANEL")
             if cached:
@@ -1802,11 +1530,6 @@ class KseniaPowerSupplySensor(SensorEntity):
         return build_unique_id(self._base_id, "power_supply")
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -1866,7 +1589,7 @@ class KseniaPowerSupplySensor(SensorEntity):
         return False
 
 
-class KseniaSystemFaultsSensor(SensorEntity):
+class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system-wide fault status from power, communication, and peripherals."""
 
     _attr_has_entity_name = True
@@ -1891,13 +1614,9 @@ class KseniaSystemFaultsSensor(SensorEntity):
         }
         self._raw_data = {}
 
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
     async def async_added_to_hass(self):
         """Subscribe to faults realtime updates."""
+        await super().async_added_to_hass()
         self.ws_manager.register_listener("faults", self._handle_faults_update)
 
     async def _handle_faults_update(self, data_list):
@@ -2001,11 +1720,6 @@ class KseniaSystemFaultsSensor(SensorEntity):
         return build_unique_id(self._base_id, "system_faults")
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def native_value(self):
         """Returns the state of the sensor."""
         return self._state
@@ -2038,7 +1752,7 @@ class KseniaSystemFaultsSensor(SensorEntity):
         return False
 
 
-class KseniaFaultMemorySensor(SensorEntity):
+class KseniaFaultMemorySensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system fault memory from STATUS_SYSTEM.FAULT_MEM."""
 
     _attr_has_entity_name = True
@@ -2055,14 +1769,10 @@ class KseniaFaultMemorySensor(SensorEntity):
         self._raw_data = {}
         self._listener_registered = False
 
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
     async def async_added_to_hass(self):
         """Subscribe to system realtime updates and read cached initial data."""
         try:
+            await super().async_added_to_hass()
             self.ws_manager.register_listener("systems", self._handle_system_update)
             self._listener_registered = True
             _LOGGER.debug("[FaultMemory] Registered systems listener")
@@ -2071,7 +1781,8 @@ class KseniaFaultMemorySensor(SensorEntity):
             _LOGGER.debug("[FaultMemory] Attempting to read cached realtime data")
             if self.ws_manager.has_cached_data:
                 _LOGGER.debug(
-                    "[FaultMemory] Cached data keys: %s", list(self.ws_manager._readData.keys())
+                    "[FaultMemory] Cached data keys: %s",
+                    list((self.ws_manager._readData or {}).keys()),
                 )
             cached = self.ws_manager.get_cached_data("STATUS_SYSTEM")
             if cached:
@@ -2155,11 +1866,6 @@ class KseniaFaultMemorySensor(SensorEntity):
     def unique_id(self):
         """Returns a unique ID for the sensor."""
         return build_unique_id(self._base_id, "fault_memory")
-
-    @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
 
     @property
     def native_value(self):

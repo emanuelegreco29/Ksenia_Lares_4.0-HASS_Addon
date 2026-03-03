@@ -5,7 +5,7 @@ import logging
 from homeassistant.components.button import ButtonEntity
 
 from .const import DOMAIN
-from .helpers import build_unique_id
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ def _add_clear_buttons(ws_manager, device_info, base_id, entities):
         )
 
 
-class KseniaScenarioButtonEntity(ButtonEntity):
+class KseniaScenarioButtonEntity(KseniaEntity, ButtonEntity):
     """Button entity for executing Ksenia scenarios."""
 
     def __init__(self, ws_manager, scenario_id, name, device_info=None, base_id=None):
@@ -87,16 +87,6 @@ class KseniaScenarioButtonEntity(ButtonEntity):
         return build_unique_id(self._base_id, "scenario", self._scenario_id)
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
-    def available(self):
-        """Return True if the entity is available."""
-        return self.ws_manager.available
-
-    @property
     def name(self):
         """Returns the name of the button."""
         return self._name
@@ -110,7 +100,7 @@ class KseniaScenarioButtonEntity(ButtonEntity):
         await self.ws_manager.executeScenario(self._scenario_id)
 
 
-class KseniaClearButtonEntity(ButtonEntity):
+class KseniaClearButtonEntity(KseniaEntity, ButtonEntity):
     """Button entity for system clear commands."""
 
     _attr_has_entity_name = True
@@ -126,16 +116,6 @@ class KseniaClearButtonEntity(ButtonEntity):
     def unique_id(self):
         """Returns a unique ID for the button."""
         return build_unique_id(self._base_id, "clear", self._clear_type)
-
-    @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
-    def available(self):
-        """Return True if the entity is available."""
-        return self.ws_manager.available
 
     async def async_press(self):
         """Execute the clear command when the button is pressed."""

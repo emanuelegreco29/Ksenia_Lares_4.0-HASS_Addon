@@ -7,11 +7,13 @@ Huge thanks to @realnot16 for the original implementation!
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import random
 import ssl
 import time
+from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import Any, TypedDict
 
@@ -45,7 +47,6 @@ class AuthenticationError(Exception):
 MAX_RETRIES = 100
 INITIAL_RETRY_DELAY = 5
 MAX_RETRY_DELAY = 300  # 5 minutes max
-EXTENDED_RETRY_DELAY = 3600  # 1 hour for attempts after max retries
 COMMAND_TIMEOUT = 5  # Timeout for command execution (seconds)
 DATA_WAIT_TIMEOUT = 10
 RECV_TIMEOUT = 3
@@ -258,7 +259,15 @@ class WebSocketManager:
             except Exception as e:
                 self._logger.debug(f"Error closing temporary connection: {e}")
 
-    def __init__(self, ip, pin, port, logger, max_retries=None):
+    def __init__(
+        self,
+        ip,
+        pin,
+        port,
+        logger,
+        max_retries=None,
+        on_prolonged_connection_loss: Callable[[], Awaitable[None] | None] | None = None,
+    ):
         """Initialize WebSocket manager.
 
         Args:
@@ -267,6 +276,8 @@ class WebSocketManager:
             port: Port number for WebSocket connection
             logger: Logger instance for diagnostics
             max_retries: Maximum number of connection retries (default: MAX_RETRIES=20)
+            on_prolonged_connection_loss: Optional async callback invoked when runtime
+                reconnection is exhausted and manager enters unrecoverable state.
         """
         # Connection settings
         self._ip = ip
@@ -313,6 +324,8 @@ class WebSocketManager:
         self._skip_backoff = max_retries == 1
         # Flag to prevent multiple simultaneous reconnection attempts
         self._reconnecting = False
+        self._on_prolonged_connection_loss = on_prolonged_connection_loss
+        self._prolonged_loss_callback_invoked = False
 
         # Periodic read for state reconciliation
         self._last_periodic_read = 0
@@ -380,6 +393,17 @@ class WebSocketManager:
     def available(self) -> bool:
         """Return True if the connection is active and authenticated."""
         return self._connection_state == ConnectionState.CONNECTED
+
+    async def _notify_connection_state_change(self) -> None:
+        """Notify listeners about connection state transitions."""
+        payload = {
+            "state": self._connection_state.value,
+            "available": self.available,
+        }
+        try:
+            await self._notify_listeners(["connection"], payload)
+        except Exception as err:
+            self._logger.debug("Error notifying connection listeners: %s", err)
 
     def get_metrics(self):
         """Get connection and command statistics.
@@ -632,6 +656,7 @@ class WebSocketManager:
                 )
                 self._connection_state = ConnectionState.CONNECTED
                 self._last_message_time = time.time()
+                await self._notify_connection_state_change()
 
                 # Cancel old background tasks before starting new ones
                 await self._cancel_background_tasks()
@@ -655,6 +680,7 @@ class WebSocketManager:
                 # Start remaining background tasks
                 self._periodic_task = asyncio.create_task(self._periodic_read_task())
                 self._retries = 0
+                self._prolonged_loss_callback_invoked = False
                 # Reset max_retries to default after successful connection
                 # (it was limited to 1 during initial setup for fail-fast behavior)
                 self._max_retries = MAX_RETRIES
@@ -795,8 +821,6 @@ class WebSocketManager:
                 pending_reads=self._pending_reads,  # Enable listener routing
             )
             if updated_data:
-                self._readData = updated_data
-                self._set_cache_timestamp("readData")
                 # Update last message time to prevent false "stale connection" warnings
                 self._last_message_time = time.time()
                 # Dispatch zone, partition, output updates so entities can reconcile
@@ -985,6 +1009,7 @@ class WebSocketManager:
         # If we are stopping/unloading, treat closure as graceful and do not reconnect
         if not self._running:
             self._logger.info("WebSocket connection closed (shutdown)")
+            await self._notify_connection_state_change()
             return
 
         self._logger.error("WebSocket connection closed")
@@ -997,6 +1022,9 @@ class WebSocketManager:
         # Clear ALL pending requests immediately (regardless of timeout)
         # Any requests in flight are now invalid since the socket is closed
         self._clear_all_pending_requests()
+
+        # Notify listeners AFTER cleanup so they see consistent state
+        await self._notify_connection_state_change()
 
         # Cancel old background tasks to prevent duplicate recv() calls
         await self._cancel_background_tasks()
@@ -1026,36 +1054,43 @@ class WebSocketManager:
         try:
             # Attempt reconnection in the background to avoid blocking listener task
             # Wrap in try-except to prevent unhandled exceptions from crashing the listener
-            if self._retries < self._max_retries:
-                self._retries += 1
-                self._metrics["reconnects"] += 1
-                self._logger.info(
-                    f"[{time.time():.3f}] Attempting reconnection (attempt {self._retries}/{self._max_retries})..."
-                )
-                if self._connSecure:
-                    await self.connectSecure()
-                else:
-                    await self.connect()
+            self._retries += 1
+            self._metrics["reconnects"] += 1
+            self._logger.info(
+                f"[{time.time():.3f}] Attempting reconnection (attempt {self._retries}/{self._max_retries})..."
+            )
+            if self._connSecure:
+                await self.connectSecure()
             else:
-                # After max retries, continue trying once per hour indefinitely
-                self._connection_state = ConnectionState.ERROR
-                self._retries += 1
-                self._metrics["reconnects"] += 1
-                self._logger.warning(
-                    f"Maximum retries reached. Will retry every hour (attempt {self._retries})..."
-                )
-                await asyncio.sleep(EXTENDED_RETRY_DELAY)
-                # Recursively retry
-                await self._reconnect_in_background()
+                await self.connect()
         except ConnectionError as e:
             # Connection failed after all retries - log but don't crash listener task
             # The connection monitor or Home Assistant will attempt setup again
             self._connection_state = ConnectionState.ERROR
+            await self._notify_connection_state_change()
             self._logger.error(
                 f"Reconnection failed: {e}. Listener will stop but integration remains loaded."
             )
+            await self._invoke_prolonged_loss_callback_once()
         finally:
             self._reconnecting = False
+
+    async def _invoke_prolonged_loss_callback_once(self) -> None:
+        """Invoke prolonged-loss callback once to let integration recover externally."""
+        if self._prolonged_loss_callback_invoked:
+            return
+        if not self._on_prolonged_connection_loss:
+            return
+
+        self._prolonged_loss_callback_invoked = True
+        try:
+            callback_result = self._on_prolonged_connection_loss()
+            if inspect.isawaitable(callback_result):
+                await callback_result
+        except Exception as callback_err:
+            self._logger.error(
+                "Prolonged connection loss callback failed: %s", callback_err, exc_info=True
+            )
 
     async def _cancel_background_tasks(self):
         """Cancel all background tasks gracefully.

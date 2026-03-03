@@ -7,7 +7,7 @@ from homeassistant.components.light import LightEntity
 from homeassistant.components.light.const import ColorMode
 
 from .const import DOMAIN
-from .helpers import build_unique_id
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         _LOGGER.error("Error setting up lights: %s", e, exc_info=True)
 
 
-class KseniaLightEntity(LightEntity):
+class KseniaLightEntity(KseniaEntity, LightEntity):
     """Light entity for Ksenia Lares system."""
 
     def __init__(self, ws_manager, light_data, device_info=None, base_id=None):
@@ -84,25 +84,38 @@ class KseniaLightEntity(LightEntity):
         # Store complete raw data for debugging and transparency
         self._raw_data = dict(light_data)
 
+    async def async_added_to_hass(self):
+        """Subscribe to realtime light updates."""
+        await super().async_added_to_hass()
+        self.ws_manager.register_listener("lights", self._handle_realtime_update)
+
+    async def _handle_realtime_update(self, data_list):
+        """Process realtime STATUS_OUTPUTS updates for this light."""
+        for data in data_list:
+            if data.get("ID") == self._id:
+                _LOGGER.debug("[light] Entity %s update: %s", self._id, data)
+                remote_state = data.get("STA", "off").lower() == "on"
+                # If there's a recent pending command, keep the local state
+                if self._pending_command is not None:
+                    cmd, timestamp = self._pending_command
+                    if time.time() - timestamp < 2:
+                        return
+                    else:
+                        self._pending_command = None
+                self._state = remote_state
+                self._raw_data.update(data)
+                self.async_write_ha_state()
+                break
+
     @property
     def unique_id(self):
         """Returns a unique ID for the light."""
         return build_unique_id(self._base_id, "light", self._id)
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def name(self):
         """Returns the name of the light."""
         return self._name
-
-    @property
-    def available(self):
-        """Return True if the entity is available."""
-        return self.ws_manager.available
 
     @property
     def is_on(self):
@@ -154,33 +167,7 @@ class KseniaLightEntity(LightEntity):
         self._pending_command = ("off", time.time())
         self.async_write_ha_state()
 
-    """
-    Asynchronously updates the state of the light.
-
-    Retrieves the list of lights from the WebSocket manager and checks if the
-    light with the specified ID is present. If found, updates the light's state
-    and brightness, and notifies Home Assistant of the state change.
-    """
-
-    async def async_update(self):
-        lights = await self.ws_manager.getLights()
-        _LOGGER.debug("async_update: full lights data: %s", lights)
-        for light in lights:
-            if light.get("ID") == self._id:
-                remote_state = light.get("STA", "off").lower() == "on"
-                # If there's a recent pending command, keep the local state
-                if self._pending_command is not None:
-                    cmd, timestamp = self._pending_command
-                    if time.time() - timestamp < 2:
-                        return
-                    else:
-                        self._pending_command = None
-                self._state = remote_state
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(light)
-                break
-
     @property
     def should_poll(self) -> bool:
-        """Lights use periodic polling for multi-client reconciliation."""
-        return True
+        """No polling needed — state is fully listener-driven."""
+        return False
