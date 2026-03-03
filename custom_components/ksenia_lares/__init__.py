@@ -269,7 +269,11 @@ async def _setup_connection(hass, ip, port, pin, use_ssl) -> WebSocketManager:
         _LOGGER.info(
             f"Connection established, waiting for initial data (timeout: {SETUP_TIMEOUT}s)"
         )
-        await ws_manager.wait_for_initial_data(timeout=SETUP_TIMEOUT)
+        ready = await ws_manager.wait_for_initial_data(timeout=SETUP_TIMEOUT)
+        if not ready:
+            raise ConnectionError(
+                f"Initial data not available after {SETUP_TIMEOUT}s (connection state: {ws_manager.get_connection_state().value})"
+            )
         _LOGGER.info("Initial data available, setup continuing")
         return ws_manager
     except asyncio.CancelledError:
