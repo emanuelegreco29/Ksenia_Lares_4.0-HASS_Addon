@@ -12,7 +12,7 @@ from homeassistant.components.binary_sensor import (
 )
 
 from .const import BINARY_ZONE_CATS, DOMAIN
-from .helpers import build_unique_id
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -177,7 +177,7 @@ def _parse_is_on(sensor_type: str, data: dict) -> bool | None:
 
 
 # --- Zone Binary Sensor ---
-class KseniaZoneBinarySensorEntity(BinarySensorEntity):
+class KseniaZoneBinarySensorEntity(KseniaEntity, BinarySensorEntity):
     """Binary sensor entity for Ksenia Lares zone contacts and motion sensors."""
 
     _attr_has_entity_name = True
@@ -205,14 +205,6 @@ class KseniaZoneBinarySensorEntity(BinarySensorEntity):
         return build_unique_id(self._base_id, self._sensor_type, self._id)
 
     @property
-    def device_info(self):
-        return self._device_info
-
-    @property
-    def available(self) -> bool:
-        return self.ws_manager.available
-
-    @property
     def is_on(self) -> bool | None:
         return self._is_on
 
@@ -225,12 +217,14 @@ class KseniaZoneBinarySensorEntity(BinarySensorEntity):
         return {**self._extra_attributes, "raw_data": self._raw_data}
 
     async def async_added_to_hass(self):
+        await super().async_added_to_hass()
         self.ws_manager.register_listener("zones", self._handle_realtime_update)
 
     async def _handle_realtime_update(self, data_list):
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
+            _LOGGER.debug("[zone_binary] Entity %s update: %s", self._id, data)
             new_state = _parse_is_on(self._sensor_type, data)
             if new_state is not None:
                 self._is_on = new_state
@@ -241,7 +235,7 @@ class KseniaZoneBinarySensorEntity(BinarySensorEntity):
 
 
 # --- Siren Binary Sensor ---
-class KseniaSirenBinarySensorEntity(BinarySensorEntity):
+class KseniaSirenBinarySensorEntity(KseniaEntity, BinarySensorEntity):
     """Binary sensor entity for Ksenia Lares sirens."""
 
     _attr_has_entity_name = True
@@ -276,14 +270,6 @@ class KseniaSirenBinarySensorEntity(BinarySensorEntity):
         return build_unique_id(self._base_id, "siren", self._id)
 
     @property
-    def device_info(self):
-        return self._device_info
-
-    @property
-    def available(self) -> bool:
-        return self.ws_manager.available
-
-    @property
     def is_on(self) -> bool | None:
         return self._is_on
 
@@ -296,6 +282,7 @@ class KseniaSirenBinarySensorEntity(BinarySensorEntity):
         return {**self._extra_attributes, "raw_data": self._raw_data}
 
     async def async_added_to_hass(self):
+        await super().async_added_to_hass()
         self.ws_manager.register_listener("switches", self._handle_realtime_update)
         cached = self.ws_manager.get_cached_data("STATUS_OUTPUTS")
         if cached:
@@ -305,6 +292,7 @@ class KseniaSirenBinarySensorEntity(BinarySensorEntity):
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
+            _LOGGER.debug("[siren] Entity %s update: %s", self._id, data)
             new_state = _parse_is_on("siren", data)
             if new_state is not None:
                 self._is_on = new_state

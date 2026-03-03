@@ -254,13 +254,29 @@ def _cleanup_ws_manager(hass) -> None:
         hass.data[DOMAIN].pop("ws_manager", None)
 
 
-async def _setup_connection(hass, ip, port, pin, use_ssl) -> WebSocketManager:
+async def _setup_connection(hass, entry, ip, port, pin, use_ssl) -> WebSocketManager:
     """Create and connect a WebSocketManager, seeding hass.data.
 
     Raises ConfigEntryNotReady on connection failure so HA retries with backoff.
     Raises asyncio.CancelledError if the setup task is cancelled.
     """
-    ws_manager = WebSocketManager(ip, pin, port, _LOGGER, max_retries=3)
+
+    async def _on_prolonged_connection_loss() -> None:
+        _LOGGER.error(
+            "Runtime reconnect exhausted for %s:%s; scheduling config entry reload",
+            ip,
+            port,
+        )
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+
+    ws_manager = WebSocketManager(
+        ip,
+        pin,
+        port,
+        _LOGGER,
+        max_retries=3,
+        on_prolonged_connection_loss=_on_prolonged_connection_loss,
+    )
     hass.data.setdefault(DOMAIN, {})["ws_manager"] = ws_manager
     try:
         connection_method = ws_manager.connectSecure if use_ssl else ws_manager.connect
@@ -317,7 +333,7 @@ async def async_setup_entry(hass, entry):
             _LOGGER.error("Missing required configuration: host and/or pin not found")
             return False
 
-        ws_manager = await _setup_connection(hass, ip, port, pin, use_ssl)
+        ws_manager = await _setup_connection(hass, entry, ip, port, pin, use_ssl)
 
         system_info = await ws_manager.getSystemVersion()
         device_info = _build_device_info(ip, port, use_ssl, system_info)

@@ -17,7 +17,7 @@ from homeassistant.components.alarm_control_panel.const import (
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from .helpers import build_unique_id
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -330,16 +330,6 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         return build_unique_id(self._base_id, "alarm_control_panel")
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
-    def available(self) -> bool:
-        """Return True if the WebSocket connection to the panel is active."""
-        return self.ws_manager.available
-
-    @property
     def alarm_state(self):
         """Return the current alarm state."""
         return self._state
@@ -376,6 +366,11 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
             features |= AlarmControlPanelEntityFeature.ARM_HOME
 
         return features
+
+    @property
+    def should_poll(self) -> bool:
+        """No polling needed — state is fully listener-driven."""
+        return False
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         """Disarm all partitions.

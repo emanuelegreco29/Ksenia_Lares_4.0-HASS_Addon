@@ -259,22 +259,6 @@ class WebSocketManager:
             except Exception as e:
                 self._logger.debug(f"Error closing temporary connection: {e}")
 
-        Critical: prevents session leaks and resource exhaustion.
-        The main connection is not affected.
-        """
-        if temp_ws and user_login_id and user_login_id != -1:
-            try:
-                self._logger.debug(f"Logging out user session {user_login_id}")
-                await ws_logout(temp_ws, user_login_id, self._logger)
-            except Exception as e:
-                self._logger.debug(f"Error logging out user session: {e}")
-        if temp_ws:
-            try:
-                self._logger.debug("Closing temporary connection")
-                await temp_ws.close()
-            except Exception as e:
-                self._logger.debug(f"Error closing temporary connection: {e}")
-
     def __init__(
         self,
         ip,
@@ -409,6 +393,17 @@ class WebSocketManager:
     def available(self) -> bool:
         """Return True if the connection is active and authenticated."""
         return self._connection_state == ConnectionState.CONNECTED
+
+    async def _notify_connection_state_change(self) -> None:
+        """Notify listeners about connection state transitions."""
+        payload = {
+            "state": self._connection_state.value,
+            "available": self.available,
+        }
+        try:
+            await self._notify_listeners(["connection"], payload)
+        except Exception as err:
+            self._logger.debug("Error notifying connection listeners: %s", err)
 
     def get_metrics(self):
         """Get connection and command statistics.

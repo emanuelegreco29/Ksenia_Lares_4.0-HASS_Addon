@@ -6,7 +6,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 
 from .const import DOMAIN
-from .helpers import build_unique_id
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -139,8 +139,7 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
         for data in data_list:
             if str(data.get("ID")) == str(self.switch_id):
                 _LOGGER.debug("[switch] Entity %s update: %s", self.switch_id, data)
-                if "STA" in data:
-                    self._state = data["STA"].lower() == "on"
+                self._state = data.get("STA", "off").lower() == "on"
                 self._raw_data.update(data)
                 self.async_write_ha_state()
                 break
@@ -151,20 +150,10 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
         return build_unique_id(self._base_id, self._cat, self.switch_id)
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def entity_category(self):
         """Return the entity category for this switch."""
         # Switches are controls/outputs, so no category (they're primary controls)
         return None
-
-    @property
-    def available(self):
-        """Return True if the entity is available."""
-        return self.ws_manager.available
 
     @property
     def name(self):
@@ -201,23 +190,13 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
         self._state = False
         self.async_write_ha_state()
 
-
-    async def async_update(self):
-        switches = await self.ws_manager.getSwitches()
-        for switch in switches:
-            if str(switch.get("ID")) == str(self.switch_id):
-                self._state = switch.get("STA", "off").lower() == "on"
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(switch)
-                break
-
     @property
     def should_poll(self) -> bool:
-        """Output switches use periodic polling for multi-client reconciliation."""
-        return True
+        """No polling needed — state is fully listener-driven."""
+        return False
 
 
-class KseniaZoneBypassSwitch(SwitchEntity):
+class KseniaZoneBypassSwitch(KseniaEntity, SwitchEntity):
     """Switch entity to control zone bypass status."""
 
     _attr_has_entity_name = True
@@ -259,19 +238,9 @@ class KseniaZoneBypassSwitch(SwitchEntity):
         return build_unique_id(self._base_id, "zone_bypass", self.zone_id)
 
     @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
     def entity_category(self):
         """Return the entity category for this switch."""
         return EntityCategory.CONFIG
-
-    @property
-    def available(self):
-        """Return True if the entity is available."""
-        return self.ws_manager.available
 
     @property
     def is_on(self):
@@ -312,19 +281,5 @@ class KseniaZoneBypassSwitch(SwitchEntity):
 
     @property
     def should_poll(self) -> bool:
-        """Zone bypass switches use periodic polling for multi-client reconciliation."""
-        return True
-
-    async def async_update(self):
-        """Refresh zone bypass state from cached data."""
-        # Get cached zone configuration data
-        zones = self.ws_manager.get_cached_data("ZONES")
-        if not zones:
-            return
-        for zone in zones:
-            if str(zone.get("ID")) == str(self.zone_id):
-                if "BYP" in zone:
-                    byp_val = str(zone.get("BYP", "NO"))
-                    self._state = byp_val.upper() != "NO"
-                self._raw_data.update(zone)
-                break
+        """No polling needed — state is fully listener-driven."""
+        return False

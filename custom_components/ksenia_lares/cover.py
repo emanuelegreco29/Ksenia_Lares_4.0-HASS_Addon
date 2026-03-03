@@ -6,7 +6,7 @@ import time
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 
 from .const import DOMAIN
-from .helpers import build_unique_id
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,14 +95,10 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
         for data in data_list:
             if str(data.get("ID")) == str(self._roll_id):
                 _LOGGER.debug("[cover] Entity %s update: %s", self._roll_id, data)
-                if "POS" not in data:
-                    self._raw_data.update(data)
-                    self.async_write_ha_state()
-                    break
                 try:
-                    new_pos = int(data["POS"])
-                except (ValueError, TypeError):
-                    new_pos = None
+                    new_pos = int(data.get("POS", 0))
+                except Exception:
+                    new_pos = 0
                 # If there's a recent pending command, keep the local state
                 if self._pending_command is not None:
                     cmd, ts = self._pending_command
@@ -119,16 +115,6 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
     def unique_id(self):
         """Returns a unique ID for the roller blind."""
         return build_unique_id(self._base_id, "cover", self._roll_id)
-
-    @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
-    def available(self):
-        """Return True if the entity is available."""
-        return self.ws_manager.available
 
     @property
     def name(self):
@@ -205,34 +191,7 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
         self._pending_command = ("set", time.time())
         self.async_write_ha_state()
 
-    """
-    Updates the state of the roller blind by retrieving the full list of
-    roller blinds and finding the one with the matching ID.
-
-    If a recent command is pending (< 2 seconds), it keeps the local state.
-    """
-
-    async def async_update(self):
-        rolls = await self.ws_manager.getRolls()
-        _LOGGER.debug("async_update: full rolls data: %s", rolls)
-        for roll in rolls:
-            if str(roll.get("ID")) == str(self._roll_id):
-                try:
-                    new_pos = int(roll.get("POS", 0))
-                except Exception:
-                    new_pos = 0
-                if self._pending_command is not None:
-                    cmd, ts = self._pending_command
-                    if time.time() - ts < 2:
-                        return
-                    else:
-                        self._pending_command = None
-                self._position = new_pos
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(roll)
-                break
-
     @property
     def should_poll(self) -> bool:
-        """Covers use periodic polling for multi-client reconciliation."""
-        return True
+        """No polling needed — state is fully listener-driven."""
+        return False
