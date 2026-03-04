@@ -60,6 +60,15 @@
       }
     },
     "sensor": {
+      "domus_temperature": {
+        "name": "{name} Temperatura"
+      },
+      "domus_humidity": {
+        "name": "{name} Umidità"
+      },
+      "domus_light": {
+        "name": "{name} Luminosità"
+      },
       "alarm_system_status": {
         "name": "Stato del Sistema di Allarme{suffix}",
         "state": {

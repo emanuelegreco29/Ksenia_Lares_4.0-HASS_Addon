@@ -60,6 +60,15 @@
       }
     },
     "sensor": {
+      "domus_temperature": {
+        "name": "{name} Temperatur"
+      },
+      "domus_humidity": {
+        "name": "{name} Luftfuktighet"
+      },
+      "domus_light": {
+        "name": "{name} Ljusintensitet"
+      },
       "alarm_system_status": {
         "name": "Larmsystemstatus{suffix}",
         "state": {
