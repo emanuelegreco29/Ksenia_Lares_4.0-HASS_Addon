@@ -88,14 +88,6 @@ class AlarmStatus(StrEnum):
     ALARM_MEMORY = "AM"
 
 
-class PartitionTamperStatus(StrEnum):
-    """TST field states from partition (STATUS_PARTITIONS.TST)."""
-
-    NO_TAMPERING = "OK"
-    ONGOING_TAMPERING = "TAM"
-    TAMPERING_MEMORY = "TM"
-
-
 class TriggeredStatus(StrEnum):
     """Custom enum for representing alarm triggered status sensor entity states."""
 
