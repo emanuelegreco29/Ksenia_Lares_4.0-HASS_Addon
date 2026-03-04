@@ -66,7 +66,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
         # Create single alarm panel entity for entire device
         entity = KseniaAlarmControlPanel(ws_manager, scenario_map, device_info, base_id)
-        async_add_entities([entity], update_before_add=True)
+        async_add_entities([entity])
     except Exception as e:
         _LOGGER.error("Error setting up alarm control panel: %s", e, exc_info=True)
 
@@ -95,7 +95,7 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         self._scenarios = scenario_map
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = AlarmControlPanelState.DISARMED
+        self._state = None  # Unknown until real data arrives from device
         self._system_status = {}  # Track system status from STATUS_SYSTEM
         self._partitions_status = []  # Track partition status from STATUS_PARTITIONS
         self._attr_changed_by = "Unknown"
@@ -615,6 +615,7 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         return {
             "device_status": device_description,
             "alarm_condition": ast_map.get(ast_status, ast_status),
+            "alarm_memory": self._has_partition_alarm_memory(),
             "bypassed_zones": bypassed_zones if bypassed_zones else "None",
             "partition_status": self._get_partition_status(),
             "scenarios_available": list(self._scenarios.keys()),
