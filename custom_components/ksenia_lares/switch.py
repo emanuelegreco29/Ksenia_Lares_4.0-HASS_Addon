@@ -43,7 +43,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         async def discover_via_switches_listener(data_list):
             """Listener-based discovery for switches.
 
-            Calls getSwitches() which already filters by CAT!=LIGHT and merges state.
+            Calls getSwitches() which already filters by CAT!=LIGHT and CAT!=ROLL and merges state.
             """
             try:
                 # Get complete list of switches (already filtered and merged with state)

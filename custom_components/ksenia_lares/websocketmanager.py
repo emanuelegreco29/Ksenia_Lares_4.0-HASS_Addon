@@ -2139,11 +2139,12 @@ class WebSocketManager:
 
             # Get entities from status payload type
             status_entities = self._readData.get("STATUS_OUTPUTS", [])
-            # Get switch entities from config payload type (non-LIGHT outputs)
+            # Get switch entities from config payload type (non-LIGHT, non-ROLL outputs)
+            # ROLL outputs are handled by cover.py via getRolls(), so exclude them here
             switch_config_entities = [
                 entity
                 for entity in self._readData.get("OUTPUTS", [])
-                if entity.get("CAT") != "LIGHT"
+                if entity.get("CAT") not in ("LIGHT", "ROLL")
             ]
 
             return self._merge_state_data(switch_config_entities, status_entities)
