@@ -69,16 +69,6 @@
       "domus_light": {
         "name": "{name} Luminosità"
       },
-      "partition_status": {
-        "name": "{name}",
-        "state": {
-          "disarmed": "Disinserito",
-          "delayed_arming": "Inserimento Ritardato",
-          "immediate_arming": "Inserimento Immediato",
-          "entry_delay_active": "Ritardo ingresso attivo",
-          "exit_delay_active": "Ritardo uscita attivo"
-        }
-      },
       "alarm_system_status": {
         "name": "Stato del Sistema di Allarme{suffix}",
         "state": {

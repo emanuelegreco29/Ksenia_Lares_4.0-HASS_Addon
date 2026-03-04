@@ -69,16 +69,6 @@
       "domus_light": {
         "name": "{name} Light"
       },
-      "partition_status": {
-        "name": "{name}",
-        "state": {
-          "disarmed": "Disarmed",
-          "delayed_arming": "Delayed Arming",
-          "immediate_arming": "Immediate Arming",
-          "entry_delay_active": "Entry delay active",
-          "exit_delay_active": "Exit delay active"
-        }
-      },
       "alarm_system_status": {
         "name": "Alarm System Status{suffix}",
         "state": {

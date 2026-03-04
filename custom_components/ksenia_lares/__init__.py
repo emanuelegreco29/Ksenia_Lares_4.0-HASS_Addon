@@ -177,7 +177,11 @@ def _compute_new_unique_id(uid, mac, ip_prefix, domain, switch_cat_map):
     if domain == "sensor" and "_" in uid:
         prefix, entity_id = uid.rsplit("_", 1)
         if prefix in {"domus", "powerlines", "partitions", "system"}:
-            return build_unique_id(mac, prefix, entity_id)
+            new_uid = build_unique_id(mac, prefix, entity_id)
+            # Domus sensors now use measurement suffix (e.g. domus_1_temperature)
+            if prefix == "domus":
+                new_uid += "_temperature"
+            return new_uid
 
     return None
 

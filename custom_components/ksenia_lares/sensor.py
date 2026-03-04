@@ -5,7 +5,13 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
-from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature
+from homeassistant.const import (
+    LIGHT_LUX,
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfPower,
+    UnitOfTemperature,
+)
 
 from .const import (
     _ARM_STATE_MAP,
@@ -85,12 +91,38 @@ async def _add_all_device_sensors(ws_manager, device_info, base_id, entities: li
     return initial_counts
 
 
+def _domus_field_available(domus_data: dict, key: str) -> bool:
+    """Return True if a domus environmental field has a usable value."""
+    val = domus_data.get(key)
+    return val is not None and val not in ("NA", "")
+
+
 async def _add_domus_sensors(ws_manager, device_info, base_id, entities):
-    """Add domus (environmental) sensors."""
+    """Add domus (environmental) sensors — one entity per available measurement."""
     domus = await ws_manager.getDom()
     _LOGGER.debug("Found %d domus devices", len(domus))
     for sensor in domus:
-        entities.append(KseniaSensorEntity(ws_manager, sensor, "domus", device_info, base_id))
+        domus_data = sensor.get("DOMUS", {})
+        if not isinstance(domus_data, dict):
+            domus_data = {}
+        # Always create a temperature entity (original behaviour)
+        entities.append(
+            KseniaDomusSensorEntity(
+                ws_manager, sensor, device_info, base_id, measurement="temperature"
+            )
+        )
+        if _domus_field_available(domus_data, "HUM"):
+            entities.append(
+                KseniaDomusSensorEntity(
+                    ws_manager, sensor, device_info, base_id, measurement="humidity"
+                )
+            )
+        if _domus_field_available(domus_data, "LHT"):
+            entities.append(
+                KseniaDomusSensorEntity(
+                    ws_manager, sensor, device_info, base_id, measurement="light"
+                )
+            )
 
 
 async def _add_powerline_sensors(ws_manager, device_info, base_id, entities):
@@ -210,7 +242,6 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
         # Zone types (CMD, SEISM, etc.) are handled by binary_sensor.py
         _type_dispatch = {
             "powerlines": self._init_powerlines_type,
-            "domus": self._init_domus_type,
             "partitions": self._init_partitions_type,
         }
         init_fn = _type_dispatch.get(sensor_type)
@@ -237,55 +268,6 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
         except Exception as e:
             _LOGGER.error("Error converting %s: %s", field_name, e)
             return None
-
-    @staticmethod
-    def _domus_optional_reading(domus_data: dict, key: str) -> str:
-        """Return domus optional environmental field value, or 'Unknown' when absent/NA."""
-        val = domus_data.get(key)
-        return "Unknown" if val in (None, "NA", "") else str(val)
-
-    @staticmethod
-    def _parse_domus_temperature(domus_data: dict):
-        """Parse temperature string from domus data, returning float or None on failure."""
-        try:
-            temp_str = domus_data.get("TEM")
-            return (
-                float(temp_str.replace("+", ""))
-                if temp_str and temp_str not in ["NA", ""]
-                else None
-            )
-        except Exception as e:
-            _LOGGER.error("Error converting temperature in domus sensor: %s", e)
-            return None
-
-    @staticmethod
-    def _parse_domus_humidity(domus_data: dict):
-        """Parse humidity string from domus data, returning float or None on failure."""
-        try:
-            hum_str = domus_data.get("HUM")
-            return float(hum_str) if hum_str and hum_str not in ["NA", ""] else None
-        except Exception as e:
-            _LOGGER.error("Error converting humidity in domus sensor: %s", e)
-            return None
-
-    @classmethod
-    def _parse_domus_readings(cls, sensor_data: dict) -> tuple:
-        """Extract temperature, humidity, and environmental readings from domus data.
-
-        Returns:
-            Tuple of (temperature, humidity, lht, pir, tl, th)
-        """
-        domus_data = sensor_data.get("DOMUS", {})
-        if not isinstance(domus_data, dict):
-            domus_data = {}
-
-        temperature = cls._parse_domus_temperature(domus_data)
-        humidity = cls._parse_domus_humidity(domus_data)
-        lht = cls._domus_optional_reading(domus_data, "LHT")
-        pir = cls._domus_optional_reading(domus_data, "PIR")
-        tl = cls._domus_optional_reading(domus_data, "TL")
-        th = cls._domus_optional_reading(domus_data, "TH")
-        return temperature, humidity, lht, pir, tl, th
 
     @classmethod
     def _build_partition_state_and_attrs(cls, data: dict) -> tuple[str, dict]:
@@ -333,22 +315,6 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
         }
         self._raw_data = dict(sensor_data)
 
-    def _init_domus_type(self, sensor_data: dict) -> None:
-        """Initialize entity for a domus (environmental) sensor."""
-        self._attr_device_class = SensorDeviceClass.TEMPERATURE
-        self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-        temperature, humidity, lht, pir, tl, th = self._parse_domus_readings(sensor_data)
-        self._state = temperature
-        self._attributes = {
-            "temperature": temperature if temperature is not None else "Unknown",
-            "humidity": humidity if humidity is not None else "Unknown",
-            "light": lht,
-            "pir": pir,
-            "tl": tl,
-            "th": th,
-        }
-        self._raw_data = dict(sensor_data)
-
     def _init_partitions_type(self, sensor_data: dict) -> None:
         """Initialize entity for a partition status sensor."""
         state, attrs = self._build_partition_state_and_attrs(sensor_data)
@@ -381,7 +347,6 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
         """Dispatch real-time update to the appropriate per-type handler."""
         _record_handlers = {
             "powerlines": self._rt_update_powerlines,
-            "domus": self._rt_update_domus,
             "partitions": self._rt_update_partitions,
         }
         for data in data_list:
@@ -412,20 +377,6 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
             "Consumption": consumo_kwh,
             "Production": pprod_val,
             "Status": data.get("STATUS", "unknown"),
-        }
-        self._raw_data.update(data)
-
-    def _rt_update_domus(self, data: dict) -> None:
-        """Apply a domus-type realtime update record."""
-        temperature, humidity, lht, pir, tl, th = self._parse_domus_readings(data)
-        self._state = temperature
-        self._attributes = {
-            "temperature": temperature if temperature is not None else "Unknown",
-            "humidity": humidity if humidity is not None else "Unknown",
-            "light": lht,
-            "pir": pir,
-            "tl": tl,
-            "th": th,
         }
         self._raw_data.update(data)
 
@@ -776,9 +727,7 @@ class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
     @property
     def icon(self):
         """Returns the icon of the sensor."""
-        if self._sensor_type == "domus":
-            return "mdi:thermometer"
-        elif self._sensor_type == "powerlines":
+        if self._sensor_type == "powerlines":
             return "mdi:lightning-bolt-outline"
         return None
 
@@ -786,6 +735,160 @@ class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
     def should_poll(self) -> bool:
         """No polling needed — state is fully listener-driven."""
         return False
+
+
+class KseniaDomusSensorEntity(KseniaSensorEntity):
+    """Sensor entity for domus (environmental) devices — temperature, humidity, or light."""
+
+    _MEASUREMENT_CONFIG = {
+        "temperature": {
+            "translation_key": "domus_temperature",
+            "device_class": SensorDeviceClass.TEMPERATURE,
+            "unit": UnitOfTemperature.CELSIUS,
+            "icon": "mdi:thermometer",
+        },
+        "humidity": {
+            "translation_key": "domus_humidity",
+            "device_class": SensorDeviceClass.HUMIDITY,
+            "unit": PERCENTAGE,
+            "icon": "mdi:water-percent",
+        },
+        "light": {
+            "translation_key": "domus_light",
+            "device_class": SensorDeviceClass.ILLUMINANCE,
+            "unit": LIGHT_LUX,
+            "icon": "mdi:brightness-6",
+        },
+    }
+
+    def __init__(
+        self, ws_manager, sensor_data, device_info=None, base_id=None, measurement="temperature"
+    ):
+        """Initialise a domus sensor for a specific measurement type."""
+        self._measurement = measurement
+        # Set translation key before super().__init__ so _attr_name is not used
+        config = self._MEASUREMENT_CONFIG[measurement]
+        # super().__init__ will call _dispatch_init, but domus is no longer in the
+        # base dispatch map, so it falls through to the generic branch. We override
+        # the state/attributes afterwards in our own init.
+        super().__init__(ws_manager, sensor_data, "domus", device_info, base_id)
+        # Override name with translated version
+        base_name = str(self._attr_name)
+        # Remove the name attribute set by the base class so it becomes the UNDEFINED default.
+        # Then HA will use the translation key
+        del self._attr_name
+        self._attr_translation_key = config["translation_key"]
+        self._attr_translation_placeholders = {"name": base_name}
+        # Set device class and unit
+        self._attr_device_class = config["device_class"]
+        self._attr_native_unit_of_measurement = config["unit"]
+        # Parse initial state
+        domus_data = sensor_data.get("DOMUS", {})
+        if not isinstance(domus_data, dict):
+            domus_data = {}
+        self._state = self._parse_value(domus_data)
+        self._attributes = self._build_domus_attributes(sensor_data)
+        self._raw_data = dict(sensor_data)
+
+    # ------------------------------------------------------------------
+    # Parsing helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _optional_reading(domus_data: dict, key: str) -> str:
+        """Return domus field value, or 'Unknown' when absent/NA."""
+        val = domus_data.get(key)
+        return "Unknown" if val in (None, "NA", "") else str(val)
+
+    @staticmethod
+    def _parse_temperature(domus_data: dict):
+        """Parse temperature string, returning float or None."""
+        try:
+            temp_str = domus_data.get("TEM")
+            return (
+                float(temp_str.replace("+", ""))
+                if temp_str and temp_str not in ("NA", "")
+                else None
+            )
+        except Exception as e:
+            _LOGGER.error("Error converting temperature in domus sensor: %s", e)
+            return None
+
+    @staticmethod
+    def _parse_humidity(domus_data: dict):
+        """Parse humidity string, returning float or None."""
+        try:
+            hum_str = domus_data.get("HUM")
+            return float(hum_str) if hum_str and hum_str not in ("NA", "") else None
+        except Exception as e:
+            _LOGGER.error("Error converting humidity in domus sensor: %s", e)
+            return None
+
+    @staticmethod
+    def _parse_light(domus_data: dict):
+        """Parse light intensity string, returning float or None."""
+        try:
+            lht_str = domus_data.get("LHT")
+            return float(lht_str) if lht_str and lht_str not in ("NA", "") else None
+        except Exception as e:
+            _LOGGER.error("Error converting light in domus sensor: %s", e)
+            return None
+
+    def _parse_value(self, domus_data: dict):
+        """Parse the primary value for this measurement type."""
+        _parsers = {
+            "temperature": self._parse_temperature,
+            "humidity": self._parse_humidity,
+            "light": self._parse_light,
+        }
+        return _parsers[self._measurement](domus_data)
+
+    @classmethod
+    def _build_domus_attributes(cls, sensor_data: dict) -> dict:
+        """Build the shared domus attributes dict from sensor data."""
+        domus_data = sensor_data.get("DOMUS", {})
+        if not isinstance(domus_data, dict):
+            domus_data = {}
+        temperature = cls._parse_temperature(domus_data)
+        humidity = cls._parse_humidity(domus_data)
+        return {
+            "temperature": temperature if temperature is not None else "Unknown",
+            "humidity": humidity if humidity is not None else "Unknown",
+            "light": cls._optional_reading(domus_data, "LHT"),
+            "pir": cls._optional_reading(domus_data, "PIR"),
+            "tl": cls._optional_reading(domus_data, "TL"),
+            "th": cls._optional_reading(domus_data, "TH"),
+        }
+
+    # ------------------------------------------------------------------
+    # Overrides
+    # ------------------------------------------------------------------
+
+    @property
+    def unique_id(self) -> str:
+        """Returns a unique ID including the measurement suffix."""
+        base = build_unique_id(self._base_id, self._sensor_type, self._id)
+        return f"{base}_{self._measurement}"
+
+    @property
+    def icon(self):
+        """Returns the measurement-specific icon."""
+        return self._MEASUREMENT_CONFIG[self._measurement]["icon"]
+
+    async def _handle_realtime_update(self, data_list):
+        """Handle domus-specific realtime updates."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            _LOGGER.debug("[domus/%s] Entity %s update: %s", self._measurement, self._id, data)
+            domus_data = data.get("DOMUS", {})
+            if not isinstance(domus_data, dict):
+                domus_data = {}
+            self._state = self._parse_value(domus_data)
+            self._attributes = self._build_domus_attributes(data)
+            self._raw_data.update(data)
+            self.async_write_ha_state()
+            break
 
 
 class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):

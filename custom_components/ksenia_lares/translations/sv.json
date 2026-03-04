@@ -69,16 +69,6 @@
       "domus_light": {
         "name": "{name} Ljusintensitet"
       },
-      "partition_status": {
-        "name": "{name}",
-        "state": {
-          "disarmed": "Avaktiverat",
-          "delayed_arming": "Fördröjd Aktivering",
-          "immediate_arming": "Omedelbar Aktivering",
-          "entry_delay_active": "Ingångsfördröjning aktiv",
-          "exit_delay_active": "Utgångsfördröjning aktiv"
-        }
-      },
       "alarm_system_status": {
         "name": "Larmsystemstatus{suffix}",
         "state": {
