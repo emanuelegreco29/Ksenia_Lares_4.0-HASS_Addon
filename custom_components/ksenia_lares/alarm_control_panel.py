@@ -66,7 +66,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
         # Create single alarm panel entity for entire device
         entity = KseniaAlarmControlPanel(ws_manager, scenario_map, device_info, base_id)
-        async_add_entities([entity], update_before_add=True)
+        async_add_entities([entity])
     except Exception as e:
         _LOGGER.error("Error setting up alarm control panel: %s", e, exc_info=True)
 
@@ -95,7 +95,7 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         self._scenarios = scenario_map
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = AlarmControlPanelState.DISARMED
+        self._state = None  # Unknown until real data arrives from device
         self._system_status = {}  # Track system status from STATUS_SYSTEM
         self._partitions_status = []  # Track partition status from STATUS_PARTITIONS
 
@@ -172,6 +172,14 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         Uses system status (from STATUS_SYSTEM) plus partition alarm status (AST)
         and zone bypass status to determine overall alarm control panel state.
         """
+        # Don't compute until at least one data source has arrived from the device.
+        # This prevents publishing a false state before we have real information.
+        # Note: partition alarms (AST) are still checked even if system status is
+        # absent, so a genuine AL cannot be missed during the startup window.
+        if not self._system_status and not self._partitions_status:
+            _LOGGER.debug("[KseniaACP] No data yet — skipping state computation")
+            return
+
         arm_state = self._get_arm_state_code()
         has_bypassed_zones = self._has_bypassed_zones()
         partition_alarm_active = self._has_partition_alarm()
@@ -241,25 +249,38 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         return arm_state in ("T_IN", "P_IN", "T_OUT", "P_OUT")
 
     def _has_partition_alarm(self) -> bool:
-        """Check if any partition has active or memory alarm.
+        """Check if any partition has an ongoing alarm.
 
         Uses AST (Alarm Status) field to detect alarms:
-        - AL: Ongoing alarm
-        - AM: Alarm memory (recent alarm, now cleared)
+        - AL: Ongoing alarm → triggers TRIGGERED state
+        - AM: Alarm memory (past alarm, now cleared) → surfaced as attribute only,
+              does NOT trigger TRIGGERED to avoid false positives on boot/reconnect
 
         Returns:
-            True if any partition reports alarm state via AST field
+            True if any partition reports an active AL alarm via AST field
         """
         for partition in self._partitions_status:
             partition_ast = partition.get("AST", "OK")
             # Only check AST field for alarm states, not ARM field
             # ARM field only contains armed modes (D, IA, DA, IT, OT), never alarm states
-            if partition_ast in ("AL", "AM"):
+            if partition_ast == "AL":
                 _LOGGER.debug(
-                    f"[KseniaACP] Partition {partition.get('ID')} alarm detected: AST={partition_ast}"
+                    f"[KseniaACP] Partition {partition.get('ID')} active alarm detected: AST={partition_ast}"
                 )
                 return True
         return False
+
+    def _has_partition_alarm_memory(self) -> bool:
+        """Check if any partition has alarm memory (past alarm, now cleared).
+
+        AM means the alarm has already been cleared but not yet acknowledged.
+        Surfaced as an attribute so users/automations can act on it without
+        the panel entering TRIGGERED.
+
+        Returns:
+            True if any partition reports AST=AM
+        """
+        return any(partition.get("AST", "OK") == "AM" for partition in self._partitions_status)
 
     def _has_bypassed_zones(self) -> bool:
         """Check if any zones are bypassed.
@@ -506,6 +527,8 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
             AlarmControlPanelState.TRIGGERED: "mdi:alarm-light",
             AlarmControlPanelState.PENDING: "mdi:alarm-light-outline",
         }
+        if self._state is None:
+            return "mdi:shield"
         return icon_map.get(self._state, "mdi:shield")
 
     def _get_bypassed_zones(self) -> list:
@@ -565,6 +588,7 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         return {
             "device_status": device_description,
             "alarm_condition": ast_map.get(ast_status, ast_status),
+            "alarm_memory": self._has_partition_alarm_memory(),
             "bypassed_zones": bypassed_zones if bypassed_zones else "None",
             "partition_status": self._get_partition_status(),
             "scenarios_available": list(self._scenarios.keys()),

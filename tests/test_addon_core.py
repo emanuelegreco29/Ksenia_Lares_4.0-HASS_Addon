@@ -1130,7 +1130,7 @@ async def test_alarm_control_panel_initialization():
     
     assert panel._scenarios == scenario_map
     assert panel._device_info == device_info
-    assert panel._state == AlarmControlPanelState.DISARMED
+    assert panel._state is None  # Unknown until real data arrives from device
 
 
 @pytest.mark.asyncio
@@ -1220,8 +1220,9 @@ async def test_alarm_control_panel_disarm_success():
     panel.async_write_ha_state = MagicMock()
     
     await panel.async_alarm_disarm(code="123456")
-    
-    assert panel._state == AlarmControlPanelState.DISARMED
+
+    # State is NOT updated here — it changes only when the WS listener fires
+    # with the new ARM.S=D from the device. Just verify the command was sent.
     ws_manager.executeScenario_with_login.assert_called_once_with("1", pin="123456")
 
 
@@ -1363,9 +1364,9 @@ async def test_alarm_control_panel_state_map_disarmed():
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
     panel.async_write_ha_state = MagicMock()
     
-    update_data = [{"ID": "1", "ARM": {"S": "D", "D": "Disarmed"}}]
-    await panel._handle_partition_status_update(update_data)
-    
+    # DISARMED is driven by system status ARM.S=D, not partition ARM
+    await panel._handle_system_status_update([{"ID": "1", "ARM": {"S": "D", "D": "Disarmed"}}])
+
     assert panel._state == AlarmControlPanelState.DISARMED
 
 
@@ -1413,12 +1414,27 @@ async def test_alarm_control_panel_state_map_alarm_memory():
 async def test_alarm_control_panel_icon_disarmed():
     """Test icon changes with disarmed state."""
     from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
-    
+    from homeassistant.components.alarm_control_panel import AlarmControlPanelState
+
     ws_manager = MagicMock()
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
-    
+    panel._state = AlarmControlPanelState.DISARMED
+
     assert panel.icon == "mdi:shield-off"
+
+
+@pytest.mark.asyncio
+async def test_alarm_control_panel_icon_unknown():
+    """Test icon when state is None (no data yet)."""
+    from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
+
+    ws_manager = MagicMock()
+    scenario_map = {"DISARM": "1", "ARM": "2"}
+    panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
+    # _state is None until real data arrives
+    assert panel._state is None
+    assert panel.icon == "mdi:shield"
 
 
 @pytest.mark.asyncio
