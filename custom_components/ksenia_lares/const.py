@@ -57,6 +57,16 @@ HA_TO_KSENIA_ALARM_STATE = {
     "armed_custom_bypass": "armed",
 }
 
+_ARM_STATE_MAP = {
+    "T": "fully_armed",
+    "T_IN": "fully_armed_entry_delay",
+    "T_OUT": "fully_armed_exit_delay",
+    "P": "partially_armed",
+    "P_IN": "partially_armed_entry_delay",
+    "P_OUT": "partially_armed_exit_delay",
+    "D": "disarmed",
+}
+
 
 class ArmState(StrEnum):
     """ARM.S field states from device."""
@@ -78,6 +88,14 @@ class AlarmStatus(StrEnum):
     ALARM_MEMORY = "AM"
 
 
+class TriggeredStatus(StrEnum):
+    """Custom enum for representing alarm triggered status sensor entity states."""
+
+    NOT_TRIGGERED = "not_triggered"
+    ONGOING_ALARM = "ongoing_alarm"
+    ALARM_MEMORY = "alarm_memory"
+
+
 class PartitionArmStatus(StrEnum):
     """ARM field states from partition (can include alarm states)."""
 
@@ -97,6 +115,45 @@ class ZoneBypassState(StrEnum):
     AUTO = "AUTO"
     MANUAL_MAIN = "MAN_M"
     MANUAL_TEST = "MAN_T"
+
+
+class SystemTamperingStatus(StrEnum):
+    """System tampering sensor states"""
+
+    OK = "ok"
+    RF_JAMMING = "rf_jamming_detected"
+    PANEL_TAMPERING = "panel_tampering"
+    PERIPHERAL_TAMPERING = "peripheral_tampering"
+    ZONE_TAMPERING = "zone_tampering"
+    ONGOING_TAMPERING = "ongoing_tampering"
+    TAMPERING_MEMORY = "tampering_memory"
+
+
+class ConnectionStatus(StrEnum):
+    """Connection status states"""
+
+    ETHERNET = "ethernet"
+    MOBILE = "mobile"
+    CLOUD = "cloud"
+    OFFLINE = "offline"
+
+
+class PowerSupplyStatus(StrEnum):
+    """Power supply sensor states"""
+
+    OK = "ok"
+    LOW_BATTERY = "low_battery"
+    LOW_MAIN_POWER = "low_main_power"
+    CRITICAL = "critical"
+
+
+class SystemFaults(StrEnum):
+    """System faults sensor states"""
+
+    OK = "ok"
+    MINOR_FAULTS = "minor_faults"
+    MULTIPLE_FAULTS = "multiple_faults"
+    CRITICAL_FAULTS = "critical_faults"
 
 
 class InfoFlag(StrEnum):

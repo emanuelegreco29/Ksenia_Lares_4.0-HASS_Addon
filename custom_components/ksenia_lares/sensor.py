@@ -4,10 +4,19 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import EntityCategory
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature
 
-from .const import BINARY_ZONE_CATS, DOMAIN
+from .const import (
+    _ARM_STATE_MAP,
+    BINARY_ZONE_CATS,
+    DOMAIN,
+    ConnectionStatus,
+    PowerSupplyStatus,
+    SystemFaults,
+    SystemTamperingStatus,
+    TriggeredStatus,
+)
 from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -311,10 +320,12 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
 
     def _init_powerlines_type(self, sensor_data: dict) -> None:
         """Initialize entity for a power line sensor."""
+        self._attr_device_class = SensorDeviceClass.POWER
+        self._attr_native_unit_of_measurement = UnitOfPower.WATT
         pcons_val = self._parse_power_float(sensor_data.get("PCONS"), "PCONS")
         pprod_val = self._parse_power_float(sensor_data.get("PPROD"), "PPROD")
         consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
-        self._state = pcons_val if pcons_val is not None else sensor_data.get("STATUS", "Unknown")
+        self._state = pcons_val
         self._attributes = {
             "Consumption": consumo_kwh,
             "Production": pprod_val,
@@ -324,8 +335,10 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
 
     def _init_domus_type(self, sensor_data: dict) -> None:
         """Initialize entity for a domus (environmental) sensor."""
+        self._attr_device_class = SensorDeviceClass.TEMPERATURE
+        self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
         temperature, humidity, lht, pir, tl, th = self._parse_domus_readings(sensor_data)
-        self._state = temperature if temperature is not None else "Unknown"
+        self._state = temperature
         self._attributes = {
             "temperature": temperature if temperature is not None else "Unknown",
             "humidity": humidity if humidity is not None else "Unknown",
@@ -394,7 +407,7 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
         pcons_val = self._parse_power_float(data.get("PCONS"), "PCONS")
         pprod_val = self._parse_power_float(data.get("PPROD"), "PPROD")
         consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
-        self._state = pcons_val if pcons_val is not None else data.get("STATUS", "unknown")
+        self._state = pcons_val
         self._attributes = {
             "Consumption": consumo_kwh,
             "Production": pprod_val,
@@ -405,7 +418,7 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
     def _rt_update_domus(self, data: dict) -> None:
         """Apply a domus-type realtime update record."""
         temperature, humidity, lht, pir, tl, th = self._parse_domus_readings(data)
-        self._state = temperature if temperature is not None else "Unknown"
+        self._state = temperature
         self._attributes = {
             "temperature": temperature if temperature is not None else "Unknown",
             "humidity": humidity if humidity is not None else "Unknown",
@@ -473,16 +486,8 @@ class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "alarm_system_status"
-
-    _ARM_STATE_MAP = {
-        "T": "fully_armed",
-        "T_IN": "fully_armed_entry_delay",
-        "T_OUT": "fully_armed_exit_delay",
-        "P": "partially_armed",
-        "P_IN": "partially_armed_entry_delay",
-        "P_OUT": "partially_armed_exit_delay",
-        "D": "disarmed",
-    }
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(_ARM_STATE_MAP.values())
 
     def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
         """Initialize the alarm system status sensor."""
@@ -494,7 +499,7 @@ class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
         self._attributes: dict = {}
 
         arm_data = sensor_data.get("ARM", {})
-        state_code = arm_data.get("S", "D") if isinstance(arm_data, dict) else "D"
+        state_code = arm_data.get("S", "") if isinstance(arm_data, dict) else ""
         if state_code is None or state_code == "":
             _LOGGER.error(
                 "Ksenia system sensor %s: ARM state code is None/empty; ARM data: %r",
@@ -502,8 +507,8 @@ class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
                 arm_data,
             )
             state_code = ""
-        readable_state = self._ARM_STATE_MAP.get(state_code, state_code)
-        if state_code not in self._ARM_STATE_MAP:
+        readable_state = _ARM_STATE_MAP.get(state_code, state_code)
+        if state_code not in _ARM_STATE_MAP:
             _LOGGER.error(
                 "Ksenia system sensor %s: unwanted ARM code %r — cannot map!",
                 self._id,
@@ -557,9 +562,7 @@ class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
             state_code = arm_data.get("S")
             _LOGGER.debug("System sensor update: ID=%s, ARM code=%s", self._id, state_code)
             self._state = (
-                self._ARM_STATE_MAP.get(state_code, state_code)
-                if state_code is not None
-                else state_code
+                _ARM_STATE_MAP.get(state_code, state_code) if state_code is not None else state_code
             )
             self._attributes = {}
             self._raw_data.update(data)
@@ -574,12 +577,15 @@ class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
 
     _attr_translation_key = "alarm_trigger_status"
 
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [key.value for key in TriggeredStatus]
+
     def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize the alarm trigger status sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = "not_triggered"
+        self._state = TriggeredStatus.NOT_TRIGGERED
         self._alarmed_zones = []  # Track current alarmed zones
         self._zone_names = {}  # Map zone IDs to names
         self._partition_labels = {}  # Map partition IDs to labels
@@ -657,13 +663,13 @@ class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
         previous_state = self._state
 
         if has_ongoing_alarm:
-            self._state = "ongoing_alarm"
+            self._state = TriggeredStatus.ONGOING_ALARM
         elif has_alarm_memory:
-            self._state = "alarm_memory"
+            self._state = TriggeredStatus.ALARM_MEMORY
         else:
-            self._state = "not_triggered"
+            self._state = TriggeredStatus.NOT_TRIGGERED
             # Only clear alarmed zones when transitioning OUT of alarm state
-            if previous_state != "not_triggered":
+            if previous_state != TriggeredStatus.NOT_TRIGGERED:
                 self._alarmed_zones = []
                 self._attributes["alarmed_zones"] = []
 
@@ -687,9 +693,9 @@ class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
     @property
     def icon(self):
         """Returns the icon of the sensor."""
-        if self._state == "Ongoing Alarm":
+        if self._state == TriggeredStatus.ONGOING_ALARM:
             return "mdi:alarm-light"
-        elif self._state == "Alarm memory":
+        elif self._state == TriggeredStatus.ALARM_MEMORY:
             return "mdi:alarm-light-outline"
         return "mdi:shield-check"
 
@@ -703,28 +709,21 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system-wide tampering status from partitions, zones, and peripherals."""
 
     _attr_has_entity_name = True
-
     _attr_translation_key = "system_tampering"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [key.value for key in SystemTamperingStatus]
 
     def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize the alarm tamper status sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = "ok"
+        self._state = SystemTamperingStatus.OK
         self._tampered_zones = []  # Track current tampered zones
         self._zone_names = {}  # Map zone IDs to names
         self._attributes = {
             "partition_1_tst": "OK",
             "partition_2_tst": "OK",
-            "possible_states": [
-                "OK",
-                "Tampering memory",
-                "Ongoing tampering",
-                "RF Jamming Detected",
-                "Panel Tampering",
-                "Peripheral Tampering",
-            ],
             "tampered_zones": [],
             "panel_tampered": False,
             "peripheral_tampers": 0,
@@ -816,13 +815,13 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         # Priority order: RF Jamming > Panel > Ongoing > Memory
 
         if self._attributes.get("jam_868_detected"):
-            self._state = "rf_jamming_detected"
+            self._state = SystemTamperingStatus.RF_JAMMING
         elif self._attributes.get("panel_tampered"):
-            self._state = "panel_tampering"
+            self._state = SystemTamperingStatus.PANEL_TAMPERING
         elif self._attributes.get("peripheral_tampers", 0) > 0:
-            self._state = "peripheral_tampering"
+            self._state = SystemTamperingStatus.PERIPHERAL_TAMPERING
         elif self._tampered_zones:
-            self._state = "zone_tampering"
+            self._state = SystemTamperingStatus.ZONE_TAMPERING
         else:
             # Check partition TST for alarm-level tampering
             has_ongoing_tamper = any(
@@ -833,11 +832,11 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
             )
 
             if has_ongoing_tamper:
-                self._state = "ongoing_tampering"
+                self._state = SystemTamperingStatus.ONGOING_TAMPERING
             elif has_tamper_memory:
-                self._state = "tampering_memory"
+                self._state = SystemTamperingStatus.TAMPERING_MEMORY
             else:
-                self._state = "ok"
+                self._state = SystemTamperingStatus.OK
                 # Clear tampered zones when tamper is cleared
                 self._tampered_zones = []
                 self._attributes["tampered_zones"] = []
@@ -867,16 +866,16 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
     @property
     def icon(self):
         """Returns the icon of the sensor."""
-        if self._state == "RF Jamming Detected":
+        if self._state == SystemTamperingStatus.RF_JAMMING:
             return "mdi:signal-off"
         elif self._state in (
-            "Ongoing tampering",
-            "Panel Tampering",
-            "Peripheral Tampering",
-            "Zone Tampering",
+            SystemTamperingStatus.ONGOING_TAMPERING,
+            SystemTamperingStatus.PANEL_TAMPERING,
+            SystemTamperingStatus.PERIPHERAL_TAMPERING,
+            SystemTamperingStatus.ZONE_TAMPERING,
         ):
             return "mdi:shield-alert"
-        elif self._state == "Tampering memory":
+        elif self._state == SystemTamperingStatus.TAMPERING_MEMORY:
             return "mdi:shield-alert-outline"
         return "mdi:shield-check"
 
@@ -1258,15 +1257,16 @@ class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system connection status and details."""
 
     _attr_has_entity_name = True
-
     _attr_translation_key = "connection_status"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [key.value for key in ConnectionStatus]
 
     def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize the connection status sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = "Unknown"
+        self._state = None
         self._raw_data = {}
 
     async def async_added_to_hass(self):
@@ -1277,13 +1277,11 @@ class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
         cached = self.ws_manager.get_cached_data("STATUS_CONNECTION")
         if cached:
             await self._handle_connection_update(cached)
-        # Always write state after initialization to ensure entity is not Unknown
-        self.async_write_ha_state()
 
     async def _handle_connection_update(self, data_list):
         """Handle realtime connection updates."""
         if not data_list or len(data_list) == 0:
-            self._state = "Unknown"
+            self._state = None
             self.async_write_ha_state()
             return
 
@@ -1315,12 +1313,12 @@ class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
         inet = self._raw_data.get("INET", "NA")
 
         if inet == "ETH" and eth_link == "OK":
-            return "ethernet"
+            return ConnectionStatus.ETHERNET
         if inet == "MOBILE" and mobile_link in ("E", "2", "3", "4"):
-            return "mobile"
+            return ConnectionStatus.MOBILE
         if cloud_state == "OPERATIVE":
-            return "cloud"
-        return "offline"
+            return ConnectionStatus.CLOUD
+        return ConnectionStatus.OFFLINE
 
     @property
     def unique_id(self):
@@ -1387,11 +1385,11 @@ class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
     @property
     def icon(self):
         """Returns the icon of the sensor."""
-        if self._state == "Ethernet":
+        if self._state == ConnectionStatus.ETHERNET:
             return "mdi:ethernet"
-        elif self._state == "Mobile":
+        elif self._state == ConnectionStatus.MOBILE:
             return "mdi:signal-cellular-3"
-        elif self._state == "Cloud":
+        elif self._state == ConnectionStatus.CLOUD:
             return "mdi:cloud"
         else:
             return "mdi:network-off"
@@ -1406,15 +1404,16 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing power supply health (main and battery voltages)."""
 
     _attr_has_entity_name = True
-
     _attr_translation_key = "power_supply"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [key.value for key in PowerSupplyStatus]
 
     def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize the power supply sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = "Unknown"
+        self._state = None
         self._main_voltage = None
         self._battery_voltage = None
         self._raw_data = {}
@@ -1517,12 +1516,12 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
         main_ok = self._main_voltage is not None and self._main_voltage >= 12.0
         battery_ok = self._battery_voltage is not None and self._battery_voltage >= 12.0
         if main_ok and battery_ok:
-            return "ok"
+            return PowerSupplyStatus.OK
         if main_ok:
-            return "low_battery"
+            return PowerSupplyStatus.LOW_BATTERY
         if battery_ok:
-            return "low_main_power"
-        return "critical"
+            return PowerSupplyStatus.LOW_MAIN_POWER
+        return PowerSupplyStatus.CRITICAL
 
     @property
     def unique_id(self):
@@ -1574,11 +1573,11 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
     @property
     def icon(self):
         """Returns the icon of the sensor based on health state."""
-        if self._state == "OK":
+        if self._state == PowerSupplyStatus.OK:
             return "mdi:power-plug-battery"
-        elif self._state == "Critical":
+        elif self._state == PowerSupplyStatus.CRITICAL:
             return "mdi:power-plug-battery-outline"
-        elif "Low" in self._state:
+        elif self._state == PowerSupplyStatus.LOW_BATTERY:
             return "mdi:battery-alert"
         else:
             return "mdi:power-plug-battery"
@@ -1593,15 +1592,16 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system-wide fault status from power, communication, and peripherals."""
 
     _attr_has_entity_name = True
-
     _attr_translation_key = "system_faults"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [key.value for key in SystemFaults]
 
     def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize the system faults sensor."""
         self.ws_manager = ws_manager
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
-        self._state = "ok"
+        self._state = SystemFaults.OK
         self._attributes = {
             "power_supply_faults": 0,
             "battery_faults": 0,
@@ -1693,17 +1693,17 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
         self._attributes["fault_categories"] = fault_categories
 
         if total_faults == 0:
-            self._state = "ok"
+            self._state = SystemFaults.OK
         elif total_faults <= 2:
-            self._state = "minor_faults"
+            self._state = SystemFaults.MINOR_FAULTS
         elif total_faults <= 5:
-            self._state = "multiple_faults"
+            self._state = SystemFaults.MULTIPLE_FAULTS
         else:
-            self._state = "critical_faults"
+            self._state = SystemFaults.CRITICAL_FAULTS
 
     def _reset_faults(self):
         """Reset all fault counters."""
-        self._state = "ok"
+        self._state = SystemFaults.OK
         self._attributes["power_supply_faults"] = 0
         self._attributes["battery_faults"] = 0
         self._attributes["communication_faults"] = 0
@@ -1737,11 +1737,11 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
     @property
     def icon(self):
         """Returns the icon of the sensor."""
-        if self._state == "OK":
+        if self._state == SystemFaults.OK:
             return "mdi:check-circle"
-        elif self._state == "Minor faults":
+        elif self._state == SystemFaults.MINOR_FAULTS:
             return "mdi:alert-circle-outline"
-        elif self._state == "Multiple faults":
+        elif self._state == SystemFaults.MULTIPLE_FAULTS:
             return "mdi:alert-circle"
         else:  # Critical faults
             return "mdi:alert-octagon"
