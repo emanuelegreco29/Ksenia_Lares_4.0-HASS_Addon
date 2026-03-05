@@ -68,10 +68,12 @@ async def _add_scenario_buttons(ws_manager, device_info, base_id, entities):
 class KseniaScenarioButtonEntity(KseniaEntity, ButtonEntity):
     """Button entity for executing Ksenia scenarios."""
 
+    _attr_has_entity_name = True
+
     def __init__(self, ws_manager, scenario_id, name, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._scenario_id = scenario_id
-        self._name = name
+        self._attr_name = name
         self._device_info = device_info
         self._base_id = base_id or ws_manager.ip
 
@@ -79,11 +81,6 @@ class KseniaScenarioButtonEntity(KseniaEntity, ButtonEntity):
     def unique_id(self):
         """Returns a unique ID for the button."""
         return build_unique_id(self._base_id, "scenario", self._scenario_id)
-
-    @property
-    def name(self):
-        """Returns the name of the button."""
-        return self._name
 
     async def async_press(self):
         """Execute the scenario when the button is pressed."""

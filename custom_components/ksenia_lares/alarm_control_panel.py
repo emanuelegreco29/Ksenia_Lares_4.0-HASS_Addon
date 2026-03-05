@@ -16,7 +16,7 @@ from homeassistant.components.alarm_control_panel.const import (
 )
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN, AlarmStatus, PartitionArmStatus
+from .const import DOMAIN, PartitionArmStatus
 from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -571,15 +571,12 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
     def _get_partition_status(self) -> dict:
         """Return a dict mapping partition_<id> to a readable ARM state string."""
         result = {}
-        try:
-            for part in self.ws_manager.get_cached_data("STATUS_PARTITIONS"):
-                part_id = part.get("ID", "Unknown")
-                part_arm = part.get("ARM", "Unknown")
-                result[f"partition_{part_id}"] = next(
-                    (s.name for s in PartitionArmStatus if s == part_arm), part_arm
-                )
-        except Exception as e:
-            _LOGGER.debug(f"Error loading partition status for attributes: {e}")
+        for part in self._partitions_status:
+            part_id = part.get("ID", "Unknown")
+            part_arm = part.get("ARM", "Unknown")
+            result[f"partition_{part_id}"] = next(
+                (s.name for s in PartitionArmStatus if s == part_arm), part_arm
+            )
         return result
 
     @property
@@ -596,11 +593,10 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         device_description = (
             arm_data.get("D", "Unknown") if isinstance(arm_data, dict) else "Unknown"
         )
-        ast_status = self._system_status.get("AST", "Unknown")
         bypassed_zones = self._get_bypassed_zones()
         return {
             "device_status": device_description,
-            "alarm_condition": next((s.name for s in AlarmStatus if s == ast_status), ast_status),
+            "alarm_condition": ("Ongoing Alarm" if self._has_partition_alarm() else "No Alarm"),
             "alarm_memory": self._has_partition_alarm_memory(),
             "bypassed_zones": bypassed_zones if bypassed_zones else "None",
             "partition_status": self._get_partition_status(),

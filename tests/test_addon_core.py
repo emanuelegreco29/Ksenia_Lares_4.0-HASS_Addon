@@ -515,7 +515,7 @@ async def test_ksenia_sensor_entity_initialization():
     entity = KseniaSensorEntity(ws_manager, sensor_data, "zones")
     
     assert entity._id == "1"
-    assert entity._attr_name == "Zone 1"
+    assert entity._base_name == "Zone 1"
     assert entity._sensor_type == "zones"
     assert entity.ws_manager is ws_manager
 
@@ -530,7 +530,7 @@ async def test_ksenia_sensor_entity_name_fallback():
     
     entity = KseniaSensorEntity(ws_manager, sensor_data, "zones")
     
-    assert entity._attr_name == "Bedroom Door"
+    assert entity._base_name == "Bedroom Door"
 
 
 @pytest.mark.asyncio

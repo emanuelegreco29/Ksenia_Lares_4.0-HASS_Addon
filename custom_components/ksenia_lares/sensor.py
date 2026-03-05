@@ -375,6 +375,7 @@ class KseniaDomusSensorEntity(KseniaSensorEntity):
         self._attr_translation_key = config["translation_key"]
         super().__init__(ws_manager, sensor_data, "domus", device_info, base_id)
         self._attr_translation_placeholders = {"name": self._base_name}
+        self._object_id_name = f"{self._base_name} {measurement}".strip()
         # Set device class and unit
         self._attr_device_class = config["device_class"]
         self._attr_native_unit_of_measurement = config["unit"]
@@ -465,6 +466,11 @@ class KseniaDomusSensorEntity(KseniaSensorEntity):
         """Returns a unique ID including the measurement suffix."""
         base = build_unique_id(self._base_id, self._sensor_type, self._id)
         return f"{base}_{self._measurement}"
+
+    @property
+    def suggested_object_id(self) -> str:
+        """Provide an explicit object_id so HA doesn't fall back to the unique_id."""
+        return self._object_id_name
 
     @property
     def icon(self):

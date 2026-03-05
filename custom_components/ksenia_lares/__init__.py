@@ -68,37 +68,15 @@ def _rm_sensors_migrated2binarysensor(hass, config_entry) -> None:
         )
 
 
-# TODO: remove this 4 below migration functions in future relase e.g. v2.5.0
-async def _rm_hidden_output_switches(hass, config_entry, ws_manager, mac, ip) -> None:
-    """Remove switch entities for hidden/siren outputs.
+# TODO: remove this 6 below migration functions in future relase e.g. v2.5.0
+def _rm_stale_switches(hass, config_entry, uids_to_remove, reason) -> None:
+    """Remove switch entities whose unique_id matches the given set.
 
-    Earlier versions created switch entities for all outputs regardless of CNV.
-    Now outputs with CNV=H or siren names are excluded, so any previously
-    created switch entities for them must be removed.
+    Used during setup to clean up switches that should no longer exist
+    (hidden/siren outputs, ROLL outputs migrated to cover platform, etc.).
     """
-    try:
-        switches = await ws_manager.getSwitches()
-    except Exception as e:
-        _LOGGER.warning("Could not fetch outputs for hidden switch cleanup: %s", e)
+    if not uids_to_remove:
         return
-
-    excluded = []
-    for s in switches:
-        name = get_entity_name(s, s.get("ID"), "")
-        if is_hidden_or_siren(s, name):
-            excluded.append(s)
-
-    if not excluded:
-        _LOGGER.debug("No hidden/siren outputs found, no switches to cleanup")
-        return
-
-    # Build all possible unique_id patterns for these IDs (old IP-based and new MAC-based)
-    hidden_uids = set()
-    for s in excluded:
-        sid = str(s.get("ID"))
-        hidden_uids.add(f"{ip}_{sid}")  # old format
-        cat = (s.get("CAT") or "output").lower()
-        hidden_uids.add(build_unique_id(mac, cat, sid))
 
     ent_reg = er.async_get(hass)
     entries = er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
@@ -106,16 +84,53 @@ async def _rm_hidden_output_switches(hass, config_entry, ws_manager, mac, ip) ->
     for entry in entries:
         if entry.domain != "switch" or entry.platform != DOMAIN:
             continue
-        if entry.unique_id in hidden_uids:
+        if entry.unique_id in uids_to_remove:
             _LOGGER.info(
-                "Removing hidden/siren output switch entity %s (unique_id=%s)",
+                "Removing switch entity %s (unique_id=%s) - %s",
                 entry.entity_id,
                 entry.unique_id,
+                reason,
             )
             ent_reg.async_remove(entry.entity_id)
             removed += 1
     if removed:
-        _LOGGER.info("Removed %d hidden/siren output switch entities", removed)
+        _LOGGER.info("Removed %d stale switch entities (%s)", removed, reason)
+
+
+async def _build_hidden_switch_uids(ws_manager, mac, ip) -> set:
+    """Build unique_id set for hidden/siren output switches to remove."""
+    try:
+        switches = await ws_manager.getSwitches()
+    except Exception as e:
+        _LOGGER.warning("Could not fetch outputs for hidden switch cleanup: %s", e)
+        return set()
+
+    uids = set()
+    for s in switches:
+        name = get_entity_name(s, s.get("ID"), "")
+        if is_hidden_or_siren(s, name):
+            sid = str(s.get("ID"))
+            uids.add(f"{ip}_{sid}")  # old format
+            cat = (s.get("CAT") or "output").lower()
+            uids.add(build_unique_id(mac, cat, sid))
+    return uids
+
+
+async def _build_roll_switch_uids(ws_manager, mac, ip) -> set:
+    """Build unique_id set for ROLL output switches to remove (now on cover platform)."""
+    try:
+        rolls = await ws_manager.getRolls()
+    except Exception as e:
+        _LOGGER.warning("Could not fetch rolls for switch cleanup: %s", e)
+        return set()
+
+    uids = set()
+    for r in rolls:
+        sid = str(r.get("ID"))
+        uids.add(f"{ip}_{sid}")  # old IP-based format
+        uids.add(build_unique_id(mac, "roll", sid))  # MAC-based format
+        uids.add(build_unique_id(mac, "output", sid))  # generic output format
+    return uids
 
 
 async def _migrate_unique_ids(hass, config_entry, mac, ip, ws_manager) -> None:
@@ -341,8 +356,11 @@ async def async_setup_entry(hass, entry):
         # TODO: remove this in future relase e.g. v2.5.0
         # Migrate entities that moved from sensor → binary_sensor domain
         _rm_sensors_migrated2binarysensor(hass, entry)
-        # Remove switch entities for hidden outputs (CNV=H)
-        await _rm_hidden_output_switches(hass, entry, ws_manager, mac, ip)
+        # Remove stale switch entities (hidden/siren outputs and ROLL outputs migrated to cover)
+        hidden_uids = await _build_hidden_switch_uids(ws_manager, mac, ip)
+        roll_uids = await _build_roll_switch_uids(ws_manager, mac, ip)
+        _rm_stale_switches(hass, entry, hidden_uids, "hidden/siren output")
+        _rm_stale_switches(hass, entry, roll_uids, "ROLL output migrated to cover platform")
         # Migrate unique_ids from IP-based/legacy to MAC-based format
         await _migrate_unique_ids(hass, entry, mac, ip, ws_manager)
 
