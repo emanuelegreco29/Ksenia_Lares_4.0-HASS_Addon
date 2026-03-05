@@ -15,6 +15,7 @@ CONF_PLATFORMS = "platforms"
 # Defaults
 DEFAULT_PORT = 443
 DEFAULT_SSL = True
+SETUP_TIMEOUT = 60  # seconds; allow for device startup delays and initial data fetch retries
 DEFAULT_PLATFORMS = [
     "light",
     "cover",
@@ -83,9 +84,17 @@ class ArmState(StrEnum):
 class AlarmStatus(StrEnum):
     """AST field states from device (partition alarm status)."""
 
-    OK = "OK"
-    ALARM_ACTIVE = "AL"
+    NO_ALARM = "OK"
+    ONGOING_ALARM = "AL"
     ALARM_MEMORY = "AM"
+
+
+class PartitionTamperStatus(StrEnum):
+    """TST field states from partition (STATUS_PARTITIONS.TST)."""
+
+    NO_TAMPERING = "OK"
+    ONGOING_TAMPERING = "TAM"
+    TAMPERING_MEMORY = "TM"
 
 
 class TriggeredStatus(StrEnum):
@@ -97,15 +106,13 @@ class TriggeredStatus(StrEnum):
 
 
 class PartitionArmStatus(StrEnum):
-    """ARM field states from partition (can include alarm states)."""
+    """ARM field states from partition (STATUS_PARTITIONS.ARM)."""
 
     DISARMED = "D"
-    IMMEDIATE_ARM = "IA"
-    DELAYED_ARM = "DA"
-    IMMEDIATE_TRIGGERED = "IT"
-    DELAYED_TRIGGERED = "OT"
-    ALARM_ACTIVE = "AL"
-    ALARM_MEMORY = "AM"
+    IMMEDIATE_ARMING = "IA"
+    DELAYED_ARMING = "DA"
+    ENTRY_DELAY_ACTIVE = "IT"
+    EXIT_DELAY_ACTIVE = "OT"
 
 
 class ZoneBypassState(StrEnum):
@@ -163,3 +170,11 @@ class InfoFlag(StrEnum):
     BYPASS_AUTO = "BYP_AUTO"
     BYPASS_MANUAL_MAIN = "BYP_MAN_M"
     BYPASS_MANUAL_TEST = "BYP_MAN_T"
+
+
+class ClearCommand(StrEnum):
+    """Clear command protocol identifiers sent to the panel."""
+
+    COMMUNICATIONS = "communications"
+    ALARM_CYCLES = "cycles_or_memories"
+    FAULTS_MEMORY = "faults_memory"

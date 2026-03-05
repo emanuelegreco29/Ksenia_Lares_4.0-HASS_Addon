@@ -7,7 +7,7 @@ from homeassistant.components.light import LightEntity
 from homeassistant.components.light.const import ColorMode
 
 from .const import DOMAIN
-from .helpers import KseniaEntity, build_unique_id
+from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
                 if new_entities:
                     _LOGGER.info(f"Discovery found {len(new_entities)} new light(s)")
-                    await async_add_entities(new_entities, update_before_add=True)
+                    async_add_entities(new_entities, update_before_add=True)
             except Exception as e:
                 _LOGGER.debug(f"Error during light discovery: {e}")
 
@@ -72,12 +72,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         self._base_id = base_id or ws_manager.ip
         _LOGGER.debug("Initializing KseniaLightEntity with data: %s", light_data)
         # Use the name given by Ksenia, otherwise "Light <ID>"
-        self._name = (
-            light_data.get("DES")
-            or light_data.get("LBL")
-            or light_data.get("NM")
-            or f"Light {self._id}"
-        )
+        self._name = get_entity_name(light_data, self._id, f"Light {self._id}")
         self._state = light_data.get("STA", "off").lower() == "on"
         self._pending_command = None
         self._device_info = device_info
@@ -94,7 +89,11 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         for data in data_list:
             if data.get("ID") == self._id:
                 _LOGGER.debug("[light] Entity %s update: %s", self._id, data)
-                remote_state = data.get("STA", "off").lower() == "on"
+                if "STA" not in data:
+                    self._raw_data.update(data)
+                    self.async_write_ha_state()
+                    break
+                remote_state = data["STA"].lower() == "on"
                 # If there's a recent pending command, keep the local state
                 if self._pending_command is not None:
                     cmd, timestamp = self._pending_command
@@ -166,8 +165,3 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         self._state = False
         self._pending_command = ("off", time.time())
         self.async_write_ha_state()
-
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False

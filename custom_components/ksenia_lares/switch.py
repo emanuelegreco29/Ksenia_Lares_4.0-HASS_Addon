@@ -6,7 +6,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 
 from .const import DOMAIN
-from .helpers import KseniaEntity, build_unique_id
+from .helpers import KseniaEntity, build_unique_id, get_entity_name, is_hidden_or_siren
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,9 +25,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         entities = []
 
         # Add output switches
-        output_count = len(entities)
         await _add_output_switches(ws_manager, device_info, base_id, entities)
-        initial_output_count = len(entities) - output_count
+        initial_output_count = len(entities)
 
         # Add zone bypass switches
         await _add_zone_bypass_switches(ws_manager, device_info, base_id, entities)
@@ -53,14 +52,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 for switch in switches:
                     switch_id = switch.get("ID")
                     if switch_id not in discovered_switch_ids:
-                        name = (
-                            switch.get("DES")
-                            or switch.get("LBL")
-                            or switch.get("NM")
-                            or f"Switch {switch_id}"
-                        )
-                        # Dont add sirens or CNV=H (hidden) outputs as switches
-                        if switch.get("CNV") == "H" or "siren" in name.lower():
+                        name = get_entity_name(switch, switch_id, f"Switch {switch_id}")
+                        if is_hidden_or_siren(switch, name):
                             continue
                         # Add new switch entity for this switch_id
                         new_entities.append(
@@ -72,7 +65,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
                 if new_entities:
                     _LOGGER.info(f"Discovery found {len(new_entities)} new switch(es)")
-                    await async_add_entities(new_entities, update_before_add=True)
+                    async_add_entities(new_entities, update_before_add=True)
             except Exception as e:
                 _LOGGER.debug(f"Error during switch discovery: {e}")
 
@@ -90,9 +83,8 @@ async def _add_output_switches(ws_manager, device_info, base_id, entities):
 
     for switch in switches:
         switch_id = switch.get("ID")
-        name = switch.get("DES") or switch.get("LBL") or switch.get("NM") or f"Switch {switch_id}"
-        # Dont add sirens or CNV=H (hidden) outputs as switches, but log them for transparency
-        if switch.get("CNV") == "H" or "siren" in name.lower():
+        name = get_entity_name(switch, switch_id, f"Switch {switch_id}")
+        if is_hidden_or_siren(switch, name):
             _LOGGER.debug("Not adding siren or hidden switch: %s", name)
             continue
         # Add all other outputs as switches
@@ -109,7 +101,7 @@ async def _add_zone_bypass_switches(ws_manager, device_info, base_id, entities):
 
     for zone in bypass_zones:
         zone_id = zone.get("ID")
-        zone_name = zone.get("DES") or zone.get("LBL") or zone.get("NM") or f"Zone {zone_id}"
+        zone_name = get_entity_name(zone, zone_id, f"Zone {zone_id}")
         entities.append(
             KseniaZoneBypassSwitch(ws_manager, zone_id, zone_name, zone, device_info, base_id)
         )
@@ -139,7 +131,8 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
         for data in data_list:
             if str(data.get("ID")) == str(self.switch_id):
                 _LOGGER.debug("[switch] Entity %s update: %s", self.switch_id, data)
-                self._state = data.get("STA", "off").lower() == "on"
+                if "STA" in data:
+                    self._state = data["STA"].lower() == "on"
                 self._raw_data.update(data)
                 self.async_write_ha_state()
                 break
@@ -189,11 +182,6 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
         await self.ws_manager.turnOffOutput(self.switch_id)
         self._state = False
         self.async_write_ha_state()
-
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
 
 
 class KseniaZoneBypassSwitch(KseniaEntity, SwitchEntity):
@@ -278,8 +266,3 @@ class KseniaZoneBypassSwitch(KseniaEntity, SwitchEntity):
         if success:
             self._state = False
             self.async_write_ha_state()
-
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False

@@ -17,13 +17,16 @@ from .const import (
     _ARM_STATE_MAP,
     BINARY_ZONE_CATS,
     DOMAIN,
+    AlarmStatus,
     ConnectionStatus,
+    PartitionArmStatus,
+    PartitionTamperStatus,
     PowerSupplyStatus,
     SystemFaults,
     SystemTamperingStatus,
     TriggeredStatus,
 )
-from .helpers import KseniaEntity, build_unique_id
+from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -130,7 +133,7 @@ async def _add_powerline_sensors(ws_manager, device_info, base_id, entities):
     powerlines = await ws_manager.getSensor("POWER_LINES")
     _LOGGER.debug("Found %d power lines", len(powerlines))
     for sensor in powerlines:
-        entities.append(KseniaSensorEntity(ws_manager, sensor, "powerlines", device_info, base_id))
+        entities.append(KseniaPowerlineSensor(ws_manager, sensor, device_info, base_id))
 
 
 async def _add_partition_sensors(ws_manager, device_info, base_id, entities):
@@ -138,7 +141,7 @@ async def _add_partition_sensors(ws_manager, device_info, base_id, entities):
     partitions = await ws_manager.getSensor("PARTITIONS")
     _LOGGER.debug("Found %d partitions", len(partitions))
     for sensor in partitions:
-        entities.append(KseniaSensorEntity(ws_manager, sensor, "partitions", device_info, base_id))
+        entities.append(KseniaPartitionSensor(ws_manager, sensor, device_info, base_id))
 
 
 async def _add_zone_sensors(ws_manager, device_info, base_id, entities):
@@ -191,215 +194,39 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
 
     _attr_has_entity_name = True
 
-    # Shared partition ARM/AST/TST maps
-    _PARTITION_ARM_MAP = {
-        "D": "Disarmed",
-        "DA": "Delayed Arming",
-        "IA": "Immediate Arming",
-        "IT": "Input time",
-        "OT": "Output time",
-    }
-    _PARTITION_AST_MAP = {
-        "OK": "No ongoing alarm",
-        "AL": "Ongoing alarm",
-        "AM": "Alarm memory",
-    }
-    _PARTITION_TST_MAP = {
-        "OK": "No ongoing tampering",
-        "TAM": "Ongoing tampering",
-        "TM": "Tampering memory",
-    }
-
-    """
-    Initializes a Ksenia sensor entity.
-
-    :param ws_manager: WebSocketManager instance to command Ksenia
-    :param sensor_data: Dictionary with the sensor data
-    :param sensor_type: Type of the sensor (domus, powerlines, partitions, zones, system)
-    """
-
     def __init__(self, ws_manager, sensor_data, sensor_type, device_info=None, base_id=None):
         """Initialise the sensor entity with its manager, raw data, and type."""
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
         self._sensor_type = sensor_type
         self._base_id = base_id or ws_manager.ip
-        self._attr_name = (
-            sensor_data.get("NM")
-            or sensor_data.get("LBL")
-            or sensor_data.get("DES")
-            or str(self._id)
-        )
+        self._attr_name = get_entity_name(sensor_data, self._id)
         self._device_info = device_info
-        self._dispatch_init(sensor_data, sensor_type)
-
-    def _dispatch_init(self, sensor_data: dict, sensor_type: str) -> None:
-        """Dispatch sensor initialisation to the appropriate per-type helper.
-
-        CAT-based types (from zone data) take precedence over the sensor_type argument.
-        """
-        # sensor_type-based dispatch (explicit type argument)
-        # Zone types (CMD, SEISM, etc.) are handled by binary_sensor.py
-        _type_dispatch = {
-            "powerlines": self._init_powerlines_type,
-            "partitions": self._init_partitions_type,
-        }
-        init_fn = _type_dispatch.get(sensor_type)
-        if init_fn:
-            init_fn(sensor_data)
-        else:
-            self._state = sensor_data.get("STA", "unknown")
-            self._attributes = sensor_data
-            self._raw_data = dict(sensor_data)
-
-    # ------------------------------------------------------------------
-    # Per-type init helpers (called from __init__)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_power_float(value, field_name: str):
-        """Safely parse a power reading string to float.
-
-        Returns:
-            Float value or None on failure.
-        """
-        try:
-            return float(value) if value and value.replace(".", "", 1).isdigit() else None
-        except Exception as e:
-            _LOGGER.error("Error converting %s: %s", field_name, e)
-            return None
-
-    @classmethod
-    def _build_partition_state_and_attrs(cls, data: dict) -> tuple[str, dict]:
-        """Build partition state string and attributes dict from data dict.
-
-        Returns:
-            Tuple of (state string, attributes dict)
-        """
-        raw_arm = data.get("ARM", "")
-        arm_desc = cls._PARTITION_ARM_MAP.get(raw_arm, raw_arm) if raw_arm else "Unknown"
-        if raw_arm in ("IT", "OT"):
-            timer = data.get("T", 0)
-            state = f"{arm_desc} ({timer}s)"
-        else:
-            state = arm_desc if arm_desc else "Unknown"
-
-        attrs = {
-            "Partition": data.get("ID"),
-            "Description": data.get("DES"),
-            "Arming Mode": raw_arm,
-            "Arming Description": arm_desc,
-            "Alarm Mode": data.get("AST"),
-            "Alarm Description": cls._PARTITION_AST_MAP.get(data.get("AST", ""), ""),
-            "Tamper Mode": data.get("TST"),
-            "Tamper Description": cls._PARTITION_TST_MAP.get(data.get("TST", ""), ""),
-        }
-        if data.get("TIN") is not None:
-            attrs["entry_delay"] = data["TIN"]
-        if data.get("TOUT") is not None:
-            attrs["exit_delay"] = data["TOUT"]
-        return state, attrs
-
-    def _init_powerlines_type(self, sensor_data: dict) -> None:
-        """Initialize entity for a power line sensor."""
-        self._attr_device_class = SensorDeviceClass.POWER
-        self._attr_native_unit_of_measurement = UnitOfPower.WATT
-        pcons_val = self._parse_power_float(sensor_data.get("PCONS"), "PCONS")
-        pprod_val = self._parse_power_float(sensor_data.get("PPROD"), "PPROD")
-        consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
-        self._state = pcons_val
-        self._attributes = {
-            "Consumption": consumo_kwh,
-            "Production": pprod_val,
-            "Status": sensor_data.get("STATUS", "Unknown"),
-        }
+        self._state = sensor_data.get("STA", "unknown")
+        self._attributes = sensor_data
         self._raw_data = dict(sensor_data)
-
-    def _init_partitions_type(self, sensor_data: dict) -> None:
-        """Initialize entity for a partition status sensor."""
-        state, attrs = self._build_partition_state_and_attrs(sensor_data)
-        self._state = state
-        self._attributes = attrs
-        self._raw_data = dict(sensor_data)
-
-    """
-    Register the sensor entity to start receiving real-time updates.
-
-    This method is called when the entity is added to Home Assistant.
-    It registers a listener for the specific sensor type or 'systems'
-    if the sensor type is 'system'. The listener will trigger the
-    `_handle_realtime_update` method when new data is received.
-    """
 
     async def async_added_to_hass(self):
         """Register the appropriate realtime listener with the WebSocket manager once added to HA."""
         await super().async_added_to_hass()
         self.ws_manager.register_listener(self._sensor_type, self._handle_realtime_update)
 
-    """
-    Handle real-time updates for the sensor.
-
-    This method is called when a new set of data is received from the real-time API.
-    It updates the state and attributes of the sensor based on the received data.
-    """
-
     async def _handle_realtime_update(self, data_list):
-        """Dispatch real-time update to the appropriate per-type handler."""
-        _record_handlers = {
-            "powerlines": self._rt_update_powerlines,
-            "partitions": self._rt_update_partitions,
-        }
+        """Handle real-time updates for the sensor."""
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
             _LOGGER.debug("[%s] Entity %s update: %s", self._sensor_type, self._id, data)
-            record_handler = _record_handlers.get(self._sensor_type)
-            if record_handler:
-                record_handler(data)
-            else:
-                self._state = data.get("STA", "unknown")
-                self._attributes = data
-                self._raw_data.update(data)
+            self._state = data.get("STA", "unknown")
+            self._attributes = data
+            self._raw_data.update(data)
             self.async_write_ha_state()
             break
-
-    # ------------------------------------------------------------------
-    # Per-type realtime update helpers
-    # ------------------------------------------------------------------
-
-    def _rt_update_powerlines(self, data: dict) -> None:
-        """Apply a powerlines-type realtime update record."""
-        pcons_val = self._parse_power_float(data.get("PCONS"), "PCONS")
-        pprod_val = self._parse_power_float(data.get("PPROD"), "PPROD")
-        consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
-        self._state = pcons_val
-        self._attributes = {
-            "Consumption": consumo_kwh,
-            "Production": pprod_val,
-            "Status": data.get("STATUS", "unknown"),
-        }
-        self._raw_data.update(data)
-
-    def _rt_update_partitions(self, data: dict) -> None:
-        """Apply a partitions-type realtime update record."""
-        state, attrs = self._build_partition_state_and_attrs(data)
-        self._state = state
-        self._attributes = attrs
-        self._raw_data.update(data)
 
     @property
     def unique_id(self) -> str:
         """Returns a unique ID for the sensor."""
         return build_unique_id(self._base_id, self._sensor_type, self._id)
-
-    @property
-    def entity_category(self) -> EntityCategory | None:
-        """Return the entity category for this sensor."""
-        # Powerlines are diagnostic sensors
-        if self._sensor_type in ("powerlines",):
-            return EntityCategory.DIAGNOSTIC
-        # All other sensors are regular sensors (no category)
-        return None
 
     @property
     def native_value(self) -> str | float | None:
@@ -409,22 +236,108 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict:
         """Returns the extra state attributes of the sensor."""
-        # Include raw_data as nested attribute for complete transparency
         attributes = dict(self._attributes)
         attributes["raw_data"] = self._raw_data
         return attributes
 
-    @property
-    def icon(self):
-        """Returns the icon of the sensor."""
-        if self._sensor_type == "powerlines":
-            return "mdi:lightning-bolt-outline"
-        return None
 
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
+class KseniaPowerlineSensor(KseniaSensorEntity):
+    """Sensor entity for power line monitoring."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:lightning-bolt-outline"
+
+    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
+        """Initialise a power line sensor."""
+        super().__init__(ws_manager, sensor_data, "powerlines", device_info, base_id)
+        self._apply_power_data(sensor_data)
+
+    def _apply_power_data(self, data: dict) -> None:
+        """Parse power data and set state/attributes."""
+        pcons_val = self._parse_power_float(data.get("PCONS"), "PCONS")
+        pprod_val = self._parse_power_float(data.get("PPROD"), "PPROD")
+        consumption_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
+        self._state = pcons_val
+        self._attributes = {
+            "Consumption": consumption_kwh,
+            "Production": pprod_val,
+            "Status": data.get("STATUS", "Unknown"),
+        }
+        self._raw_data = dict(data)
+
+    async def _handle_realtime_update(self, data_list):
+        """Handle real-time updates for power line sensors."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            _LOGGER.debug("[powerlines] Entity %s update: %s", self._id, data)
+            self._apply_power_data(data)
+            self.async_write_ha_state()
+            break
+
+    @staticmethod
+    def _parse_power_float(value, field_name: str):
+        """Safely parse a power reading string to float."""
+        try:
+            return float(value) if value and value.replace(".", "", 1).isdigit() else None
+        except Exception as e:
+            _LOGGER.error("Error converting %s: %s", field_name, e)
+            return None
+
+
+class KseniaPartitionSensor(KseniaSensorEntity):
+    """Sensor entity for partition (security zone) status."""
+
+    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
+        """Initialise a partition sensor."""
+        super().__init__(ws_manager, sensor_data, "partitions", device_info, base_id)
+        self._apply_partition_data(sensor_data)
+
+    def _apply_partition_data(self, data: dict) -> None:
+        """Parse partition data and set state/attributes."""
+        raw_arm = data.get("ARM", "")
+        arm_desc = (
+            next((s.name for s in PartitionArmStatus if s == raw_arm), raw_arm)
+            if raw_arm
+            else None
+        )
+        if raw_arm in ("IT", "OT"):
+            timer = data.get("T", 0)
+            self._state = f"{arm_desc} ({timer}s)"
+        else:
+            self._state = arm_desc
+
+        self._attributes = {
+            "Partition": data.get("ID"),
+            "Description": data.get("DES"),
+            "Arming Mode": raw_arm,
+            "Arming Description": arm_desc,
+            "Alarm Mode": data.get("AST"),
+            "Alarm Description": next(
+                (s.name for s in AlarmStatus if s == data.get("AST", "")), ""
+            ),
+            "Tamper Mode": data.get("TST"),
+            "Tamper Description": next(
+                (s.name for s in PartitionTamperStatus if s == data.get("TST", "")), ""
+            ),
+        }
+        if data.get("TIN") is not None:
+            self._attributes["entry_delay"] = data["TIN"]
+        if data.get("TOUT") is not None:
+            self._attributes["exit_delay"] = data["TOUT"]
+        self._raw_data = dict(data)
+
+    async def _handle_realtime_update(self, data_list):
+        """Handle real-time updates for partition sensors."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            _LOGGER.debug("[partitions] Entity %s update: %s", self._id, data)
+            self._apply_partition_data(data)
+            self.async_write_ha_state()
+            break
 
 
 class KseniaDomusSensorEntity(KseniaSensorEntity):
@@ -644,11 +557,6 @@ class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
         """Return the icon for the sensor."""
         return "mdi:alarm-panel"
 
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
-
     async def async_added_to_hass(self):
         """Register realtime listener for system updates."""
         await super().async_added_to_hass()
@@ -707,9 +615,7 @@ class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
             zones = await self.ws_manager.getSensor("ZONES")
             for zone in zones:
                 zone_id = zone.get("ID")
-                self._zone_names[zone_id] = (
-                    zone.get("NM") or zone.get("LBL") or zone.get("DES") or f"Zone {zone_id}"
-                )
+                self._zone_names[zone_id] = get_entity_name(zone, zone_id, f"Zone {zone_id}")
         except Exception as e:
             _LOGGER.debug(f"Error loading zone names: {e}")
 
@@ -718,19 +624,14 @@ class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
             partitions = await self.ws_manager.getSensor("STATUS_PARTITIONS")
             for partition in partitions:
                 partition_id = partition.get("ID")
-                partition_label = (
-                    partition.get("LBL") or partition.get("DES") or f"Partition {partition_id}"
+                partition_label = get_entity_name(
+                    partition, partition_id, f"Partition {partition_id}"
                 )
                 self._partition_labels[partition_id] = partition_label
                 # Initialize partition attributes with labels
                 self._attributes[f"Partition {partition_id} {partition_label}"] = "OK"
         except Exception as e:
             _LOGGER.debug(f"Error loading partition labels: {e}")
-            # Fallback: initialize with default names
-            self._partition_labels["1"] = "1"
-            self._partition_labels["2"] = "2"
-            self._attributes["Partition 1"] = "Not triggered"
-            self._attributes["Partition 2"] = "Not triggered"
 
     async def _handle_zone_update(self, data_list):
         """Handle realtime zone updates and track alarmed zones."""
@@ -752,16 +653,15 @@ class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
         # Update attributes with latest AST values from all partitions
         for data in data_list:
             partition_id = data.get("ID")
-            ast = data.get("AST", "Not triggered")
-            if partition_id in ("1", "2"):
-                partition_label = self._partition_labels.get(partition_id, partition_id)
-                attr_key = f"Partition {partition_id} {partition_label}"
-                self._attributes[attr_key] = ast
-                partition_states[partition_id] = ast
+            ast = data.get("AST", AlarmStatus.NO_ALARM)
+            partition_label = self._partition_labels.get(partition_id, partition_id)
+            attr_key = f"Partition {partition_id} {partition_label}"
+            self._attributes[attr_key] = ast
+            partition_states[partition_id] = ast
 
-        # Recalculate aggregated state: AL takes priority over AM over Not triggered
-        has_ongoing_alarm = any(partition_states.get(pid) == "AL" for pid in ("1", "2"))
-        has_alarm_memory = any(partition_states.get(pid) == "AM" for pid in ("1", "2"))
+        # Recalculate aggregated state: AL takes priority over AM over not triggered
+        has_ongoing_alarm = any(v == AlarmStatus.ONGOING_ALARM for v in partition_states.values())
+        has_alarm_memory = any(v == AlarmStatus.ALARM_MEMORY for v in partition_states.values())
 
         previous_state = self._state
 
@@ -802,11 +702,6 @@ class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
             return "mdi:alarm-light-outline"
         return "mdi:shield-check"
 
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
-
 
 class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system-wide tampering status from partitions, zones, and peripherals."""
@@ -824,9 +719,8 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         self._state = SystemTamperingStatus.OK
         self._tampered_zones = []  # Track current tampered zones
         self._zone_names = {}  # Map zone IDs to names
+        self._partition_tst_states: dict = {}  # Map partition ID to TST value
         self._attributes = {
-            "partition_1_tst": "OK",
-            "partition_2_tst": "OK",
             "tampered_zones": [],
             "panel_tampered": False,
             "peripheral_tampers": 0,
@@ -846,9 +740,7 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
             zones = await self.ws_manager.getSensor("ZONES")
             for zone in zones:
                 zone_id = zone.get("ID")
-                self._zone_names[zone_id] = (
-                    zone.get("NM") or zone.get("LBL") or zone.get("DES") or f"Zone {zone_id}"
-                )
+                self._zone_names[zone_id] = get_entity_name(zone, zone_id, f"Zone {zone_id}")
         except Exception as e:
             _LOGGER.debug(f"Error loading zone names for tamper sensor: {e}")
 
@@ -904,12 +796,11 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
 
     async def _handle_partition_update(self, data_list):
         """Handle realtime partition updates and recalculate aggregated state."""
-        # Update attributes with latest TST values from all partitions
         for data in data_list:
             partition_id = data.get("ID")
-            tst = data.get("TST", "OK")
-            if partition_id in ("1", "2"):
-                self._attributes[f"partition_{partition_id}_tst"] = tst
+            tst = data.get("TST", PartitionTamperStatus.NO_TAMPERING)
+            self._partition_tst_states[partition_id] = tst
+            self._attributes[f"partition_{partition_id}_tst"] = tst
 
         self._recalculate_state()
 
@@ -928,10 +819,12 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         else:
             # Check partition TST for alarm-level tampering
             has_ongoing_tamper = any(
-                self._attributes.get(f"partition_{pid}_tst") == "TAM" for pid in ("1", "2")
+                v == PartitionTamperStatus.ONGOING_TAMPERING
+                for v in self._partition_tst_states.values()
             )
             has_tamper_memory = any(
-                self._attributes.get(f"partition_{pid}_tst") == "TM" for pid in ("1", "2")
+                v == PartitionTamperStatus.TAMPERING_MEMORY
+                for v in self._partition_tst_states.values()
             )
 
             if has_ongoing_tamper:
@@ -981,11 +874,6 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         elif self._state == SystemTamperingStatus.TAMPERING_MEMORY:
             return "mdi:shield-alert-outline"
         return "mdi:shield-check"
-
-    @property
-    def should_poll(self) -> bool:
-        """This sensor uses realtime updates, no polling needed."""
-        return False
 
 
 class KseniaEventLogSensor(KseniaEntity, SensorEntity):
@@ -1116,7 +1004,7 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
         self._recorded_triggered_partitions = []
         self._alarm_triggered_time = None
         self._alarm_reset_time = None
-        self._last_partition_state = {"1": "Not triggered", "2": "Not triggered"}
+        self._last_partition_state: dict = {}
         self._raw_data = {}
 
     async def async_added_to_hass(self):
@@ -1130,9 +1018,7 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
             zones = await self.ws_manager.getSensor("ZONES")
             for zone in zones:
                 zone_id = zone.get("ID")
-                self._zone_names[zone_id] = (
-                    zone.get("NM") or zone.get("LBL") or zone.get("DES") or f"Zone {zone_id}"
-                )
+                self._zone_names[zone_id] = get_entity_name(zone, zone_id, f"Zone {zone_id}")
         except Exception as e:
             _LOGGER.debug(f"Error loading zone names for last alarm sensor: {e}")
 
@@ -1196,9 +1082,9 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
     def _process_alarm_trigger(self, current_partition_state: dict, triggered_now: list) -> None:
         """Detect alarm activation transition and record timestamps/partitions."""
         became_active = any(
-            self._last_partition_state.get(pid, "OK") != "AL"
-            and current_partition_state.get(pid, "OK") == "AL"
-            for pid in ("1", "2")
+            self._last_partition_state.get(pid, AlarmStatus.NO_ALARM) != AlarmStatus.ONGOING_ALARM
+            and current_partition_state.get(pid, AlarmStatus.NO_ALARM) == AlarmStatus.ONGOING_ALARM
+            for pid in current_partition_state
         )
         if became_active:
             if not self._alarm_triggered_time:
@@ -1209,8 +1095,12 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
 
     def _process_alarm_reset(self, current_partition_state: dict) -> None:
         """Detect alarm reset transition and record reset timestamp."""
-        alarm_was_active = any(self._last_partition_state.get(pid) == "AL" for pid in ("1", "2"))
-        alarm_is_cleared = all(current_partition_state.get(pid, "OK") != "AL" for pid in ("1", "2"))
+        alarm_was_active = any(
+            v == AlarmStatus.ONGOING_ALARM for v in self._last_partition_state.values()
+        )
+        alarm_is_cleared = not any(
+            v == AlarmStatus.ONGOING_ALARM for v in current_partition_state.values()
+        )
         if alarm_was_active and alarm_is_cleared and not self._alarm_reset_time:
             self._alarm_reset_time = datetime.now().isoformat()
 
@@ -1265,11 +1155,6 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
         """Returns the icon of the sensor."""
         return "mdi:alert-circle"
 
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
-
 
 class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing the last zones that triggered a tamper event (persistent)."""
@@ -1297,9 +1182,7 @@ class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
             zones = await self.ws_manager.getSensor("ZONES")
             for zone in zones:
                 zone_id = zone.get("ID")
-                self._zone_names[zone_id] = (
-                    zone.get("NM") or zone.get("LBL") or zone.get("DES") or f"Zone {zone_id}"
-                )
+                self._zone_names[zone_id] = get_entity_name(zone, zone_id, f"Zone {zone_id}")
         except Exception as e:
             _LOGGER.debug(f"Error loading zone names for last tamper sensor: {e}")
 
@@ -1349,11 +1232,6 @@ class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
     def icon(self):
         """Returns the icon of the sensor."""
         return "mdi:shield-alert"
-
-    @property
-    def should_poll(self) -> bool:
-        """This sensor uses realtime updates, no polling needed."""
-        return False
 
 
 class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
@@ -1496,11 +1374,6 @@ class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
             return "mdi:cloud"
         else:
             return "mdi:network-off"
-
-    @property
-    def should_poll(self) -> bool:
-        """This sensor uses realtime updates, no polling needed."""
-        return False
 
 
 class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
@@ -1685,11 +1558,6 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
         else:
             return "mdi:power-plug-battery"
 
-    @property
-    def should_poll(self) -> bool:
-        """This sensor uses realtime updates, no polling needed."""
-        return False
-
 
 class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system-wide fault status from power, communication, and peripherals."""
@@ -1849,11 +1717,6 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
         else:  # Critical faults
             return "mdi:alert-octagon"
 
-    @property
-    def should_poll(self) -> bool:
-        """This sensor uses realtime updates, no polling needed."""
-        return False
-
 
 class KseniaFaultMemorySensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system fault memory from STATUS_SYSTEM.FAULT_MEM."""
@@ -2002,8 +1865,3 @@ class KseniaFaultMemorySensor(KseniaEntity, SensorEntity):
             return "mdi:check-circle-outline"
         else:
             return "mdi:alert-circle"
-
-    @property
-    def should_poll(self) -> bool:
-        """This sensor uses realtime updates, no polling needed."""
-        return False

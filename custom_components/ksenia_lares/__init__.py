@@ -18,12 +18,12 @@ from .const import (
     CONF_SSL,
     DEFAULT_PLATFORMS,
     DOMAIN,
+    SETUP_TIMEOUT,
 )
-from .helpers import build_unique_id
+from .helpers import build_device_info, build_unique_id, get_entity_name, is_hidden_or_siren
 from .websocketmanager import WebSocketManager
 
 _LOGGER = logging.getLogger(__name__)
-SETUP_TIMEOUT = 60  # Increased to allow for device startup delays and initial data fetch retries
 # Track setup tasks to allow cancellation during removal
 _SETUP_TASKS = {}
 
@@ -70,11 +70,11 @@ def _rm_sensors_migrated2binarysensor(hass, config_entry) -> None:
 
 # TODO: remove this 4 below migration functions in future relase e.g. v2.5.0
 async def _rm_hidden_output_switches(hass, config_entry, ws_manager, mac, ip) -> None:
-    """Remove switch entities for outputs with CNV=H (hidden).
+    """Remove switch entities for hidden/siren outputs.
 
     Earlier versions created switch entities for all outputs regardless of CNV.
-    Now outputs with CNV=H are excluded (they are sirens/hidden devices), so
-    any previously created switch entities for them must be removed.
+    Now outputs with CNV=H or siren names are excluded, so any previously
+    created switch entities for them must be removed.
     """
     try:
         switches = await ws_manager.getSwitches()
@@ -82,20 +82,23 @@ async def _rm_hidden_output_switches(hass, config_entry, ws_manager, mac, ip) ->
         _LOGGER.warning("Could not fetch outputs for hidden switch cleanup: %s", e)
         return
 
-    hidden_ids = {str(s.get("ID")) for s in switches if s.get("CNV") == "H"}
-    if not hidden_ids:
-        _LOGGER.debug("No hidden outputs (CNV=H) found, no switches to cleanup")
+    excluded = []
+    for s in switches:
+        name = get_entity_name(s, s.get("ID"), "")
+        if is_hidden_or_siren(s, name):
+            excluded.append(s)
+
+    if not excluded:
+        _LOGGER.debug("No hidden/siren outputs found, no switches to cleanup")
         return
 
     # Build all possible unique_id patterns for these IDs (old IP-based and new MAC-based)
     hidden_uids = set()
-    for sid in hidden_ids:
+    for s in excluded:
+        sid = str(s.get("ID"))
         hidden_uids.add(f"{ip}_{sid}")  # old format
-        for s in switches:
-            if str(s.get("ID")) == sid:
-                cat = (s.get("CAT") or "output").lower()
-                hidden_uids.add(build_unique_id(mac, cat, sid))
-                break
+        cat = (s.get("CAT") or "output").lower()
+        hidden_uids.add(build_unique_id(mac, cat, sid))
 
     ent_reg = er.async_get(hass)
     entries = er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
@@ -105,14 +108,14 @@ async def _rm_hidden_output_switches(hass, config_entry, ws_manager, mac, ip) ->
             continue
         if entry.unique_id in hidden_uids:
             _LOGGER.info(
-                "Removing hidden output switch entity %s (unique_id=%s, CNV=H)",
+                "Removing hidden/siren output switch entity %s (unique_id=%s)",
                 entry.entity_id,
                 entry.unique_id,
             )
             ent_reg.async_remove(entry.entity_id)
             removed += 1
     if removed:
-        _LOGGER.info("Removed %d hidden output switch entities (CNV=H)", removed)
+        _LOGGER.info("Removed %d hidden/siren output switch entities", removed)
 
 
 async def _migrate_unique_ids(hass, config_entry, mac, ip, ws_manager) -> None:
@@ -214,19 +217,6 @@ def _migrate_ip_based_uid(suffix, mac, domain, switch_cat_map):
         return build_unique_id(mac, "scenario", suffix)
 
     return None
-
-
-def _build_device_info(ip, port, use_ssl, system_info):
-    """Build device information dictionary for Home Assistant entities."""
-    protocol = "https" if use_ssl else "http"
-    return {
-        "identifiers": {(DOMAIN, ip)},
-        "name": "Ksenia Lares",
-        "manufacturer": system_info.get("BRAND", "Ksenia"),
-        "model": system_info.get("MODEL", "Lares 4.0"),
-        "sw_version": system_info.get("VER_LITE", {}).get("FW", "Unknown"),
-        "configuration_url": f"{protocol}://{ip}:{port}",
-    }
 
 
 def _register_device(hass, entry, ip, use_ssl, port, system_info):
@@ -340,7 +330,7 @@ async def async_setup_entry(hass, entry):
         ws_manager = await _setup_connection(hass, entry, ip, port, pin, use_ssl)
 
         system_info = await ws_manager.getSystemVersion()
-        device_info = _build_device_info(ip, port, use_ssl, system_info)
+        device_info = build_device_info(ip, port, use_ssl, system_info)
         _register_device(hass, entry, ip, use_ssl, port, system_info)
         hass.data[DOMAIN]["device_info"] = device_info
         mac = system_info.get("MAC")
