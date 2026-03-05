@@ -207,30 +207,16 @@ def get_partition_arm_state_description(arm_code: str) -> str:
 
 def get_partition_status_data(partition: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Get partition data with STA field updated based on ARM state.
-    Ensures all required fields (AST, TST, T) are present in broadcasts.
+    Get partition status data matching real hardware format.
+    Real hardware sends: ID, ARM, T, AST, TST (no STA field).
     """
-    # Map ARM codes to STA descriptive text
-    arm_to_sta = {
-        ARM_STATE_DISARMED: "Disarmed",
-        ARM_STATE_DELAYED_ARM: "Delayed Arming",
-        ARM_STATE_IMMEDIATE_ARM: "Immediate Arming",
-        ARM_STATE_ENTRY_DELAY: "Intrusion",
-        ARM_STATE_EXIT_DELAY: "Delayed Arming",
+    return {
+        "ID": partition["ID"],
+        "ARM": partition["ARM"],
+        "T": partition.get("T", "0"),
+        "AST": partition.get("AST", ALARM_OK),
+        "TST": partition.get("TST", TAMPER_OK),
     }
-
-    partition_data = {**partition}
-    partition_data["STA"] = arm_to_sta.get(partition["ARM"], partition.get("STA", ""))
-
-    # Ensure all required fields present for broadcasts
-    if "T" not in partition_data:
-        partition_data["T"] = "0"
-    if "AST" not in partition_data:
-        partition_data["AST"] = ALARM_OK
-    if "TST" not in partition_data:
-        partition_data["TST"] = TAMPER_OK
-
-    return partition_data
 
 
 # ============================================================================
@@ -362,7 +348,6 @@ class SimulatorState:
                 "ID": PARTITION_1,
                 "DES": PARTITION_LABEL_SHELL,
                 "LBL": PARTITION_LABEL_SHELL,
-                "STA": "disarmed",
                 "ARM": ARM_STATE_DISARMED,
                 "AST": ALARM_OK,
                 "TST": TAMPER_OK,
@@ -373,7 +358,6 @@ class SimulatorState:
                 "ID": PARTITION_2,
                 "DES": PARTITION_LABEL_VOLUME,
                 "LBL": PARTITION_LABEL_VOLUME,
-                "STA": "disarmed",
                 "ARM": ARM_STATE_DISARMED,
                 "AST": ALARM_OK,
                 "TST": TAMPER_OK,
@@ -735,7 +719,6 @@ async def delayed_entry_delay_expired(partition_id: str) -> None:
         state.partitions[partition_id]["ARM"] = ARM_STATE_IMMEDIATE_ARM
         # 2. Update AST field to AL (alarm active)
         state.partitions[partition_id]["AST"] = ALARM_ACTIVE
-        state.partitions[partition_id]["STA"] = "armed"
         logger.info(f"[SIMULATOR] Partition state updated: ARM={ARM_STATE_IMMEDIATE_ARM}, AST={ALARM_ACTIVE}")
         logger.info(f"[SIMULATOR] 🚨 ALARM TRIGGERED 🚨 - Partition {partition_id} entry delay expired, alarm now active (AST={ALARM_ACTIVE})")
         logger.info(f"[SIMULATOR] Alarm Trigger Status: ALARM ACTIVE (Partition {partition_id} AST={ALARM_ACTIVE})")
@@ -844,9 +827,6 @@ async def execute_scenario(sid: str):
         for partition_id, arm_state in partitions_config.items():
             old_arm = state.partitions[partition_id]["ARM"]
             state.partitions[partition_id]["ARM"] = arm_state
-            state.partitions[partition_id]["STA"] = (
-                "armed" if arm_state != ARM_STATE_DISARMED else "disarmed"
-            )
             logger.debug(f"[SIMULATOR] execute_scenario({sid}): Partition {partition_id} ARM state updated: {old_arm} → {arm_state}")
 
             # Match disarm endpoint behavior: move active alarms to memory, otherwise clear
@@ -1501,7 +1481,6 @@ async def api_arm_partition(partition_id: str) -> Response:
         part = state.partitions.get(partition_id)
         if not part:
             return JSONResponse(status_code=404, content={"detail": "Partition not found"})
-        part["STA"] = "armed"
         part["ARM"] = ARM_STATE_IMMEDIATE_ARM
         part["AST"] = ALARM_OK
         await auto_bypass_active_zones([partition_id])
@@ -1523,7 +1502,6 @@ async def api_disarm_partition(partition_id: str) -> Response:
         part = state.partitions.get(partition_id)
         if not part:
             return JSONResponse(status_code=404, content={"detail": "Partition not found"})
-        part["STA"] = "disarmed"
         part["ARM"] = ARM_STATE_DISARMED
 
         # Transition from alarm to alarm memory
