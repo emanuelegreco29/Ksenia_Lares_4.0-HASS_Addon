@@ -17,13 +17,16 @@ from .const import (
     _ARM_STATE_MAP,
     BINARY_ZONE_CATS,
     DOMAIN,
+    AlarmStatus,
     ConnectionStatus,
+    PartitionArmStatus,
+    PartitionTamperStatus,
     PowerSupplyStatus,
     SystemFaults,
     SystemTamperingStatus,
     TriggeredStatus,
 )
-from .helpers import KseniaEntity, build_unique_id
+from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -130,7 +133,7 @@ async def _add_powerline_sensors(ws_manager, device_info, base_id, entities):
     powerlines = await ws_manager.getSensor("POWER_LINES")
     _LOGGER.debug("Found %d power lines", len(powerlines))
     for sensor in powerlines:
-        entities.append(KseniaSensorEntity(ws_manager, sensor, "powerlines", device_info, base_id))
+        entities.append(KseniaPowerlineSensor(ws_manager, sensor, device_info, base_id))
 
 
 async def _add_partition_sensors(ws_manager, device_info, base_id, entities):
@@ -138,7 +141,7 @@ async def _add_partition_sensors(ws_manager, device_info, base_id, entities):
     partitions = await ws_manager.getSensor("PARTITIONS")
     _LOGGER.debug("Found %d partitions", len(partitions))
     for sensor in partitions:
-        entities.append(KseniaSensorEntity(ws_manager, sensor, "partitions", device_info, base_id))
+        entities.append(KseniaPartitionSensor(ws_manager, sensor, device_info, base_id))
 
 
 async def _add_zone_sensors(ws_manager, device_info, base_id, entities):
@@ -191,215 +194,39 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
 
     _attr_has_entity_name = True
 
-    # Shared partition ARM/AST/TST maps
-    _PARTITION_ARM_MAP = {
-        "D": "Disarmed",
-        "DA": "Delayed Arming",
-        "IA": "Immediate Arming",
-        "IT": "Input time",
-        "OT": "Output time",
-    }
-    _PARTITION_AST_MAP = {
-        "OK": "No ongoing alarm",
-        "AL": "Ongoing alarm",
-        "AM": "Alarm memory",
-    }
-    _PARTITION_TST_MAP = {
-        "OK": "No ongoing tampering",
-        "TAM": "Ongoing tampering",
-        "TM": "Tampering memory",
-    }
-
-    """
-    Initializes a Ksenia sensor entity.
-
-    :param ws_manager: WebSocketManager instance to command Ksenia
-    :param sensor_data: Dictionary with the sensor data
-    :param sensor_type: Type of the sensor (domus, powerlines, partitions, zones, system)
-    """
-
     def __init__(self, ws_manager, sensor_data, sensor_type, device_info=None, base_id=None):
         """Initialise the sensor entity with its manager, raw data, and type."""
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
         self._sensor_type = sensor_type
         self._base_id = base_id or ws_manager.ip
-        self._attr_name = (
-            sensor_data.get("NM")
-            or sensor_data.get("LBL")
-            or sensor_data.get("DES")
-            or str(self._id)
-        )
+        self._attr_name = get_entity_name(sensor_data, self._id)
         self._device_info = device_info
-        self._dispatch_init(sensor_data, sensor_type)
-
-    def _dispatch_init(self, sensor_data: dict, sensor_type: str) -> None:
-        """Dispatch sensor initialisation to the appropriate per-type helper.
-
-        CAT-based types (from zone data) take precedence over the sensor_type argument.
-        """
-        # sensor_type-based dispatch (explicit type argument)
-        # Zone types (CMD, SEISM, etc.) are handled by binary_sensor.py
-        _type_dispatch = {
-            "powerlines": self._init_powerlines_type,
-            "partitions": self._init_partitions_type,
-        }
-        init_fn = _type_dispatch.get(sensor_type)
-        if init_fn:
-            init_fn(sensor_data)
-        else:
-            self._state = sensor_data.get("STA", "unknown")
-            self._attributes = sensor_data
-            self._raw_data = dict(sensor_data)
-
-    # ------------------------------------------------------------------
-    # Per-type init helpers (called from __init__)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_power_float(value, field_name: str):
-        """Safely parse a power reading string to float.
-
-        Returns:
-            Float value or None on failure.
-        """
-        try:
-            return float(value) if value and value.replace(".", "", 1).isdigit() else None
-        except Exception as e:
-            _LOGGER.error("Error converting %s: %s", field_name, e)
-            return None
-
-    @classmethod
-    def _build_partition_state_and_attrs(cls, data: dict) -> tuple[str, dict]:
-        """Build partition state string and attributes dict from data dict.
-
-        Returns:
-            Tuple of (state string, attributes dict)
-        """
-        raw_arm = data.get("ARM", "")
-        arm_desc = cls._PARTITION_ARM_MAP.get(raw_arm, raw_arm) if raw_arm else "Unknown"
-        if raw_arm in ("IT", "OT"):
-            timer = data.get("T", 0)
-            state = f"{arm_desc} ({timer}s)"
-        else:
-            state = arm_desc if arm_desc else "Unknown"
-
-        attrs = {
-            "Partition": data.get("ID"),
-            "Description": data.get("DES"),
-            "Arming Mode": raw_arm,
-            "Arming Description": arm_desc,
-            "Alarm Mode": data.get("AST"),
-            "Alarm Description": cls._PARTITION_AST_MAP.get(data.get("AST", ""), ""),
-            "Tamper Mode": data.get("TST"),
-            "Tamper Description": cls._PARTITION_TST_MAP.get(data.get("TST", ""), ""),
-        }
-        if data.get("TIN") is not None:
-            attrs["entry_delay"] = data["TIN"]
-        if data.get("TOUT") is not None:
-            attrs["exit_delay"] = data["TOUT"]
-        return state, attrs
-
-    def _init_powerlines_type(self, sensor_data: dict) -> None:
-        """Initialize entity for a power line sensor."""
-        self._attr_device_class = SensorDeviceClass.POWER
-        self._attr_native_unit_of_measurement = UnitOfPower.WATT
-        pcons_val = self._parse_power_float(sensor_data.get("PCONS"), "PCONS")
-        pprod_val = self._parse_power_float(sensor_data.get("PPROD"), "PPROD")
-        consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
-        self._state = pcons_val
-        self._attributes = {
-            "Consumption": consumo_kwh,
-            "Production": pprod_val,
-            "Status": sensor_data.get("STATUS", "Unknown"),
-        }
+        self._state = sensor_data.get("STA", "unknown")
+        self._attributes = sensor_data
         self._raw_data = dict(sensor_data)
-
-    def _init_partitions_type(self, sensor_data: dict) -> None:
-        """Initialize entity for a partition status sensor."""
-        state, attrs = self._build_partition_state_and_attrs(sensor_data)
-        self._state = state
-        self._attributes = attrs
-        self._raw_data = dict(sensor_data)
-
-    """
-    Register the sensor entity to start receiving real-time updates.
-
-    This method is called when the entity is added to Home Assistant.
-    It registers a listener for the specific sensor type or 'systems'
-    if the sensor type is 'system'. The listener will trigger the
-    `_handle_realtime_update` method when new data is received.
-    """
 
     async def async_added_to_hass(self):
         """Register the appropriate realtime listener with the WebSocket manager once added to HA."""
         await super().async_added_to_hass()
         self.ws_manager.register_listener(self._sensor_type, self._handle_realtime_update)
 
-    """
-    Handle real-time updates for the sensor.
-
-    This method is called when a new set of data is received from the real-time API.
-    It updates the state and attributes of the sensor based on the received data.
-    """
-
     async def _handle_realtime_update(self, data_list):
-        """Dispatch real-time update to the appropriate per-type handler."""
-        _record_handlers = {
-            "powerlines": self._rt_update_powerlines,
-            "partitions": self._rt_update_partitions,
-        }
+        """Handle real-time updates for the sensor."""
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
             _LOGGER.debug("[%s] Entity %s update: %s", self._sensor_type, self._id, data)
-            record_handler = _record_handlers.get(self._sensor_type)
-            if record_handler:
-                record_handler(data)
-            else:
-                self._state = data.get("STA", "unknown")
-                self._attributes = data
-                self._raw_data.update(data)
+            self._state = data.get("STA", "unknown")
+            self._attributes = data
+            self._raw_data.update(data)
             self.async_write_ha_state()
             break
-
-    # ------------------------------------------------------------------
-    # Per-type realtime update helpers
-    # ------------------------------------------------------------------
-
-    def _rt_update_powerlines(self, data: dict) -> None:
-        """Apply a powerlines-type realtime update record."""
-        pcons_val = self._parse_power_float(data.get("PCONS"), "PCONS")
-        pprod_val = self._parse_power_float(data.get("PPROD"), "PPROD")
-        consumo_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
-        self._state = pcons_val
-        self._attributes = {
-            "Consumption": consumo_kwh,
-            "Production": pprod_val,
-            "Status": data.get("STATUS", "unknown"),
-        }
-        self._raw_data.update(data)
-
-    def _rt_update_partitions(self, data: dict) -> None:
-        """Apply a partitions-type realtime update record."""
-        state, attrs = self._build_partition_state_and_attrs(data)
-        self._state = state
-        self._attributes = attrs
-        self._raw_data.update(data)
 
     @property
     def unique_id(self) -> str:
         """Returns a unique ID for the sensor."""
         return build_unique_id(self._base_id, self._sensor_type, self._id)
-
-    @property
-    def entity_category(self) -> EntityCategory | None:
-        """Return the entity category for this sensor."""
-        # Powerlines are diagnostic sensors
-        if self._sensor_type in ("powerlines",):
-            return EntityCategory.DIAGNOSTIC
-        # All other sensors are regular sensors (no category)
-        return None
 
     @property
     def native_value(self) -> str | float | None:
@@ -425,7 +252,6 @@ class KseniaPowerlineSensor(KseniaSensorEntity):
     def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
         """Initialise a power line sensor."""
         super().__init__(ws_manager, sensor_data, "powerlines", device_info, base_id)
-        self._attr_name = self._base_name
         self._apply_power_data(sensor_data)
 
     def _apply_power_data(self, data: dict) -> None:
@@ -464,25 +290,24 @@ class KseniaPowerlineSensor(KseniaSensorEntity):
 class KseniaPartitionSensor(KseniaSensorEntity):
     """Sensor entity for partition (security zone) status."""
 
-    _attr_translation_key = "partition_status"
-    _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = [s.name.lower() for s in PartitionArmStatus]
-
     def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
         """Initialise a partition sensor."""
         super().__init__(ws_manager, sensor_data, "partitions", device_info, base_id)
-        self._attr_translation_placeholders = {"name": self._base_name}
         self._apply_partition_data(sensor_data)
 
     def _apply_partition_data(self, data: dict) -> None:
         """Parse partition data and set state/attributes."""
         raw_arm = data.get("ARM", "")
         arm_desc = (
-            next((s.name.lower() for s in PartitionArmStatus if s == raw_arm), raw_arm)
+            next((s.name for s in PartitionArmStatus if s == raw_arm), raw_arm)
             if raw_arm
             else None
         )
-        self._state = arm_desc
+        if raw_arm in ("IT", "OT"):
+            timer = data.get("T", 0)
+            self._state = f"{arm_desc} ({timer}s)"
+        else:
+            self._state = arm_desc
 
         self._attributes = {
             "Partition": data.get("ID"),
@@ -513,228 +338,6 @@ class KseniaPartitionSensor(KseniaSensorEntity):
             self._apply_partition_data(data)
             self.async_write_ha_state()
             break
-
-
-class KseniaDomusSensorEntity(KseniaSensorEntity):
-    """Sensor entity for domus (environmental) devices — temperature, humidity, or light."""
-
-    _MEASUREMENT_CONFIG = {
-        "temperature": {
-            "translation_key": "domus_temperature",
-            "device_class": SensorDeviceClass.TEMPERATURE,
-            "unit": UnitOfTemperature.CELSIUS,
-            "icon": "mdi:thermometer",
-        },
-        "humidity": {
-            "translation_key": "domus_humidity",
-            "device_class": SensorDeviceClass.HUMIDITY,
-            "unit": PERCENTAGE,
-            "icon": "mdi:water-percent",
-        },
-        "light": {
-            "translation_key": "domus_light",
-            "device_class": SensorDeviceClass.ILLUMINANCE,
-            "unit": LIGHT_LUX,
-            "icon": "mdi:brightness-6",
-        },
-    }
-
-    def __init__(
-        self, ws_manager, sensor_data, device_info=None, base_id=None, measurement="temperature"
-    ):
-        """Initialise a domus sensor for a specific measurement type."""
-        self._measurement = measurement
-        config = self._MEASUREMENT_CONFIG[measurement]
-        self._attr_translation_key = config["translation_key"]
-        super().__init__(ws_manager, sensor_data, "domus", device_info, base_id)
-        self._attr_translation_placeholders = {"name": self._base_name}
-        self._object_id_name = f"{self._base_name} {measurement}".strip()
-        # Set device class and unit
-        self._attr_device_class = config["device_class"]
-        self._attr_native_unit_of_measurement = config["unit"]
-        # Parse initial state
-        domus_data = sensor_data.get("DOMUS", {})
-        if not isinstance(domus_data, dict):
-            domus_data = {}
-        self._state = self._parse_value(domus_data)
-        self._attributes = self._build_domus_attributes(sensor_data)
-        self._raw_data = dict(sensor_data)
-
-    # ------------------------------------------------------------------
-    # Parsing helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _optional_reading(domus_data: dict, key: str) -> str:
-        """Return domus field value, or 'Unknown' when absent/NA."""
-        val = domus_data.get(key)
-        return "Unknown" if val in (None, "NA", "") else str(val)
-
-    @staticmethod
-    def _parse_temperature(domus_data: dict):
-        """Parse temperature string, returning float or None."""
-        try:
-            temp_str = domus_data.get("TEM")
-            return (
-                float(temp_str.replace("+", ""))
-                if temp_str and temp_str not in ("NA", "")
-                else None
-            )
-        except Exception as e:
-            _LOGGER.error("Error converting temperature in domus sensor: %s", e)
-            return None
-
-    @staticmethod
-    def _parse_humidity(domus_data: dict):
-        """Parse humidity string, returning float or None."""
-        try:
-            hum_str = domus_data.get("HUM")
-            return float(hum_str) if hum_str and hum_str not in ("NA", "") else None
-        except Exception as e:
-            _LOGGER.error("Error converting humidity in domus sensor: %s", e)
-            return None
-
-    @staticmethod
-    def _parse_light(domus_data: dict):
-        """Parse light intensity string, returning float or None."""
-        try:
-            lht_str = domus_data.get("LHT")
-            return float(lht_str) if lht_str and lht_str not in ("NA", "") else None
-        except Exception as e:
-            _LOGGER.error("Error converting light in domus sensor: %s", e)
-            return None
-
-    def _parse_value(self, domus_data: dict):
-        """Parse the primary value for this measurement type."""
-        _parsers = {
-            "temperature": self._parse_temperature,
-            "humidity": self._parse_humidity,
-            "light": self._parse_light,
-        }
-        return _parsers[self._measurement](domus_data)
-
-    @classmethod
-    def _build_domus_attributes(cls, sensor_data: dict) -> dict:
-        """Build the shared domus attributes dict from sensor data."""
-        domus_data = sensor_data.get("DOMUS", {})
-        if not isinstance(domus_data, dict):
-            domus_data = {}
-        temperature = cls._parse_temperature(domus_data)
-        humidity = cls._parse_humidity(domus_data)
-        return {
-            "temperature": temperature if temperature is not None else "Unknown",
-            "humidity": humidity if humidity is not None else "Unknown",
-            "light": cls._optional_reading(domus_data, "LHT"),
-            "pir": cls._optional_reading(domus_data, "PIR"),
-            "tl": cls._optional_reading(domus_data, "TL"),
-            "th": cls._optional_reading(domus_data, "TH"),
-        }
-
-    # ------------------------------------------------------------------
-    # Overrides
-    # ------------------------------------------------------------------
-
-    @property
-    def unique_id(self) -> str:
-        """Returns a unique ID including the measurement suffix."""
-        base = build_unique_id(self._base_id, self._sensor_type, self._id)
-        return f"{base}_{self._measurement}"
-
-    @property
-    def suggested_object_id(self) -> str:
-        """Provide an explicit object_id so HA doesn't fall back to the unique_id."""
-        return self._object_id_name
-
-    @property
-    def icon(self):
-        """Returns the measurement-specific icon."""
-        return self._MEASUREMENT_CONFIG[self._measurement]["icon"]
-
-    async def _handle_realtime_update(self, data_list):
-        """Handle domus-specific realtime updates."""
-        for data in data_list:
-            if str(data.get("ID")) != str(self._id):
-                continue
-            _LOGGER.debug("[domus/%s] Entity %s update: %s", self._measurement, self._id, data)
-            domus_data = data.get("DOMUS", {})
-            if not isinstance(domus_data, dict):
-                domus_data = {}
-            self._state = self._parse_value(domus_data)
-            self._attributes = self._build_domus_attributes(data)
-            self._raw_data.update(data)
-            self.async_write_ha_state()
-            break
-
-
-class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
-    """Sensor entity for the system-wide alarm status (armed/disarmed/etc).
-
-    Uses HA translation key for its name rather than dynamic device data.
-    """
-
-    _attr_has_entity_name = True
-    _attr_translation_key = "alarm_system_status"
-    _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = list(_ARM_STATE_MAP.values())
-
-    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
-        """Initialize the alarm system status sensor."""
-        self.ws_manager = ws_manager
-        self._id = sensor_data["ID"]
-        self._base_id = base_id or ws_manager.ip
-        self._device_info = device_info
-        self._raw_data = dict(sensor_data)
-        self._attributes: dict = {}
-
-        arm_data = sensor_data.get("ARM", {})
-        state_code = arm_data.get("S", "") if isinstance(arm_data, dict) else ""
-        if state_code is None or state_code == "":
-            _LOGGER.error(
-                "Ksenia system sensor %s: ARM state code is None/empty; ARM data: %r",
-                self._id,
-                arm_data,
-            )
-            state_code = ""
-        readable_state = _ARM_STATE_MAP.get(state_code, state_code)
-        if state_code not in _ARM_STATE_MAP:
-            _LOGGER.error(
-                "Ksenia system sensor %s: unwanted ARM code %r — cannot map!",
-                self._id,
-                state_code,
-            )
-        self._state = readable_state
-
-        suffix = "" if str(self._id) == "1" else f" {self._id}"
-        self._attr_translation_placeholders = {"suffix": suffix}
-
-    @property
-    def unique_id(self) -> str:
-        """Return unique ID for the sensor."""
-        return build_unique_id(self._base_id, "system", self._id)
-
-    @property
-    def native_value(self) -> str | None:
-        """Return the state of the sensor."""
-        return self._state
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        """Return additional state attributes."""
-        attributes = dict(self._attributes)
-        attributes["raw_data"] = self._raw_data
-        return attributes
-
-    @property
-    def icon(self):
-        """Returns the icon of the sensor."""
-        if self._sensor_type == "powerlines":
-            return "mdi:lightning-bolt-outline"
-        return None
-
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
 
 
 class KseniaDomusSensorEntity(KseniaSensorEntity):
@@ -954,11 +557,6 @@ class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
         """Return the icon for the sensor."""
         return "mdi:alarm-panel"
 
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
-
     async def async_added_to_hass(self):
         """Register realtime listener for system updates."""
         await super().async_added_to_hass()
@@ -1104,11 +702,6 @@ class KseniaAlarmTriggerStatusSensor(KseniaEntity, SensorEntity):
             return "mdi:alarm-light-outline"
         return "mdi:shield-check"
 
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
-
 
 class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system-wide tampering status from partitions, zones, and peripherals."""
@@ -1128,8 +721,6 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         self._zone_names = {}  # Map zone IDs to names
         self._partition_tst_states: dict = {}  # Map partition ID to TST value
         self._attributes = {
-            "partition_1_tst": "OK",
-            "partition_2_tst": "OK",
             "tampered_zones": [],
             "panel_tampered": False,
             "peripheral_tampers": 0,
@@ -1283,7 +874,6 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         elif self._state == SystemTamperingStatus.TAMPERING_MEMORY:
             return "mdi:shield-alert-outline"
         return "mdi:shield-check"
-
 
 
 class KseniaEventLogSensor(KseniaEntity, SensorEntity):
@@ -1492,9 +1082,9 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
     def _process_alarm_trigger(self, current_partition_state: dict, triggered_now: list) -> None:
         """Detect alarm activation transition and record timestamps/partitions."""
         became_active = any(
-            self._last_partition_state.get(pid, "OK") != "AL"
-            and current_partition_state.get(pid, "OK") == "AL"
-            for pid in ("1", "2")
+            self._last_partition_state.get(pid, AlarmStatus.NO_ALARM) != AlarmStatus.ONGOING_ALARM
+            and current_partition_state.get(pid, AlarmStatus.NO_ALARM) == AlarmStatus.ONGOING_ALARM
+            for pid in current_partition_state
         )
         if became_active:
             if not self._alarm_triggered_time:
@@ -1505,8 +1095,12 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
 
     def _process_alarm_reset(self, current_partition_state: dict) -> None:
         """Detect alarm reset transition and record reset timestamp."""
-        alarm_was_active = any(self._last_partition_state.get(pid) == "AL" for pid in ("1", "2"))
-        alarm_is_cleared = all(current_partition_state.get(pid, "OK") != "AL" for pid in ("1", "2"))
+        alarm_was_active = any(
+            v == AlarmStatus.ONGOING_ALARM for v in self._last_partition_state.values()
+        )
+        alarm_is_cleared = not any(
+            v == AlarmStatus.ONGOING_ALARM for v in current_partition_state.values()
+        )
         if alarm_was_active and alarm_is_cleared and not self._alarm_reset_time:
             self._alarm_reset_time = datetime.now().isoformat()
 
@@ -1560,11 +1154,6 @@ class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):
     def icon(self):
         """Returns the icon of the sensor."""
         return "mdi:alert-circle"
-
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
 
 
 class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
@@ -1643,7 +1232,6 @@ class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
     def icon(self):
         """Returns the icon of the sensor."""
         return "mdi:shield-alert"
-
 
 
 class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
@@ -1786,7 +1374,6 @@ class KseniaConnectionStatusSensor(KseniaEntity, SensorEntity):
             return "mdi:cloud"
         else:
             return "mdi:network-off"
-
 
 
 class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
@@ -1972,7 +1559,6 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
             return "mdi:power-plug-battery"
 
 
-
 class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system-wide fault status from power, communication, and peripherals."""
 
@@ -2130,7 +1716,6 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
             return "mdi:alert-circle"
         else:  # Critical faults
             return "mdi:alert-octagon"
-
 
 
 class KseniaFaultMemorySensor(KseniaEntity, SensorEntity):

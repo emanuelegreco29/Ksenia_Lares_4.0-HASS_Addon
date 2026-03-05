@@ -15,6 +15,7 @@ CONF_PLATFORMS = "platforms"
 # Defaults
 DEFAULT_PORT = 443
 DEFAULT_SSL = True
+SETUP_TIMEOUT = 60  # seconds; allow for device startup delays and initial data fetch retries
 DEFAULT_PLATFORMS = [
     "light",
     "cover",
@@ -86,6 +87,14 @@ class AlarmStatus(StrEnum):
     NO_ALARM = "OK"
     ONGOING_ALARM = "AL"
     ALARM_MEMORY = "AM"
+
+
+class PartitionTamperStatus(StrEnum):
+    """TST field states from partition (STATUS_PARTITIONS.TST)."""
+
+    NO_TAMPERING = "OK"
+    ONGOING_TAMPERING = "TAM"
+    TAMPERING_MEMORY = "TM"
 
 
 class TriggeredStatus(StrEnum):

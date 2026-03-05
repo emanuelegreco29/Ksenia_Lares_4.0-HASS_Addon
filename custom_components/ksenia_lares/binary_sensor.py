@@ -12,7 +12,7 @@ from homeassistant.components.binary_sensor import (
 )
 
 from .const import BINARY_ZONE_CATS, DOMAIN
-from .helpers import KseniaEntity, build_unique_id
+from .helpers import KseniaEntity, build_unique_id, get_entity_name, is_hidden_or_siren
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,15 +29,6 @@ _DEVICE_CLASS_MAP = {
     "siren": BinarySensorDeviceClass.SOUND,
 }
 
-# Zone fault/tamper flag mapping: data key → (attribute name, transform function)
-_ZONE_FLAG_MAP = {
-    "T": ("Tamper", lambda v: "Yes" if v == "T" else "No"),
-    "A": ("Alarm", lambda v: "On" if v == "T" else "Off"),
-    "FM": ("Fault Memory", lambda v: "Yes" if v == "T" else "No"),
-    "OHM": ("Resistance", lambda v: v if v != "NA" else "N/A"),
-    "VAS": ("Voltage Alarm Sensor", lambda v: "Active" if v == "T" else "Inactive"),
-}
-
 
 def _discover_sirens(
     switches, ws_manager, device_info, base_id, async_add_entities, discovered_ids
@@ -51,11 +42,8 @@ def _discover_sirens(
         unique_id = f"siren_{switch.get('ID')}"
         if unique_id in discovered_ids:
             continue
-        # Inline _is_siren_switch logic
-        if (
-            switch.get("CNV", "").upper() == "H"
-            or "siren" in (switch.get("DES") or switch.get("LBL") or switch.get("NM") or "").lower()
-        ):
+        name = get_entity_name(switch, switch.get("ID"), "")
+        if is_hidden_or_siren(switch, name):
             new_entities.append(
                 KseniaSirenBinarySensorEntity(ws_manager, switch, device_info, base_id)
             )
@@ -142,9 +130,16 @@ def _apply_zone_fault_flags(data: dict, attributes: dict) -> None:
     """Populate attributes with zone fault/tamper/alarm flags."""
     if "BYP" in data:
         attributes["Bypass"] = "Active" if data["BYP"].upper() != "NO" else "Inactive"
-    for key, (attr, transform) in _ZONE_FLAG_MAP.items():
-        if key in data:
-            attributes[attr] = transform(data[key])
+    if "T" in data:
+        attributes["Tamper"] = "Yes" if data["T"] == "T" else "No"
+    if "A" in data:
+        attributes["Alarm"] = "On" if data["A"] == "T" else "Off"
+    if "FM" in data:
+        attributes["Fault Memory"] = "Yes" if data["FM"] == "T" else "No"
+    if "OHM" in data:
+        attributes["Resistance"] = data["OHM"] if data["OHM"] != "NA" else "N/A"
+    if "VAS" in data:
+        attributes["Voltage Alarm Sensor"] = "Active" if data["VAS"] == "T" else "Inactive"
     if "LBL" in data and data["LBL"]:
         attributes["Label"] = data["LBL"]
 
@@ -192,12 +187,7 @@ class KseniaZoneBinarySensorEntity(KseniaEntity, BinarySensorEntity):
         self._attr_device_class = _DEVICE_CLASS_MAP.get(sensor_type)
         self._is_on = _parse_is_on(sensor_type, sensor_data)
         self._extra_attributes = _build_zone_attributes(sensor_data)
-        self._attr_name = (
-            sensor_data.get("NM")
-            or sensor_data.get("LBL")
-            or sensor_data.get("DES")
-            or str(self._id)
-        )
+        self._attr_name = get_entity_name(sensor_data, self._id)
 
     @property
     def unique_id(self):
@@ -207,10 +197,6 @@ class KseniaZoneBinarySensorEntity(KseniaEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         return self._is_on
-
-    @property
-    def should_poll(self) -> bool:
-        return False
 
     @property
     def extra_state_attributes(self):
@@ -249,11 +235,8 @@ class KseniaSirenBinarySensorEntity(KseniaEntity, BinarySensorEntity):
         self._raw_data = dict(sensor_data)
         self._attr_device_class = _DEVICE_CLASS_MAP.get("siren")
         self._is_on = _parse_is_on("siren", sensor_data)
-        label = (
-            sensor_data.get("DES")
-            or sensor_data.get("LBL")
-            or sensor_data.get("NM")
-            or f"Siren {sensor_data.get('ID')}"
+        label = get_entity_name(
+            sensor_data, sensor_data.get("ID"), f"Siren {sensor_data.get('ID')}"
         )
         self._extra_attributes = {
             "ID": sensor_data.get("ID"),
@@ -272,10 +255,6 @@ class KseniaSirenBinarySensorEntity(KseniaEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         return self._is_on
-
-    @property
-    def should_poll(self) -> bool:
-        return False
 
     @property
     def extra_state_attributes(self):

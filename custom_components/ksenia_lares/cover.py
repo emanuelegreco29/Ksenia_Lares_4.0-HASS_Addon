@@ -6,7 +6,7 @@ import time
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 
 from .const import DOMAIN
-from .helpers import KseniaEntity, build_unique_id
+from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         entities = []
         for roll in rolls:
             roll_id = roll.get("ID")
-            name = roll.get("DES") or roll.get("LBL") or roll.get("NM") or f"Roller Blind {roll_id}"
+            name = get_entity_name(roll, roll_id, f"Roller Blind {roll_id}")
             entities.append(KseniaRollEntity(ws_manager, roll_id, name, roll, device_info, base_id))
 
         async_add_entities(entities, update_before_add=True)
@@ -78,8 +78,8 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
         self._roll_id = roll_id
         self._base_id = base_id or ws_manager.ip
         self._name = name
-        # POS is the opening percentage (0=closed, 100=opened)
-        self._position = roll_data.get("POS", 0)
+        # POS is the opening percentage (0=closed, 100=opened), None until known
+        self._position = roll_data.get("POS")
         self._pending_command = None
         self._device_info = device_info
         # Store complete raw data for debugging and transparency
@@ -95,10 +95,14 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
         for data in data_list:
             if str(data.get("ID")) == str(self._roll_id):
                 _LOGGER.debug("[cover] Entity %s update: %s", self._roll_id, data)
+                if "POS" not in data:
+                    self._raw_data.update(data)
+                    self.async_write_ha_state()
+                    break
                 try:
-                    new_pos = int(data.get("POS", 0))
-                except Exception:
-                    new_pos = 0
+                    new_pos = int(data["POS"])
+                except (ValueError, TypeError):
+                    new_pos = None
                 # If there's a recent pending command, keep the local state
                 if self._pending_command is not None:
                     cmd, ts = self._pending_command
@@ -190,8 +194,3 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
         await self.ws_manager.setCoverPosition(self._roll_id, position)
         self._pending_command = ("set", time.time())
         self.async_write_ha_state()
-
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed — state is fully listener-driven."""
-        return False
