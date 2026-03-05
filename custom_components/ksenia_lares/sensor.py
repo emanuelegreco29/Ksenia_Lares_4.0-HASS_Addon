@@ -200,7 +200,7 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
         self._id = sensor_data["ID"]
         self._sensor_type = sensor_type
         self._base_id = base_id or ws_manager.ip
-        self._attr_name = get_entity_name(sensor_data, self._id)
+        self._base_name = get_entity_name(sensor_data, self._id) or ""
         self._device_info = device_info
         self._state = sensor_data.get("STA", "unknown")
         self._attributes = sensor_data
@@ -252,6 +252,7 @@ class KseniaPowerlineSensor(KseniaSensorEntity):
     def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
         """Initialise a power line sensor."""
         super().__init__(ws_manager, sensor_data, "powerlines", device_info, base_id)
+        self._attr_name = self._base_name
         self._apply_power_data(sensor_data)
 
     def _apply_power_data(self, data: dict) -> None:
@@ -290,24 +291,25 @@ class KseniaPowerlineSensor(KseniaSensorEntity):
 class KseniaPartitionSensor(KseniaSensorEntity):
     """Sensor entity for partition (security zone) status."""
 
+    _attr_translation_key = "partition_status"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [s.name.lower() for s in PartitionArmStatus]
+
     def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
         """Initialise a partition sensor."""
         super().__init__(ws_manager, sensor_data, "partitions", device_info, base_id)
+        self._attr_translation_placeholders = {"name": self._base_name}
         self._apply_partition_data(sensor_data)
 
     def _apply_partition_data(self, data: dict) -> None:
         """Parse partition data and set state/attributes."""
         raw_arm = data.get("ARM", "")
         arm_desc = (
-            next((s.name for s in PartitionArmStatus if s == raw_arm), raw_arm)
+            next((s.name.lower() for s in PartitionArmStatus if s == raw_arm), raw_arm)
             if raw_arm
             else None
         )
-        if raw_arm in ("IT", "OT"):
-            timer = data.get("T", 0)
-            self._state = f"{arm_desc} ({timer}s)"
-        else:
-            self._state = arm_desc
+        self._state = arm_desc
 
         self._attributes = {
             "Partition": data.get("ID"),
@@ -369,19 +371,10 @@ class KseniaDomusSensorEntity(KseniaSensorEntity):
     ):
         """Initialise a domus sensor for a specific measurement type."""
         self._measurement = measurement
-        # Set translation key before super().__init__ so _attr_name is not used
         config = self._MEASUREMENT_CONFIG[measurement]
-        # super().__init__ will call _dispatch_init, but domus is no longer in the
-        # base dispatch map, so it falls through to the generic branch. We override
-        # the state/attributes afterwards in our own init.
-        super().__init__(ws_manager, sensor_data, "domus", device_info, base_id)
-        # Override name with translated version
-        base_name = str(self._attr_name)
-        # Remove the name attribute set by the base class so it becomes the UNDEFINED default.
-        # Then HA will use the translation key
-        del self._attr_name
         self._attr_translation_key = config["translation_key"]
-        self._attr_translation_placeholders = {"name": base_name}
+        super().__init__(ws_manager, sensor_data, "domus", device_info, base_id)
+        self._attr_translation_placeholders = {"name": self._base_name}
         # Set device class and unit
         self._attr_device_class = config["device_class"]
         self._attr_native_unit_of_measurement = config["unit"]
