@@ -73,11 +73,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class KseniaRollEntity(KseniaEntity, CoverEntity):
     """Cover entity for Ksenia roller blinds/shutters."""
 
+    _attr_has_entity_name = True
+
     def __init__(self, ws_manager, roll_id, name, roll_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._roll_id = roll_id
         self._base_id = base_id or ws_manager.ip
-        self._name = name
+        self._attr_name = name
         # POS is the opening percentage (0=closed, 100=opened), None until known
         self._position = roll_data.get("POS")
         self._pending_command = None
@@ -119,11 +121,6 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
     def unique_id(self):
         """Returns a unique ID for the roller blind."""
         return build_unique_id(self._base_id, "cover", self._roll_id)
-
-    @property
-    def name(self):
-        """Returns the name of the roller blind."""
-        return self._name
 
     @property
     def current_cover_position(self):

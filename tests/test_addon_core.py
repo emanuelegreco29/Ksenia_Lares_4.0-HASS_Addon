@@ -102,14 +102,18 @@ async def test_system_version_response_handling():
 
 
 @pytest.mark.asyncio
-async def test_system_version_timeout_handling():
+async def test_system_version_timeout_handling(monkeypatch):
     """Test that getSystemVersion handles timeout correctly."""
+    from custom_components.ksenia_lares import wscall
     from custom_components.ksenia_lares.wscall import getSystemVersion
-    
+
     # Mock websocket that times out
     ws = AsyncMock()
     ws.recv.side_effect = asyncio.TimeoutError()
-    
+
+    # Fast-forward the deadline so the loop exits immediately
+    monkeypatch.setattr(wscall, "SYSTEM_VERSION_TIMEOUT", 0)
+
     # Should return empty dict on timeout
     result = await getSystemVersion(ws, 1, MagicMock())
     assert result == {}
@@ -287,7 +291,7 @@ async def test_ksenia_switch_entity_initialization():
     entity = KseniaSwitchEntity(ws_manager, "1", "Test Switch", switch_data)
     
     assert entity.switch_id == "1"
-    assert entity._name == "Test Switch"
+    assert entity._attr_name == "Test Switch"
     assert entity._state is True  # "on" should set state to True
     assert entity.ws_manager is ws_manager
 
@@ -511,7 +515,7 @@ async def test_ksenia_sensor_entity_initialization():
     entity = KseniaSensorEntity(ws_manager, sensor_data, "zones")
     
     assert entity._id == "1"
-    assert entity._attr_name == "Zone 1"
+    assert entity._base_name == "Zone 1"
     assert entity._sensor_type == "zones"
     assert entity.ws_manager is ws_manager
 
@@ -526,7 +530,7 @@ async def test_ksenia_sensor_entity_name_fallback():
     
     entity = KseniaSensorEntity(ws_manager, sensor_data, "zones")
     
-    assert entity._attr_name == "Bedroom Door"
+    assert entity._base_name == "Bedroom Door"
 
 
 @pytest.mark.asyncio
@@ -587,7 +591,7 @@ async def test_ksenia_light_entity_initialization():
     entity = KseniaLightEntity(ws_manager, light_data)
     
     assert entity._id == "1"
-    assert entity._name == "Kitchen Light"
+    assert entity._attr_name == "Kitchen Light"
     assert entity.ws_manager is ws_manager
 
 
@@ -662,7 +666,7 @@ async def test_ksenia_roll_entity_initialization():
     entity = KseniaRollEntity(ws_manager, "1", "Blind", cover_data)
     
     assert entity._roll_id == "1"
-    assert entity._name == "Blind"
+    assert entity._attr_name == "Blind"
     assert entity.ws_manager is ws_manager
 
 

@@ -530,7 +530,7 @@ async def broadcast_partitions_and_system(system_status: Dict[str, Any] | str) -
     # This matches real Ksenia hardware behavior (see real-target logs)
     combined_payload = {
         "STATUS_PARTITIONS": partitions_update,
-        "STATUS_SYSTEM": [{"ID": "1", "INFO": [], "ARM": arm_obj, "AST": "OK"}]
+        "STATUS_SYSTEM": [{"ID": "1", "INFO": [], "ARM": arm_obj}]
     }
     
     logger.debug(f"[SIMULATOR] broadcast_partitions_and_system: Broadcasting combined STATUS_PARTITIONS + STATUS_SYSTEM")

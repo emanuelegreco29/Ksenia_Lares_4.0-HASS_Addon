@@ -110,10 +110,12 @@ async def _add_zone_bypass_switches(ws_manager, device_info, base_id, entities):
 class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
     """Switch entity for Ksenia outputs."""
 
+    _attr_has_entity_name = True
+
     def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self.switch_id = switch_id
-        self._name = name
+        self._attr_name = name
         self._cat = (switch_data.get("CAT") or "output").lower()
         self._state = switch_data.get("STA", "off").lower() == "on"
         self._device_info = device_info
@@ -147,11 +149,6 @@ class KseniaSwitchEntity(KseniaEntity, SwitchEntity):
         """Return the entity category for this switch."""
         # Switches are controls/outputs, so no category (they're primary controls)
         return None
-
-    @property
-    def name(self):
-        """Returns the name of the switch."""
-        return self._name
 
     @property
     def is_on(self):

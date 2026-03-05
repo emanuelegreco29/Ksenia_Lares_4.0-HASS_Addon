@@ -16,7 +16,7 @@ from homeassistant.components.alarm_control_panel.const import (
 )
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN, AlarmStatus, PartitionArmStatus
+from .const import DOMAIN, PartitionArmStatus
 from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,6 +98,8 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         self._state = None  # Unknown until real data arrives from device
         self._system_status = {}  # Track system status from STATUS_SYSTEM
         self._partitions_status = []  # Track partition status from STATUS_PARTITIONS
+        self._attr_changed_by = "Unknown"
+        self._ha_action_pending = False  # Track if state change was initiated from HA
 
     async def async_added_to_hass(self):
         """Subscribe to system and partition status realtime updates."""
@@ -108,7 +110,17 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         self.ws_manager.register_listener("partitions", self._handle_partition_status_update)
         _LOGGER.debug("[KseniaACP] Listeners registered successfully")
 
-        # Load initial partition data from cache if available
+        # Load initial data from cache if available
+        try:
+            system = self.ws_manager.get_cached_data("STATUS_SYSTEM")
+            if system and len(system) > 0:
+                self._system_status.update(system[0])
+                _LOGGER.debug(f"[KseniaACP] Loaded initial system data from cache: {system[0]}")
+            else:
+                _LOGGER.debug("[KseniaACP] No STATUS_SYSTEM in cache")
+        except Exception as e:
+            _LOGGER.debug(f"[KseniaACP] Could not load initial system data: {e}")
+
         try:
             partitions = self.ws_manager.get_cached_data("STATUS_PARTITIONS")
             if partitions:
@@ -116,6 +128,11 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
                 _LOGGER.debug(f"[KseniaACP] Loaded initial partition data from cache: {partitions}")
         except Exception as e:
             _LOGGER.debug(f"[KseniaACP] Could not load initial partition data: {e}")
+
+        # Compute initial state from cached data
+        if self._system_status or self._partitions_status:
+            self._compute_state_from_system()
+            _LOGGER.debug(f"[KseniaACP] Initial state from cache: {self._state}")
 
     async def _handle_system_status_update(self, system_list):
         """Handle realtime system status changes.
@@ -130,8 +147,12 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         )
         if system_list and len(system_list) > 0:
             _LOGGER.debug(f"[KseniaACP] System data: {system_list[0]}")
+            old_state = self._state
             self._system_status.update(system_list[0])
             self._compute_state_from_system()
+            if self._state != old_state and not self._ha_action_pending:
+                self._attr_changed_by = "External"
+            self._ha_action_pending = False
             _LOGGER.debug(f"[KseniaACP] Computed state: {self._state}")
             self.async_write_ha_state()
         else:
@@ -376,6 +397,8 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
             success = await self.ws_manager.executeScenario_with_login(scenario_id, pin=code)
 
             if success:
+                self._attr_changed_by = "HA Alarm control panel"
+                self._ha_action_pending = True
                 _LOGGER.info("All partitions disarmed successfully")
             else:
                 _LOGGER.error("Failed to disarm partitions")
@@ -429,6 +452,8 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
             success = await self.ws_manager.executeScenario_with_login(scenario_id, pin=code)
 
             if success:
+                self._attr_changed_by = "HA Alarm control panel"
+                self._ha_action_pending = True
                 _LOGGER.info("All partitions armed in away mode")
             else:
                 _LOGGER.error("Failed to arm partitions in away mode")
@@ -486,6 +511,8 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
             success = await self.ws_manager.executeScenario_with_login(scenario_id, pin=code)
 
             if success:
+                self._attr_changed_by = "HA Alarm control panel"
+                self._ha_action_pending = True
                 _LOGGER.info("All partitions armed in home mode")
             else:
                 _LOGGER.error("Failed to arm partitions in home mode")
@@ -544,15 +571,12 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
     def _get_partition_status(self) -> dict:
         """Return a dict mapping partition_<id> to a readable ARM state string."""
         result = {}
-        try:
-            for part in self.ws_manager.get_cached_data("STATUS_PARTITIONS"):
-                part_id = part.get("ID", "Unknown")
-                part_arm = part.get("ARM", "Unknown")
-                result[f"partition_{part_id}"] = next(
-                    (s.name for s in PartitionArmStatus if s == part_arm), part_arm
-                )
-        except Exception as e:
-            _LOGGER.debug(f"Error loading partition status for attributes: {e}")
+        for part in self._partitions_status:
+            part_id = part.get("ID", "Unknown")
+            part_arm = part.get("ARM", "Unknown")
+            result[f"partition_{part_id}"] = next(
+                (s.name for s in PartitionArmStatus if s == part_arm), part_arm
+            )
         return result
 
     @property
@@ -569,11 +593,10 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         device_description = (
             arm_data.get("D", "Unknown") if isinstance(arm_data, dict) else "Unknown"
         )
-        ast_status = self._system_status.get("AST", "Unknown")
         bypassed_zones = self._get_bypassed_zones()
         return {
             "device_status": device_description,
-            "alarm_condition": next((s.name for s in AlarmStatus if s == ast_status), ast_status),
+            "alarm_condition": ("Ongoing Alarm" if self._has_partition_alarm() else "No Alarm"),
             "alarm_memory": self._has_partition_alarm_memory(),
             "bypassed_zones": bypassed_zones if bypassed_zones else "None",
             "partition_status": self._get_partition_status(),

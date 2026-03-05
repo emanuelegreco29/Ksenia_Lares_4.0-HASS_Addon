@@ -66,13 +66,15 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class KseniaLightEntity(KseniaEntity, LightEntity):
     """Light entity for Ksenia Lares system."""
 
+    _attr_has_entity_name = True
+
     def __init__(self, ws_manager, light_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._id = light_data.get("ID")
         self._base_id = base_id or ws_manager.ip
         _LOGGER.debug("Initializing KseniaLightEntity with data: %s", light_data)
         # Use the name given by Ksenia, otherwise "Light <ID>"
-        self._name = get_entity_name(light_data, self._id, f"Light {self._id}")
+        self._attr_name = get_entity_name(light_data, self._id, f"Light {self._id}")
         self._state = light_data.get("STA", "off").lower() == "on"
         self._pending_command = None
         self._device_info = device_info
@@ -110,11 +112,6 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
     def unique_id(self):
         """Returns a unique ID for the light."""
         return build_unique_id(self._base_id, "light", self._id)
-
-    @property
-    def name(self):
-        """Returns the name of the light."""
-        return self._name
 
     @property
     def is_on(self):
