@@ -7,6 +7,9 @@ radon==6.0.1
 pyright==1.1.408
 yamllint==1.38.0
 
+# Github Actions linting
+actionlint-py>=1.7.11.24
+
 # Testing
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
@@ -22,3 +25,4 @@ voluptuous>=0.13.0
 websockets>=11.0.0
 pyyaml>=6.0
 homeassistant>=2024.1.0
+
