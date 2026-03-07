@@ -12,6 +12,7 @@ on:
       - "scripts/lint.sh"
       - "pyproject.toml"
       - "requirements-dev.txt"
+      - ".github/workflows/**"
       - "!custom_components/ksenia_lares/manifest.json"  # Exclude manifest.json to avoid triggering on version updates
   pull_request:
     branches:
@@ -22,6 +23,7 @@ on:
       - "scripts/lint.sh"
       - "pyproject.toml"
       - "requirements-dev.txt"
+      - ".github/workflows/**"
       - "!custom_components/ksenia_lares/manifest.json"  # Exclude manifest.json to avoid triggering on version updates
 
 jobs:
