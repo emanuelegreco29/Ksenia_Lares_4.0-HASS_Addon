@@ -1333,19 +1333,35 @@ Device output status. Sent when any output changes state.
 
 ### STATUS_BUS_HA_SENSORS
 
-Bus HA sensor readings.
+Bus HA sensor readings. Each entry corresponds to a bus-connected sensor (e.g. a DOMUS multisensor).
 
-**Structure:**
+**Structure (DOMUS sensor example):**
 ```json
 {
   "STATUS_BUS_HA_SENSORS": [
     {
       "ID": "1",
-      "STA": "21.5"
-    },
-    {
-      "ID": "2",
-      "STA": "45"
+      "SN": "001925",
+      "TYP": "DOMUS",
+      "STA": "IL",
+      "FW": "0.0.38",
+      "HW": "k035",
+      "UA": "F",
+      "BUS": "1",
+      "DOMUS": {
+        "TEM": "29.2",
+        "HUM": "34",
+        "LHT": "64",
+        "PIR": "NA",
+        "TL": "F",
+        "TH": "F"
+      },
+      "INFO": [],
+      "LINK": {
+        "TYPE": "PANEL",
+        "SN": "NA",
+        "BUS": "1"
+      }
     }
   ]
 }
@@ -1353,7 +1369,25 @@ Bus HA sensor readings.
 
 **Fields:**
 - `[].ID`: Sensor ID (string)
-- `[].STA`: Sensor reading (string, format depends on sensor type)
+- `[].SN`: Serial number (string)
+- `[].TYP`: Sensor type (string) - e.g. `"DOMUS"`
+- `[].STA`: Sensor status (string) - e.g. `"IL"` (online/active)
+- `[].FW`: Firmware version (string)
+- `[].HW`: Hardware revision (string)
+- `[].UA`: Update available flag (string) - `"T"` / `"F"`
+- `[].BUS`: Bus number the sensor is connected to (string)
+- `[].DOMUS`: DOMUS-type sensor readings (object, present when `TYP` is `"DOMUS"`)
+  - `TEM`: Temperature in °C (string), e.g. `"29.2"`
+  - `HUM`: Relative humidity in % (string), e.g. `"34"`
+  - `LHT`: Light level in lux (string), e.g. `"64"`
+  - `PIR`: PIR motion detector state (string) - `"NA"` if not present/not triggered, or a value when motion detected
+  - `TL`: Temperature low threshold alarm (string) - `"T"` / `"F"`
+  - `TH`: Temperature high threshold alarm (string) - `"T"` / `"F"`
+- `[].INFO`: Additional info array (typically empty)
+- `[].LINK`: Bus link information (object)
+  - `TYPE`: Link type (string) - e.g. `"PANEL"`
+  - `SN`: Linked device serial number (string) or `"NA"`
+  - `BUS`: Bus number (string)
 
 ### STATUS_PARTITIONS
 
@@ -1541,8 +1575,8 @@ System status information including overall arming state.
         "S": "D"
       },
       "TEMP": {
-        "IN": "NA",
-        "OUT": "NA"
+        "IN": "+20.8",
+        "OUT": "+13.0"
       },
       "TIME": {
         "GMT": "1769814569",
@@ -1574,9 +1608,10 @@ System status information including overall arming state.
 - `ARM`: System arming status (object)
   - `D`: Descriptive status (string) - human-readable description of current state
   - `S`: Status code (string) - machine-readable status code (see codes below)
-- `TEMP`: Temperature readings
-  - `IN`: Internal temperature (string) or `"NA"`
-  - `OUT`: External temperature (string) or `"NA"`
+- `TEMP`: Temperature readings reported by the panel
+  - `IN`: Internal temperature in °C as a signed string (e.g. `"+20.8"`) or `"NA"` if not available
+  - `OUT`: External temperature in °C as a signed string (e.g. `"+13.0"`) or `"NA"` if not available
+  - **Note**: The exact sensor source for these values (siren sensors, DOMUS bus sensors, or other peripherals) is unclear
 - `TIME`: System time information
   - `GMT`: Unix timestamp in GMT seconds (string)
     - Example: `"1769814140"` represents seconds since Unix epoch
