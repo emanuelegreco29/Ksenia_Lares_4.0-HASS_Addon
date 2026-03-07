@@ -60,6 +60,25 @@
       }
     },
     "sensor": {
+      "domus_temperature": {
+        "name": "{name} Temperature"
+      },
+      "domus_humidity": {
+        "name": "{name} Humidity"
+      },
+      "domus_light": {
+        "name": "{name} Light"
+      },
+      "partition_status": {
+        "name": "{name}",
+        "state": {
+          "disarmed": "Disarmed",
+          "delayed_arming": "Delayed Arming",
+          "immediate_arming": "Immediate Arming",
+          "entry_delay_active": "Entry delay active",
+          "exit_delay_active": "Exit delay active"
+        }
+      },
       "alarm_system_status": {
         "name": "Alarm System Status{suffix}",
         "state": {
@@ -70,13 +89,6 @@
           "partially_armed_entry_delay": "Entry Delay Partially Arming",
           "partially_armed_exit_delay": "Exit Delay Partially Arming",
           "disarmed": "Disarmed"
-        }
-      },
-      "siren_status": {
-        "name": "Siren Status {label}",
-        "state": {
-          "on": "On",
-          "off": "Off"
         }
       },
       "event_log": {
@@ -148,31 +160,6 @@
           "ongoing_alarm": "Triggered",
           "alarm_memory": "Alarm memory"
         }
-      },
-      "magnetic_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "closed": "Closed",
-          "open": "Open",
-          "unknown": "Unknown"
-        }
-      },
-      "movement_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "off": "Clear",
-          "on": "Motion detected",
-          "unknown": "Unknown"
-        }
-      },
-      "seismic_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "rest": "Rest",
-          "seismic_activity": "Seismic Activity",
-          "normal": "Normal",
-          "unknown": "Unknown"
-        }
       }
     },
     "switch": {
@@ -212,6 +199,7 @@
         "options": {  
           "alarm_control_panel": "Alarm Control Panel",
           "sensor": "Sensor",
+          "binary_sensor": "Binary Sensor",
           "switch": "Switch",
           "light": "Light",
           "cover": "Cover",

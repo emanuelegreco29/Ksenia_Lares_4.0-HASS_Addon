@@ -6,7 +6,7 @@ import time
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 
 from .const import DOMAIN
-from .websocketmanager import ConnectionState
+from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     try:
         ws_manager = hass.data[DOMAIN]["ws_manager"]
         device_info = hass.data[DOMAIN].get("device_info")
+        base_id = hass.data[DOMAIN].get("mac") or ws_manager.ip
 
         rolls = await ws_manager.getRolls()
         _LOGGER.debug("Found %d roller blinds", len(rolls))
@@ -29,8 +30,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         entities = []
         for roll in rolls:
             roll_id = roll.get("ID")
-            name = roll.get("DES") or roll.get("LBL") or roll.get("NM") or f"Roller Blind {roll_id}"
-            entities.append(KseniaRollEntity(ws_manager, roll_id, name, roll, device_info))
+            name = get_entity_name(roll, roll_id, f"Roller Blind {roll_id}")
+            entities.append(KseniaRollEntity(ws_manager, roll_id, name, roll, device_info, base_id))
 
         async_add_entities(entities, update_before_add=True)
 
@@ -50,20 +51,15 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 for roll in rolls:
                     roll_id = roll.get("ID")
                     if roll_id not in discovered_cover_ids:
-                        name = (
-                            roll.get("DES")
-                            or roll.get("LBL")
-                            or roll.get("NM")
-                            or f"Roller Blind {roll_id}"
-                        )
+                        name = get_entity_name(roll, roll_id, f"Roller Blind {roll_id}")
                         new_entities.append(
-                            KseniaRollEntity(ws_manager, roll_id, name, roll, device_info)
+                            KseniaRollEntity(ws_manager, roll_id, name, roll, device_info, base_id)
                         )
                         discovered_cover_ids.add(roll_id)
 
                 if new_entities:
                     _LOGGER.info(f"Discovery found {len(new_entities)} new cover(s)")
-                    await async_add_entities(new_entities, update_before_add=True)
+                    async_add_entities(new_entities, update_before_add=True)
             except Exception as e:
                 _LOGGER.debug(f"Error during cover discovery: {e}")
 
@@ -74,35 +70,57 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         _LOGGER.error("Error setting up covers: %s", e, exc_info=True)
 
 
-class KseniaRollEntity(CoverEntity):
+class KseniaRollEntity(KseniaEntity, CoverEntity):
     """Cover entity for Ksenia roller blinds/shutters."""
 
-    def __init__(self, ws_manager, roll_id, name, roll_data, device_info=None):
+    _attr_has_entity_name = True
+
+    def __init__(self, ws_manager, roll_id, name, roll_data, device_info=None, base_id=None):
         self.ws_manager = ws_manager
         self._roll_id = roll_id
-        self._name = name
-        # POS is the opening percentage (0=closed, 100=opened)
-        self._position = roll_data.get("POS", 0)
-        self._available = True
+        self._base_id = base_id or ws_manager.ip
+        self._attr_name = name
+        # POS is the opening percentage (0=closed, 100=opened), None until known
+        self._position = roll_data.get("POS")
         self._pending_command = None
         self._device_info = device_info
         # Store complete raw data for debugging and transparency
         self._raw_data = dict(roll_data)
 
+    async def async_added_to_hass(self):
+        """Subscribe to realtime cover updates."""
+        await super().async_added_to_hass()
+        self.ws_manager.register_listener("covers", self._handle_realtime_update)
+
+    async def _handle_realtime_update(self, data_list):
+        """Process realtime STATUS_OUTPUTS updates for this cover."""
+        for data in data_list:
+            if str(data.get("ID")) == str(self._roll_id):
+                _LOGGER.debug("[cover] Entity %s update: %s", self._roll_id, data)
+                if "POS" not in data:
+                    self._raw_data.update(data)
+                    self.async_write_ha_state()
+                    break
+                try:
+                    new_pos = int(data["POS"])
+                except (ValueError, TypeError):
+                    new_pos = None
+                # If there's a recent pending command, keep the local state
+                if self._pending_command is not None:
+                    cmd, ts = self._pending_command
+                    if time.time() - ts < 2:
+                        return
+                    else:
+                        self._pending_command = None
+                self._position = new_pos
+                self._raw_data.update(data)
+                self.async_write_ha_state()
+                break
+
     @property
     def unique_id(self):
         """Returns a unique ID for the roller blind."""
-        return f"{self.ws_manager._ip}_{self._roll_id}"
-
-    @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
-
-    @property
-    def name(self):
-        """Returns the name of the roller blind."""
-        return self._name
+        return build_unique_id(self._base_id, "cover", self._roll_id)
 
     @property
     def current_cover_position(self):
@@ -133,10 +151,8 @@ class KseniaRollEntity(CoverEntity):
 
     async def async_open_cover(self, **kwargs):
         """Open the roller blind."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot open cover %s", self._roll_id)
-            self._available = False
             return
 
         await self.ws_manager.raiseCover(self._roll_id)
@@ -145,10 +161,8 @@ class KseniaRollEntity(CoverEntity):
 
     async def async_close_cover(self, **kwargs):
         """Close the roller blind."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot close cover %s", self._roll_id)
-            self._available = False
             return
 
         await self.ws_manager.lowerCover(self._roll_id)
@@ -157,10 +171,8 @@ class KseniaRollEntity(CoverEntity):
 
     async def async_stop_cover(self, **kwargs):
         """Stop the roller blind."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot stop cover %s", self._roll_id)
-            self._available = False
             return
 
         await self.ws_manager.stopCover(self._roll_id)
@@ -169,10 +181,8 @@ class KseniaRollEntity(CoverEntity):
 
     async def async_set_cover_position(self, **kwargs):
         """Set the position of the roller blind."""
-        state = self.ws_manager.get_connection_state()
-        if state != ConnectionState.CONNECTED:
+        if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot set cover position %s", self._roll_id)
-            self._available = False
             return
 
         position = kwargs.get("position")
@@ -181,35 +191,3 @@ class KseniaRollEntity(CoverEntity):
         await self.ws_manager.setCoverPosition(self._roll_id, position)
         self._pending_command = ("set", time.time())
         self.async_write_ha_state()
-
-    """
-    Updates the state of the roller blind by retrieving the full list of
-    roller blinds and finding the one with the matching ID.
-
-    If a recent command is pending (< 2 seconds), it keeps the local state.
-    """
-
-    async def async_update(self):
-        rolls = await self.ws_manager.getRolls()
-        _LOGGER.debug("async_update: full rolls data: %s", rolls)
-        for roll in rolls:
-            if str(roll.get("ID")) == str(self._roll_id):
-                try:
-                    new_pos = int(roll.get("POS", 0))
-                except Exception:
-                    new_pos = 0
-                if self._pending_command is not None:
-                    cmd, ts = self._pending_command
-                    if time.time() - ts < 2:
-                        return
-                    else:
-                        self._pending_command = None
-                self._position = new_pos
-                # Merge update into raw_data to preserve all fields
-                self._raw_data.update(roll)
-                break
-
-    @property
-    def should_poll(self) -> bool:
-        """Covers use periodic polling for multi-client reconciliation."""
-        return True

@@ -62,8 +62,7 @@ def _sanitize_logmessage(message):
 
     Redacts:
     - PIN codes (replaces with "****")
-    - MAC addresses in SENDER/RECEIVER fields (shows only last 4 chars)
-    - MAC field values
+    - MAC addresses in SENDER/RECEIVER/MAC fields (not showing last 4 chars)
 
     Args:
         message: JSON string or dictionary
@@ -72,37 +71,22 @@ def _sanitize_logmessage(message):
         Sanitized string safe for logging
     """
     try:
-        # Parse if string
         if isinstance(message, str):
             data = json.loads(message)
         else:
             data = message.copy() if isinstance(message, dict) else message
 
-        # Redact PIN in PAYLOAD
-        if isinstance(data, dict) and "PAYLOAD" in data:
-            payload = data["PAYLOAD"]
+        if isinstance(data, dict):
+            payload = data.get("PAYLOAD")
             if isinstance(payload, dict) and "PIN" in payload:
                 payload["PIN"] = "****"
+            for field in ("SENDER", "RECEIVER", "MAC"):
+                v = data.get(field)
+                if isinstance(v, str) and len(v) >= 8:
+                    data[field] = v[:-4] + "****"
 
-        # Sanitize MAC addresses in SENDER/RECEIVER (show only last 4 chars)
-        if isinstance(data, dict):
-            for field in ["SENDER", "RECEIVER"]:
-                if field in data and data[field]:
-                    mac = data[field]
-                    # If it looks like a MAC address (12 hex chars)
-                    if isinstance(mac, str) and len(mac) >= 8:
-                        data[field] = "****" + mac[-4:]
-
-            # Sanitize MAC field if present
-            if "MAC" in data and data["MAC"]:
-                mac = data["MAC"]
-                if isinstance(mac, str) and len(mac) >= 8:
-                    data["MAC"] = "****" + mac[-4:]
-
-        # Return as formatted JSON string
         return json.dumps(data, separators=(",", ":"))
     except Exception:
-        # If sanitization fails, return a safe generic message
         return "<message sanitization failed>"
 
 

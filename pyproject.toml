@@ -39,3 +39,9 @@ asyncio_mode = "auto"
 [tool.coverage.run]
 source = ["custom_components"]
 omit = ["*/tests/*"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+# HA base entity uses cached_property; overriding with @property is valid Python
+# but Pyright flags it as a type mismatch — suppress this known HA pattern
+reportIncompatibleVariableOverride = "none"

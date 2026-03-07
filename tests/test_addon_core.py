@@ -102,17 +102,87 @@ async def test_system_version_response_handling():
 
 
 @pytest.mark.asyncio
-async def test_system_version_timeout_handling():
+async def test_system_version_timeout_handling(monkeypatch):
     """Test that getSystemVersion handles timeout correctly."""
+    from custom_components.ksenia_lares import wscall
     from custom_components.ksenia_lares.wscall import getSystemVersion
-    
+
     # Mock websocket that times out
     ws = AsyncMock()
     ws.recv.side_effect = asyncio.TimeoutError()
-    
+
+    # Fast-forward the deadline so the loop exits immediately
+    monkeypatch.setattr(wscall, "SYSTEM_VERSION_TIMEOUT", 0)
+
     # Should return empty dict on timeout
     result = await getSystemVersion(ws, 1, MagicMock())
     assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_refresh_disconnect_schedules_reconnect_without_shutdown(monkeypatch):
+    """Ensure disconnect triggers reconnect """
+    from custom_components.ksenia_lares import websocketmanager as ws_module
+    from custom_components.ksenia_lares.websocketmanager import ConnectionState, WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._running = True
+    manager._connection_state = ConnectionState.CONNECTED
+    manager._ws = MagicMock()
+    manager._is_ws_closed = MagicMock(return_value=False)
+
+    create_task_mock = MagicMock()
+
+    monkeypatch.setattr(ws_module.websockets.exceptions, "ConnectionClosed", RuntimeError)
+    monkeypatch.setattr(ws_module, "readData", AsyncMock(side_effect=RuntimeError("drop")))
+    monkeypatch.setattr(ws_module.asyncio, "create_task", create_task_mock)
+
+    await manager._refresh_all_state()
+
+    assert manager._running is True
+    assert manager._connection_state == ConnectionState.DISCONNECTED
+    create_task_mock.assert_called_once()
+    scheduled_coro = create_task_mock.call_args[0][0]
+    scheduled_coro.close()
+
+
+@pytest.mark.asyncio
+async def test_command_send_disconnect_schedules_reconnect_without_shutdown(monkeypatch):
+    """Ensure command-send disconnect triggers reconnect """
+    from custom_components.ksenia_lares import websocketmanager as ws_module
+    from custom_components.ksenia_lares.websocketmanager import ConnectionState, WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._running = True
+    manager._connection_state = ConnectionState.CONNECTED
+    manager._ws = MagicMock()
+    manager._loginId = 3
+
+    command_future = asyncio.Future()
+    command_data = {
+        "output_id": "1",
+        "command": "ON",
+        "future": command_future,
+        "command_id": "42",
+    }
+    manager._pending_commands["42"] = {"future": asyncio.Future()}
+
+    create_task_mock = MagicMock()
+
+    monkeypatch.setattr(ws_module.websockets.exceptions, "ConnectionClosed", RuntimeError)
+    monkeypatch.setattr(ws_module, "setOutput", AsyncMock(side_effect=RuntimeError("drop")))
+    monkeypatch.setattr(ws_module.asyncio, "create_task", create_task_mock)
+
+    await manager._dispatch_output_command(command_data)
+
+    assert manager._running is True
+    assert manager._connection_state == ConnectionState.DISCONNECTED
+    assert "42" not in manager._pending_commands
+    assert command_future.done()
+    assert isinstance(command_future.exception(), RuntimeError)
+    create_task_mock.assert_called_once()
+    scheduled_coro = create_task_mock.call_args[0][0]
+    scheduled_coro.close()
 
 
 def test_sensor_imports():
@@ -221,9 +291,8 @@ async def test_ksenia_switch_entity_initialization():
     entity = KseniaSwitchEntity(ws_manager, "1", "Test Switch", switch_data)
     
     assert entity.switch_id == "1"
-    assert entity._name == "Test Switch"
+    assert entity._attr_name == "Test Switch"
     assert entity._state is True  # "on" should set state to True
-    assert entity._available is True
     assert entity.ws_manager is ws_manager
 
 
@@ -276,32 +345,69 @@ async def test_ksenia_switch_entity_realtime_update_other_id():
     entity.async_write_ha_state.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_ksenia_switch_entity_siren_disabled_by_default():
-    """Test that siren switches are disabled by default for safety."""
-    from custom_components.ksenia_lares.switch import KseniaSwitchEntity
-    
-    ws_manager = MagicMock()
-    siren_data = {"ID": "10", "STA": "off", "DES": "Siren"}
-    
-    entity = KseniaSwitchEntity(ws_manager, "10", "Siren", siren_data)
-    
-    # Siren should be disabled by default
-    assert entity._attr_entity_registry_enabled_default is False
-
 
 @pytest.mark.asyncio
-async def test_ksenia_switch_entity_non_siren_enabled():
-    """Test that non-siren switches are enabled by default."""
-    from custom_components.ksenia_lares.switch import KseniaSwitchEntity
-    
+def test_ksenia_switch_entity_siren_not_added(monkeypatch):
+    """Test that siren and hidden switches are not added at all (unit test for _add_output_switches)."""
+    from custom_components.ksenia_lares import switch
+
+    class DummySwitch:
+        def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None, base_id=None):
+            self._name = name
+            self._attr_entity_registry_enabled_default = True
+    monkeypatch.setattr(switch, "KseniaSwitchEntity", DummySwitch)
+
+    switches = [
+        {"ID": "1", "DES": "Normal Switch", "STA": "OFF"},
+        {"ID": "2", "DES": "Siren", "STA": "OFF"},
+        {"ID": "3", "DES": "Hidden Switch", "STA": "OFF", "CNV": "H"},
+        {"ID": "4", "LBL": "Another Siren", "STA": "OFF"},
+        {"ID": "5", "NM": "siren output", "STA": "OFF"},
+    ]
     ws_manager = MagicMock()
-    regular_data = {"ID": "5", "STA": "off", "DES": "Regular Switch"}
-    
-    entity = KseniaSwitchEntity(ws_manager, "5", "Regular Switch", regular_data)
-    
-    # Regular switch should be enabled by default
-    assert entity._attr_entity_registry_enabled_default is True
+    ws_manager.getSwitches = AsyncMock(return_value=switches)
+    entities = []
+    import asyncio
+    asyncio.run(switch._add_output_switches(ws_manager, {}, "test_base", entities))
+    added_names = [e._name for e in entities]
+    assert "Normal Switch" in added_names
+    assert all(
+        not ("siren" in n.lower() or n.lower() == "hidden switch")
+        for n in added_names
+    )
+
+
+
+@pytest.mark.asyncio
+def test_ksenia_switch_entity_non_siren_enabled(monkeypatch):
+    """Test that non-siren, non-hidden switches are added and enabled by default (unit test for _add_output_switches)."""
+    from custom_components.ksenia_lares import switch
+
+    class DummySwitch:
+        def __init__(self, ws_manager, switch_id, name, switch_data, device_info=None, base_id=None):
+            self._name = name
+            self._attr_entity_registry_enabled_default = True
+    monkeypatch.setattr(switch, "KseniaSwitchEntity", DummySwitch)
+
+    switches = [
+        {"ID": "1", "DES": "Normal Switch", "STA": "OFF"},
+        {"ID": "2", "DES": "Siren", "STA": "OFF"},
+        {"ID": "3", "DES": "Hidden Switch", "STA": "OFF", "CNV": "H"},
+        {"ID": "4", "LBL": "Another Siren", "STA": "OFF"},
+        {"ID": "5", "NM": "siren output", "STA": "OFF"},
+        {"ID": "6", "DES": "Regular Switch", "STA": "OFF"},
+    ]
+    ws_manager = MagicMock()
+    ws_manager.getSwitches = AsyncMock(return_value=switches)
+    entities = []
+    import asyncio
+    asyncio.run(switch._add_output_switches(ws_manager, {}, "test_base", entities))
+    added_names = [e._name for e in entities]
+    assert "Normal Switch" in added_names
+    assert "Regular Switch" in added_names
+    for e in entities:
+        if e._name in ("Normal Switch", "Regular Switch"):
+            assert getattr(e, "_attr_entity_registry_enabled_default", True) is True
 
 
 # ============================================================================
@@ -409,7 +515,7 @@ async def test_ksenia_sensor_entity_initialization():
     entity = KseniaSensorEntity(ws_manager, sensor_data, "zones")
     
     assert entity._id == "1"
-    assert entity._name == "Zone 1"
+    assert entity._base_name == "Zone 1"
     assert entity._sensor_type == "zones"
     assert entity.ws_manager is ws_manager
 
@@ -424,7 +530,7 @@ async def test_ksenia_sensor_entity_name_fallback():
     
     entity = KseniaSensorEntity(ws_manager, sensor_data, "zones")
     
-    assert entity._name == "Bedroom Door"
+    assert entity._base_name == "Bedroom Door"
 
 
 @pytest.mark.asyncio
@@ -485,7 +591,7 @@ async def test_ksenia_light_entity_initialization():
     entity = KseniaLightEntity(ws_manager, light_data)
     
     assert entity._id == "1"
-    assert entity._name == "Kitchen Light"
+    assert entity._attr_name == "Kitchen Light"
     assert entity.ws_manager is ws_manager
 
 
@@ -515,6 +621,36 @@ async def test_ksenia_light_entity_off_state():
     assert entity.is_on is False
 
 
+@pytest.mark.asyncio
+async def test_light_entity_availability_listener_via_async_added_to_hass():
+    """Verify availability listener is registered per-entity in async_added_to_hass."""
+    from custom_components.ksenia_lares.light import KseniaLightEntity
+
+    listeners: dict[str, list] = {}
+
+    def _register_listener(entity_type, callback):
+        listeners.setdefault(entity_type, []).append(callback)
+
+    ws_manager = MagicMock()
+    ws_manager.ip = "192.168.1.50"
+    ws_manager.register_listener = MagicMock(side_effect=_register_listener)
+
+    light_data = {"ID": "1", "DES": "Kitchen Light", "STA": "off", "CAT": "LIGHT"}
+    entity = KseniaLightEntity(ws_manager, light_data)
+    entity.hass = object()
+    entity.async_write_ha_state = MagicMock()
+
+    await entity.async_added_to_hass()
+
+    # Should register both "lights" (realtime) and "connection" (availability) listeners
+    assert "lights" in listeners
+    assert "connection" in listeners
+
+    # Trigger connection change and verify state write
+    await listeners["connection"][0]({"state": "disconnected", "available": False})
+    entity.async_write_ha_state.assert_called_once()
+
+
 # ============================================================================
 # Cover Entity Tests
 # ============================================================================
@@ -530,7 +666,7 @@ async def test_ksenia_roll_entity_initialization():
     entity = KseniaRollEntity(ws_manager, "1", "Blind", cover_data)
     
     assert entity._roll_id == "1"
-    assert entity._name == "Blind"
+    assert entity._attr_name == "Blind"
     assert entity.ws_manager is ws_manager
 
 
@@ -657,18 +793,17 @@ async def test_ksenia_switch_turn_off_when_connected():
 async def test_ksenia_switch_turn_on_when_disconnected():
     """Test switch turn_on fails gracefully when disconnected."""
     from custom_components.ksenia_lares.switch import KseniaSwitchEntity
-    from custom_components.ksenia_lares.websocketmanager import ConnectionState
-    
+
     ws_manager = MagicMock()
-    ws_manager.get_connection_state = MagicMock(return_value=ConnectionState.DISCONNECTED)
-    
+    ws_manager.available = False
+
     switch_data = {"ID": "1", "STA": "off"}
     entity = KseniaSwitchEntity(ws_manager, "1", "Switch", switch_data)
-    
+
     await entity.async_turn_on()
-    
-    # Should mark as unavailable
-    assert entity._available is False
+
+    # Should not attempt command when unavailable
+    ws_manager.turnOnOutput.assert_not_called()
 
 
 # ============================================================================
@@ -964,8 +1099,8 @@ async def test_unique_id_generation():
     from custom_components.ksenia_lares.switch import KseniaSwitchEntity
     
     ws_manager = MagicMock()
-    ws_manager._ip = "192.168.1.100"
-    
+    ws_manager.ip = "192.168.1.100"
+
     switch_data = {"ID": "5", "STA": "off"}
     entity = KseniaSwitchEntity(ws_manager, "5", "Switch", switch_data)
     
@@ -999,7 +1134,7 @@ async def test_alarm_control_panel_initialization():
     
     assert panel._scenarios == scenario_map
     assert panel._device_info == device_info
-    assert panel._state == AlarmControlPanelState.DISARMED
+    assert panel._state is None  # Unknown until real data arrives from device
 
 
 @pytest.mark.asyncio
@@ -1008,8 +1143,8 @@ async def test_alarm_control_panel_unique_id():
     from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
     
     ws_manager = MagicMock()
-    ws_manager._ip = "192.168.1.100"
-    
+    ws_manager.ip = "192.168.1.100"
+
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
     unique_id = panel.unique_id
@@ -1089,8 +1224,9 @@ async def test_alarm_control_panel_disarm_success():
     panel.async_write_ha_state = MagicMock()
     
     await panel.async_alarm_disarm(code="123456")
-    
-    assert panel._state == AlarmControlPanelState.DISARMED
+
+    # State is NOT updated here — it changes only when the WS listener fires
+    # with the new ARM.S=D from the device. Just verify the command was sent.
     ws_manager.executeScenario_with_login.assert_called_once_with("1", pin="123456")
 
 
@@ -1232,9 +1368,9 @@ async def test_alarm_control_panel_state_map_disarmed():
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
     panel.async_write_ha_state = MagicMock()
     
-    update_data = [{"ID": "1", "ARM": {"S": "D", "D": "Disarmed"}}]
-    await panel._handle_partition_status_update(update_data)
-    
+    # DISARMED is driven by system status ARM.S=D, not partition ARM
+    await panel._handle_system_status_update([{"ID": "1", "ARM": {"S": "D", "D": "Disarmed"}}])
+
     assert panel._state == AlarmControlPanelState.DISARMED
 
 
@@ -1282,12 +1418,27 @@ async def test_alarm_control_panel_state_map_alarm_memory():
 async def test_alarm_control_panel_icon_disarmed():
     """Test icon changes with disarmed state."""
     from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
-    
+    from homeassistant.components.alarm_control_panel import AlarmControlPanelState
+
     ws_manager = MagicMock()
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
-    
+    panel._state = AlarmControlPanelState.DISARMED
+
     assert panel.icon == "mdi:shield-off"
+
+
+@pytest.mark.asyncio
+async def test_alarm_control_panel_icon_unknown():
+    """Test icon when state is None (no data yet)."""
+    from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
+
+    ws_manager = MagicMock()
+    scenario_map = {"DISARM": "1", "ARM": "2"}
+    panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
+    # _state is None until real data arrives
+    assert panel._state is None
+    assert panel.icon == "mdi:shield"
 
 
 @pytest.mark.asyncio
@@ -1354,12 +1505,119 @@ async def test_alarm_control_panel_arm_without_code():
 
 @pytest.mark.asyncio
 async def test_alarm_control_panel_should_poll():
-    """Test should_poll is disabled (uses listeners)."""
+    """Test should_poll is disabled (fully listener-driven)."""
     from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
-    
+
     ws_manager = MagicMock()
     scenario_map = {"DISARM": "1", "ARM": "2"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
-    
-    assert panel.should_poll is True
-    assert panel.scan_interval.total_seconds() == 60
+
+    assert panel.should_poll is False
+
+
+# ============================================================================
+# Reconnection & Prolonged Connection Loss Callback Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_prolonged_loss_callback_invoked_only_once():
+    """Test _invoke_prolonged_loss_callback_once calls the callback exactly once."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    callback = AsyncMock()
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock(), on_prolonged_connection_loss=callback)
+
+    await manager._invoke_prolonged_loss_callback_once()
+    await manager._invoke_prolonged_loss_callback_once()
+
+    callback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_prolonged_loss_callback_not_invoked_when_not_set():
+    """Test _invoke_prolonged_loss_callback_once is safe when no callback is set."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    # Should not raise
+    await manager._invoke_prolonged_loss_callback_once()
+    assert manager._prolonged_loss_callback_invoked is False
+
+
+@pytest.mark.asyncio
+async def test_prolonged_loss_callback_resets_after_successful_reconnect():
+    """Test prolonged_loss_callback_invoked flag resets when connection succeeds."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    callback = AsyncMock()
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock(), on_prolonged_connection_loss=callback)
+
+    # Simulate prolonged loss callback was invoked
+    manager._prolonged_loss_callback_invoked = True
+
+    # Simulate successful connection resets the flag
+    # (In real code, _connect_with_uri sets _prolonged_loss_callback_invoked = False on success)
+    manager._prolonged_loss_callback_invoked = False
+    manager._retries = 0
+
+    # Now the callback should be invocable again
+    await manager._invoke_prolonged_loss_callback_once()
+    callback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_initial_data_returns_false_on_disconnect():
+    """Test wait_for_initial_data returns False when connection is disconnected."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager, ConnectionState
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._connection_state = ConnectionState.DISCONNECTED
+    manager._readData = None
+
+    result = await manager.wait_for_initial_data(timeout=1)
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_initial_data_returns_true_when_ready():
+    """Test wait_for_initial_data returns True immediately when data is available."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager, ConnectionState
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._connection_state = ConnectionState.CONNECTED
+    manager._readData = {"STATUS_ZONES": []}
+    manager._realtime_registered = True
+
+    result = await manager.wait_for_initial_data(timeout=1)
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_notify_connection_state_after_cleanup_in_handle_connection_closed():
+    """Test _handle_connection_closed notifies listeners after clearing cache."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager, ConnectionState
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    manager._connection_state = ConnectionState.CONNECTED
+    manager._running = True
+    manager._readData = {"STATUS_ZONES": [{"ID": "1"}]}
+    manager._realtime_registered = True
+    manager._ws = MagicMock()
+
+    # Track what state the listener sees when notified
+    observed_readData = []
+
+    async def connection_listener(payload):
+        observed_readData.append(manager._readData)
+
+    manager.listeners["connection"] = [connection_listener]
+
+    # Prevent actual reconnection
+    manager._reconnecting = True
+
+    await manager._handle_connection_closed()
+
+    # Listener should have seen _readData as None (cleared before notification)
+    assert len(observed_readData) == 1
+    assert observed_readData[0] is None

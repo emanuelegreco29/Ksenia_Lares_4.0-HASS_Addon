@@ -60,6 +60,25 @@
       }
     },
     "sensor": {
+      "domus_temperature": {
+        "name": "{name} Temperatura"
+      },
+      "domus_humidity": {
+        "name": "{name} Umidità"
+      },
+      "domus_light": {
+        "name": "{name} Luminosità"
+      },
+      "partition_status": {
+        "name": "{name}",
+        "state": {
+          "disarmed": "Disinserito",
+          "delayed_arming": "Inserimento Ritardato",
+          "immediate_arming": "Inserimento Immediato",
+          "entry_delay_active": "Ritardo ingresso attivo",
+          "exit_delay_active": "Ritardo uscita attivo"
+        }
+      },
       "alarm_system_status": {
         "name": "Stato del Sistema di Allarme{suffix}",
         "state": {
@@ -70,13 +89,6 @@
           "partially_armed_entry_delay": "Ritardo Ingresso Inserimento Parziale",
           "partially_armed_exit_delay": "Ritardo Uscita Inserimento Parziale",
           "disarmed": "Disinserito"
-        }
-      },
-      "siren_status": {
-        "name": "Stato Sirena {label}",
-        "state": {
-          "on": "Accesa",
-          "off": "Spenta"
         }
       },
       "event_log": {
@@ -148,31 +160,6 @@
           "ongoing_alarm": "Attivato",
           "alarm_memory": "Memoria alarme"
         }
-      },
-      "magnetic_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "closed": "Chiuso",
-          "open": "Aperto",
-          "unknown": "Sconosciuto"
-        }
-      },
-      "movement_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "off": "Libero",
-          "on": "Movimento Rilevato",
-          "unknown": "Sconosciuto"
-        }
-      },
-      "seismic_sensor": {
-        "name": "{sensor_name}",
-        "state": {
-          "rest": "Riposo",
-          "seismic_activity": "Attività Sismica",
-          "normal": "Normale",
-          "unknown": "Sconosciuto"
-        }
       }
     },
     "switch": {
@@ -212,6 +199,7 @@
       "options": {
         "alarm_control_panel": "Pannello di Controllo Allarme",
         "sensor": "Sensore",
+        "binary_sensor": "Sensore Binario",
         "switch": "Interruttore",
         "light": "Luce",
         "cover": "Copertura",

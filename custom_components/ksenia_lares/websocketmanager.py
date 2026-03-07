@@ -7,15 +7,19 @@ Huge thanks to @realnot16 for the original implementation!
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import random
 import ssl
 import time
+from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import Any, TypedDict
 
 import websockets
+from websockets.asyncio.client import connect as ws_connect
+from websockets.typing import Subprotocol
 
 from .wscall import (
     bypassZone,
@@ -43,12 +47,10 @@ class AuthenticationError(Exception):
 MAX_RETRIES = 100
 INITIAL_RETRY_DELAY = 5
 MAX_RETRY_DELAY = 300  # 5 minutes max
-EXTENDED_RETRY_DELAY = 3600  # 1 hour for attempts after max retries
 COMMAND_TIMEOUT = 5  # Timeout for command execution (seconds)
 DATA_WAIT_TIMEOUT = 10
 RECV_TIMEOUT = 3
 CONNECTION_HEALTH_CHECK = 120  # 2 minutes
-CACHE_TTL = 120  # 2x polling interval (polling every 60s)
 PERIODIC_READ_INTERVAL = 60  # Periodic state reconciliation
 
 
@@ -92,6 +94,41 @@ class WebSocketManager:
         port: Port number for WebSocket connection
         logger: Logger instance for diagnostics
     """
+
+    async def _await_scenario_response(self, temp_ws, scenario_id) -> bool:
+        """Wait for CMD_USR_RES on a temporary connection, skipping interleaved messages.
+
+        Returns True if the scenario succeeded, False if it failed.
+        Raises TimeoutError if no response arrives within 5 seconds.
+        """
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError(f"Timeout waiting for scenario {scenario_id} response")
+            try:
+                json_resp = await asyncio.wait_for(temp_ws.recv(), timeout=remaining)
+                response = json.loads(json_resp)
+                cmd = response.get("CMD")
+                if cmd == "CMD_USR_RES":
+                    if response.get("PAYLOAD", {}).get("RESULT") == "OK":
+                        self._logger.debug(f"Scenario {scenario_id} executed successfully")
+                        return True
+                    result_detail = response.get("PAYLOAD", {}).get("RESULT_DETAIL", "UNKNOWN")
+                    self._last_command_detail = result_detail
+                    self._logger.error(f"Scenario {scenario_id} execution failed: {result_detail}")
+                    return False
+                self._logger.debug(
+                    f"Ignoring interleaved message while waiting for scenario response: {cmd}"
+                )
+            except TimeoutError:
+                self._logger.error(f"Timeout waiting for scenario {scenario_id} response")
+                raise
+            except json.JSONDecodeError as e:
+                self._logger.debug(
+                    f"Invalid JSON response while waiting for scenario: {e.msg} at pos {e.pos}"
+                )
+        raise TimeoutError(f"Timeout waiting for scenario {scenario_id} response")
 
     async def executeScenario_with_login(self, scenario_id, pin=None):
         """Execute scenario with user-specific PIN using a temporary WebSocket connection.
@@ -144,7 +181,8 @@ class WebSocketManager:
             # Open temporary WebSocket connection with 5-second timeout
             # This connection is only for this specific scenario execution
             temp_ws = await asyncio.wait_for(
-                websockets.connect(uri, ssl=ssl_ctx, subprotocols=["KS_WSOCK"]), timeout=5
+                ws_connect(uri, ssl=ssl_ctx, subprotocols=[Subprotocol("KS_WSOCK")]),
+                timeout=5,
             )
 
             self._logger.debug("Temporary connection established, logging in with user PIN")
@@ -189,58 +227,9 @@ class WebSocketManager:
             self._logger.debug(f"Sending scenario {scenario_id} command on temporary connection")
             await temp_ws.send(json_cmd)
 
-            # Wait for response, ignoring interleaved REALTIME messages
-            # 5-second timeout for device to process and respond to scenario command
+            # Wait for response on temporary connection (5-second timeout)
             self._logger.debug(f"Waiting for scenario {scenario_id} response (5s timeout)")
-            deadline = time.time() + 5
-
-            while time.time() < deadline:
-                try:
-                    remaining = deadline - time.time()
-                    if remaining <= 0:
-                        raise TimeoutError("Scenario execution timeout")
-
-                    json_resp = await asyncio.wait_for(temp_ws.recv(), timeout=remaining)
-                    response = json.loads(json_resp)
-                    cmd = response.get("CMD")
-
-                    if cmd == "CMD_USR_RES":
-                        # Got the scenario response
-                        if response.get("PAYLOAD", {}).get("RESULT") == "OK":
-                            self._logger.debug(f"Scenario {scenario_id} executed successfully")
-                            return True
-                        else:
-                            result_detail = response.get("PAYLOAD", {}).get(
-                                "RESULT_DETAIL", "UNKNOWN"
-                            )
-                            self._last_command_detail = result_detail
-                            self._logger.error(
-                                f"Scenario {scenario_id} execution failed: {result_detail}"
-                            )
-                            return False
-                    elif cmd == "REALTIME":
-                        # Ignore interleaved REALTIME messages from device
-                        self._logger.debug(
-                            "Ignoring interleaved REALTIME while waiting for scenario response"
-                        )
-                        continue
-                    else:
-                        # Unexpected message type
-                        self._logger.debug(
-                            f"Ignoring interleaved message while waiting for scenario response: {cmd}"
-                        )
-                        continue
-
-                except TimeoutError:
-                    self._logger.error(f"Timeout waiting for scenario {scenario_id} response")
-                    raise
-                except json.JSONDecodeError as e:
-                    self._logger.debug(
-                        f"Invalid JSON response while waiting for scenario: {e.msg} at pos {e.pos}"
-                    )
-                    continue
-
-            raise TimeoutError(f"Timeout waiting for scenario {scenario_id} response")
+            return await self._await_scenario_response(temp_ws, scenario_id)
 
         except TimeoutError:
             self._logger.error(f"Timeout executing scenario {scenario_id}")
@@ -249,26 +238,36 @@ class WebSocketManager:
             self._logger.error(f"Error executing scenario with temporary connection: {e}")
             return False
         finally:
-            # Cleanup: logout and close temporary connection
-            # This is critical to prevent session leaks and resource exhaustion
-            if temp_ws and user_login_id and user_login_id != -1:
-                try:
-                    self._logger.debug(f"Logging out user session {user_login_id}")
-                    # Logout the temporary user session from this connection
-                    await ws_logout(temp_ws, user_login_id, self._logger)
-                except Exception as e:
-                    self._logger.debug(f"Error logging out user session: {e}")
+            await self._cleanup_temp_connection(temp_ws, user_login_id)
 
-            if temp_ws:
-                try:
-                    self._logger.debug("Closing temporary connection")
-                    # Close the temporary connection
-                    # Main connection remains active and unaffected
-                    await temp_ws.close()
-                except Exception as e:
-                    self._logger.debug(f"Error closing temporary connection: {e}")
+    async def _cleanup_temp_connection(self, temp_ws, user_login_id) -> None:
+        """Logout and close a temporary WebSocket connection.
 
-    def __init__(self, ip, pin, port, logger, max_retries=None):
+        Critical: prevents session leaks and resource exhaustion.
+        The main connection is not affected.
+        """
+        if temp_ws and user_login_id and user_login_id != -1:
+            try:
+                self._logger.debug(f"Logging out user session {user_login_id}")
+                await ws_logout(temp_ws, user_login_id, self._logger)
+            except Exception as e:
+                self._logger.debug(f"Error logging out user session: {e}")
+        if temp_ws:
+            try:
+                self._logger.debug("Closing temporary connection")
+                await temp_ws.close()
+            except Exception as e:
+                self._logger.debug(f"Error closing temporary connection: {e}")
+
+    def __init__(
+        self,
+        ip,
+        pin,
+        port,
+        logger,
+        max_retries=None,
+        on_prolonged_connection_loss: Callable[[], Awaitable[None] | None] | None = None,
+    ):
         """Initialize WebSocket manager.
 
         Args:
@@ -277,6 +276,8 @@ class WebSocketManager:
             port: Port number for WebSocket connection
             logger: Logger instance for diagnostics
             max_retries: Maximum number of connection retries (default: MAX_RETRIES=20)
+            on_prolonged_connection_loss: Optional async callback invoked when runtime
+                reconnection is exhausted and manager enters unrecoverable state.
         """
         # Connection settings
         self._ip = ip
@@ -323,6 +324,8 @@ class WebSocketManager:
         self._skip_backoff = max_retries == 1
         # Flag to prevent multiple simultaneous reconnection attempts
         self._reconnecting = False
+        self._on_prolonged_connection_loss = on_prolonged_connection_loss
+        self._prolonged_loss_callback_invoked = False
 
         # Periodic read for state reconciliation
         self._last_periodic_read = 0
@@ -365,27 +368,6 @@ class WebSocketManager:
             return True
         return self._ws.state == websockets.State.CLOSED
 
-        closed_attr = getattr(self._ws, "closed", None)
-        if isinstance(closed_attr, bool):
-            return closed_attr
-
-        if callable(closed_attr):
-            try:
-                return bool(closed_attr())
-            except Exception:
-                return False
-
-        state = getattr(self._ws, "state", None)
-        if state is not None:
-            try:
-                from websockets.protocol import State
-
-                return state == State.CLOSED
-            except Exception:
-                return str(state).upper().endswith("CLOSED")
-
-        return False
-
     def _validate_message(self, message):
         """Validate message has required fields.
 
@@ -402,6 +384,27 @@ class WebSocketManager:
         if missing:
             raise ValueError(f"Missing required fields: {missing}")
 
+    @property
+    def ip(self) -> str:
+        """Return the IP address of the connected panel."""
+        return self._ip
+
+    @property
+    def available(self) -> bool:
+        """Return True if the connection is active and authenticated."""
+        return self._connection_state == ConnectionState.CONNECTED
+
+    async def _notify_connection_state_change(self) -> None:
+        """Notify listeners about connection state transitions."""
+        payload = {
+            "state": self._connection_state.value,
+            "available": self.available,
+        }
+        try:
+            await self._notify_listeners(["connection"], payload)
+        except Exception as err:
+            self._logger.debug("Error notifying connection listeners: %s", err)
+
     def get_metrics(self):
         """Get connection and command statistics.
 
@@ -410,7 +413,7 @@ class WebSocketManager:
         """
         return self._metrics.copy()
 
-    def get_connection_state(self):
+    def get_connection_state(self) -> ConnectionState:
         """Get current connection state.
 
         Returns:
@@ -560,13 +563,29 @@ class WebSocketManager:
         Args:
             timeout: Maximum seconds to wait for data
 
+        Returns:
+            True when both READ data and REALTIME registration are available,
+            False on timeout or when disconnected.
+
         Note:
-            Does not raise TimeoutError; caller should check if data is available.
+            Does not raise TimeoutError.
         """
-        start_time = time.time()
+        if self._readData is not None and self._realtime_registered:
+            return True
+
+        start_time = time.monotonic()
         while self._readData is None or not self._realtime_registered:
-            if time.time() - start_time >= timeout:
-                self._logger.warning(f"Initial data wait timeout after {timeout}s")
+            if self._connection_state in (ConnectionState.DISCONNECTED, ConnectionState.ERROR):
+                self._logger.debug(
+                    "Initial data unavailable: connection state=%s",
+                    self._connection_state.value,
+                )
+                return False
+
+            if time.monotonic() - start_time >= timeout:
+                self._logger.info(f"Initial data wait timeout after {timeout}s")
+                return False
+
             await asyncio.sleep(0.5)
 
     async def connect(self):
@@ -608,8 +627,11 @@ class WebSocketManager:
         while self._retries < self._max_retries:
             try:
                 self._logger.debug(f"[{time.time():.3f}] Connecting to WebSocket: {uri}")
-                self._ws = await websockets.connect(
-                    uri, ssl=ssl, subprotocols=["KS_WSOCK"], ping_interval=30
+                self._ws = await ws_connect(
+                    uri,
+                    ssl=ssl,
+                    subprotocols=[Subprotocol("KS_WSOCK")],
+                    ping_interval=30,
                 )
                 self._logger.debug(f"[{time.time():.3f}] WebSocket connection established")
 
@@ -634,6 +656,7 @@ class WebSocketManager:
                 )
                 self._connection_state = ConnectionState.CONNECTED
                 self._last_message_time = time.time()
+                await self._notify_connection_state_change()
 
                 # Cancel old background tasks before starting new ones
                 await self._cancel_background_tasks()
@@ -657,6 +680,7 @@ class WebSocketManager:
                 # Start remaining background tasks
                 self._periodic_task = asyncio.create_task(self._periodic_read_task())
                 self._retries = 0
+                self._prolonged_loss_callback_invoked = False
                 # Reset max_retries to default after successful connection
                 # (it was limited to 1 during initial setup for fail-fast behavior)
                 self._max_retries = MAX_RETRIES
@@ -793,24 +817,21 @@ class WebSocketManager:
                 self._loginId,
                 self._logger,
                 ws_lock=self._ws_lock,
-                realtime_handler=self._handle_realtime_update,
+                realtime_handler=self._handle_data_update,
                 pending_reads=self._pending_reads,  # Enable listener routing
             )
             if updated_data:
-                self._readData = updated_data
-                self._set_cache_timestamp("readData")
                 # Update last message time to prevent false "stale connection" warnings
                 self._last_message_time = time.time()
                 # Dispatch zone, partition, output updates so entities can reconcile
                 # readData() already returns unwrapped payload, so pass it directly
-                await self._handle_realtime_update(updated_data)
+                await self._handle_data_update(updated_data)
                 self._logger.debug("State refresh complete")
             else:
                 self._logger.warning("State refresh returned no data - connection may be degraded")
         except websockets.exceptions.ConnectionClosed as e:
             self._logger.error(f"Connection lost during state refresh: {e}")
             self._connection_state = ConnectionState.DISCONNECTED
-            self._running = False
             asyncio.create_task(self._handle_connection_closed())
         except TimeoutError:
             self._logger.warning("State refresh timeout - connection may be stale")
@@ -842,7 +863,7 @@ class WebSocketManager:
                     self._loginId,
                     self._logger,
                     self._ws_lock,
-                    realtime_handler=self._handle_realtime_update,
+                    realtime_handler=self._handle_data_update,
                     pending_reads=self._pending_reads,  # Enable listener routing
                 )
                 self._set_cache_timestamp("readData")
@@ -852,32 +873,16 @@ class WebSocketManager:
                 if self._debug_mode:
                     self._logger.debug(f"Static data received: {self._readData}")
 
-                # Seed realtime cache from READ payload so entities can use cached initial data
-                # readData() already returns unwrapped payload, so use it directly
-                payload = self._readData if self._readData else {}
-                self._logger.debug(
-                    f"[{time.time():.3f}] Seeding realtime cache from READ payload with keys: {list(payload.keys())}"
-                )
-                if payload.get("STATUS_PANEL"):
-                    self._logger.debug(
-                        f"[{time.time():.3f}] Caching STATUS_PANEL: {payload.get('STATUS_PANEL')}"
-                    )
-                    self._update_realtime_cache("STATUS_PANEL", payload.get("STATUS_PANEL"))
-                if payload.get("STATUS_CONNECTION"):
-                    self._logger.debug(
-                        f"[{time.time():.3f}] Caching STATUS_CONNECTION: {payload.get('STATUS_CONNECTION')}"
-                    )
-                    self._update_realtime_cache(
-                        "STATUS_CONNECTION", payload.get("STATUS_CONNECTION")
-                    )
-
                 self._logger.debug(
                     f"[{time.time():.3f}] Starting real-time data subscription (attempt {retry_count + 1}/{max_retries})"
                 )
                 realtime_response = await realtime(
-                    self._ws, self._loginId, self._logger, self._ws_lock, self._pending_realtime
+                    self._ws,
+                    self._loginId,
+                    self._logger,
+                    self._ws_lock,
+                    self._pending_realtime,
                 )
-                self._realtime_registered = True
                 self._logger.debug(
                     f"[{time.time():.3f}] Real-time data subscription registered successfully"
                 )
@@ -963,6 +968,8 @@ class WebSocketManager:
         """
         async with self._ws_lock:
             try:
+                if self._ws is None:
+                    return None
                 msg = await asyncio.wait_for(self._ws.recv(), timeout=RECV_TIMEOUT)
                 self._last_message_time = time.time()
                 self._metrics["messages_received"] += 1
@@ -1002,6 +1009,7 @@ class WebSocketManager:
         # If we are stopping/unloading, treat closure as graceful and do not reconnect
         if not self._running:
             self._logger.info("WebSocket connection closed (shutdown)")
+            await self._notify_connection_state_change()
             return
 
         self._logger.error("WebSocket connection closed")
@@ -1014,6 +1022,9 @@ class WebSocketManager:
         # Clear ALL pending requests immediately (regardless of timeout)
         # Any requests in flight are now invalid since the socket is closed
         self._clear_all_pending_requests()
+
+        # Notify listeners AFTER cleanup so they see consistent state
+        await self._notify_connection_state_change()
 
         # Cancel old background tasks to prevent duplicate recv() calls
         await self._cancel_background_tasks()
@@ -1043,36 +1054,43 @@ class WebSocketManager:
         try:
             # Attempt reconnection in the background to avoid blocking listener task
             # Wrap in try-except to prevent unhandled exceptions from crashing the listener
-            if self._retries < self._max_retries:
-                self._retries += 1
-                self._metrics["reconnects"] += 1
-                self._logger.info(
-                    f"[{time.time():.3f}] Attempting reconnection (attempt {self._retries}/{self._max_retries})..."
-                )
-                if self._connSecure:
-                    await self.connectSecure()
-                else:
-                    await self.connect()
+            self._retries += 1
+            self._metrics["reconnects"] += 1
+            self._logger.info(
+                f"[{time.time():.3f}] Attempting reconnection (attempt {self._retries}/{self._max_retries})..."
+            )
+            if self._connSecure:
+                await self.connectSecure()
             else:
-                # After max retries, continue trying once per hour indefinitely
-                self._connection_state = ConnectionState.ERROR
-                self._retries += 1
-                self._metrics["reconnects"] += 1
-                self._logger.warning(
-                    f"Maximum retries reached. Will retry every hour (attempt {self._retries})..."
-                )
-                await asyncio.sleep(EXTENDED_RETRY_DELAY)
-                # Recursively retry
-                await self._reconnect_in_background()
+                await self.connect()
         except ConnectionError as e:
             # Connection failed after all retries - log but don't crash listener task
             # The connection monitor or Home Assistant will attempt setup again
             self._connection_state = ConnectionState.ERROR
+            await self._notify_connection_state_change()
             self._logger.error(
                 f"Reconnection failed: {e}. Listener will stop but integration remains loaded."
             )
+            await self._invoke_prolonged_loss_callback_once()
         finally:
             self._reconnecting = False
+
+    async def _invoke_prolonged_loss_callback_once(self) -> None:
+        """Invoke prolonged-loss callback once to let integration recover externally."""
+        if self._prolonged_loss_callback_invoked:
+            return
+        if not self._on_prolonged_connection_loss:
+            return
+
+        self._prolonged_loss_callback_invoked = True
+        try:
+            callback_result = self._on_prolonged_connection_loss()
+            if inspect.isawaitable(callback_result):
+                await callback_result
+        except Exception as callback_err:
+            self._logger.error(
+                "Prolonged connection loss callback failed: %s", callback_err, exc_info=True
+            )
 
     async def _cancel_background_tasks(self):
         """Cancel all background tasks gracefully.
@@ -1124,6 +1142,26 @@ class WebSocketManager:
             self._logger.error(f"Message processing error: {e}", exc_info=True)
             return  # Graceful degradation - continue despite processing errors
 
+    def _unwrap_payload_data(self, payload: Any) -> dict:
+        """Extract the normalised data dict from a message payload.
+
+        Handles three payload shapes used by the device:
+        - {"HomeAssistant": {...}}  → returns the inner dict
+        - {"STATUS_*": ...}        → returns the payload as-is
+        - {single_key: {...}}      → returns the inner dict
+        """
+        if not isinstance(payload, dict):
+            return {}
+        if "HomeAssistant" in payload and isinstance(payload.get("HomeAssistant"), dict):
+            return payload.get("HomeAssistant", {})
+        if any(str(key).startswith("STATUS_") for key in payload):
+            return payload
+        if len(payload) == 1:
+            only_value = next(iter(payload.values()), {})
+            if isinstance(only_value, dict):
+                return only_value
+        return {}
+
     async def handle_message(self, message):
         """Process incoming WebSocket message and update states.
 
@@ -1144,18 +1182,7 @@ class WebSocketManager:
             )
 
         payload = message.get("PAYLOAD", {})
-        data = {}
-        if isinstance(payload, dict):
-            if "HomeAssistant" in payload and isinstance(payload.get("HomeAssistant"), dict):
-                data = payload.get("HomeAssistant", {})
-            elif any(str(key).startswith("STATUS_") for key in payload):
-                data = payload
-            elif len(payload) == 1:
-                only_value = next(iter(payload.values()), {})
-                if isinstance(only_value, dict):
-                    data = only_value
-        if not isinstance(data, dict):
-            data = {}
+        data = self._unwrap_payload_data(payload)
 
         if cmd == "CMD_USR_RES" or cmd == "CLEAR_RES":
             result = payload.get("RESULT") == "OK"
@@ -1171,7 +1198,34 @@ class WebSocketManager:
             await self._handle_realtime_registration_response(message)
         elif cmd == "REALTIME":
             # REALTIME is for updates, REALTIME_RES is registration response
-            await self._handle_realtime_update(data)
+            await self._handle_data_update(data)
+
+    def _payload_type_matches(
+        self,
+        expected_cmd_prefix: str,
+        req_payload_type: str,
+        response_payload_type: str,
+    ) -> bool:
+        """Return True if request and response payload types are compatible.
+
+        Handles known firmware variations where the response PAYLOAD_TYPE differs
+        from the request (e.g., GET_LAST_LOGS → LAST_LOGS on older firmware).
+        """
+        if req_payload_type == response_payload_type:
+            return True
+        if (
+            expected_cmd_prefix == "LOGS"
+            and req_payload_type == "GET_LAST_LOGS"
+            and response_payload_type in ("GET_LAST_LOGS", "LAST_LOGS")
+        ):
+            return True
+        if (
+            expected_cmd_prefix == "REALTIME"
+            and req_payload_type == "REGISTER"
+            and response_payload_type == "REGISTER_ACK"
+        ):
+            return True
+        return False
 
     def _find_pending_by_fallback(self, pending_dict, message, expected_cmd_prefix):
         """Find pending request using fallback matching when ID doesn't match.
@@ -1204,26 +1258,9 @@ class WebSocketManager:
             original_msg = req_data.get("message", {})
             req_payload_type = original_msg.get("PAYLOAD_TYPE", "")
 
-            # Check for direct match or known firmware variations
-            payload_match = False
-            if req_payload_type == response_payload_type:
-                payload_match = True
-            elif (
-                expected_cmd_prefix == "LOGS"
-                and req_payload_type == "GET_LAST_LOGS"
-                and response_payload_type in ("GET_LAST_LOGS", "LAST_LOGS")
+            if self._payload_type_matches(
+                expected_cmd_prefix, req_payload_type, response_payload_type
             ):
-                # LOGS command: older firmware responds with LAST_LOGS, newer with GET_LAST_LOGS
-                payload_match = True
-            elif (
-                expected_cmd_prefix == "REALTIME"
-                and req_payload_type == "REGISTER"
-                and response_payload_type == "REGISTER_ACK"
-            ):
-                # REALTIME registration ack
-                payload_match = True
-
-            if payload_match:
                 candidates.append((msg_id, req_data))
 
         # Only use fallback if exactly one candidate exists (avoid ambiguity)
@@ -1391,6 +1428,15 @@ class WebSocketManager:
             self._logger.debug(
                 f"Resolving REALTIME registration {message_id}, future state before set_result: {fut_state} (fallback_used={fallback_used})"
             )
+            # Mark registration complete if panel confirmed success
+            result = message.get("PAYLOAD_TYPE")
+            if result == "REGISTER_ACK":
+                self._realtime_registered = True
+                self._logger.debug("REALTIME registration confirmed by panel")
+            else:
+                self._logger.warning(
+                    f"REALTIME registration response PAYLOAD_TYPE={result} (expected 'REGISTER_ACK')"
+                )
             try:
                 if not realtime_data["future"].done():
                     realtime_data["future"].set_result(message)
@@ -1409,20 +1455,20 @@ class WebSocketManager:
                 f"Received REALTIME response for ID {message_id} but no matching pending request (likely timed out). Current pending_realtime keys: {list(self._pending_realtime.keys())}"
             )
 
-    async def _handle_realtime_update(self, data):
-        """Process real-time data update and notify listeners.
+    async def _handle_data_update(self, data):
+        """Process incoming data update, update cache, and notify listeners.
+
+        Called from realtime broadcasts, initial data fetch, and polling refreshes.
 
         Args:
-            data: Real-time data payload dictionary
+            data: Data payload dictionary
         """
         if not isinstance(data, dict):
             self._logger.debug(
-                f"[WS] _handle_realtime_update received non-dict data: {type(data).__name__}"
+                f"[WS] _handle_data_update received non-dict data: {type(data).__name__}"
             )
             return
-        self._logger.debug(
-            f"[WS] _handle_realtime_update received data with keys: {list(data.keys())}"
-        )
+        self._logger.debug(f"[WS] _handle_data_update received data with keys: {list(data.keys())}")
         # Map status keys to listener types and cache updates
         status_handlers = {
             "STATUS_OUTPUTS": ["lights", "switches", "covers"],
@@ -1445,7 +1491,7 @@ class WebSocketManager:
                 self._logger.debug(
                     f"[WS] Notifying listeners for {status_payload_type}: {listener_types}"
                 )
-                self._update_realtime_cache(status_payload_type, data[status_payload_type])
+                self._update_cache(status_payload_type, data[status_payload_type])
                 try:
                     await self._notify_listeners(listener_types, data[status_payload_type])
                 except Exception as e:
@@ -1454,33 +1500,47 @@ class WebSocketManager:
                         exc_info=True,
                     )
 
-    def _update_realtime_cache(self, status_payload_type: str, status_entities: Any) -> None:
-        """Update unified cache with real-time data.
+    def _merge_entity_updates(
+        self, existing_dict: dict, new_entities: list, status_payload_type: str
+    ) -> int:
+        """Merge new_entities into existing_dict (keyed by entity ID).
 
-        REALTIME broadcasts often contain partial data, only a subset of entities for a
-        given status payload type. This method merges incoming entity updates into the
-        unified _readData cache at the entity level, preserving cached entities not
-        included in the broadcast.
+        Updates fields in-place for known entities; adds new ones.
+        Returns the number of entities processed.
+        """
+        updates_count = 0
+        for new_entity in new_entities:
+            entity_id = str(new_entity.get("ID", ""))
+            if entity_id:
+                if entity_id in existing_dict:
+                    existing_dict[entity_id].update(new_entity)
+                else:
+                    existing_dict[entity_id] = new_entity
+                updates_count += 1
+            else:
+                self._logger.warning(
+                    f"[WS] _update_cache: Entity without ID field in {status_payload_type}: {new_entity}"
+                )
+        return updates_count
 
-        Both READ responses and REALTIME broadcasts update the same cache, ensuring
-        the cache always contains the most recent data regardless of source.
+    def _update_cache(self, status_payload_type: str, status_entities: Any) -> None:
+        """Merge entity updates into the unified _readData cache.
+
+        Incoming data may be partial (only a subset of entities for a given status
+        payload type). This method merges at the entity level, preserving cached
+        entities not included in the update.
 
         Args:
             status_payload_type: Status payload type key (e.g., "STATUS_OUTPUTS", "STATUS_ZONES")
             status_entities: List of status entities to cache (may be partial subset)
         """
         self._logger.debug(
-            f"[WS] _update_realtime_cache: Updating {status_payload_type} with {status_entities}"
+            f"[WS] _update_cache: Updating {status_payload_type} with {status_entities}"
         )
-
-        # Mark that we've received REALTIME broadcast (for wait_for_initial_data)
-        if not self._realtime_registered:
-            self._logger.debug("[WS] _update_realtime_cache: Marking REALTIME as registered")
-            self._realtime_registered = True
 
         # Ensure _readData exists
         if self._readData is None:
-            self._logger.debug("[WS] _update_realtime_cache: Initializing _readData")
+            self._logger.debug("[WS] _update_cache: Initializing _readData")
             self._readData = {}
 
         # Handle partial REALTIME broadcasts by merging at entity level
@@ -1488,7 +1548,7 @@ class WebSocketManager:
         if not isinstance(status_entities, list):
             # Protocol violation - all status payload types should contain entity arrays
             self._logger.info(
-                f"[WS] _update_realtime_cache: Received non-list data for {status_payload_type}. "
+                f"[WS] _update_cache: Received non-list data for {status_payload_type}. "
                 f"Type: {type(status_entities).__name__}. Converting to list."
             )
             # Defensive: wrap in list to maintain consistency
@@ -1501,38 +1561,19 @@ class WebSocketManager:
             # No existing cache - store incoming entities as-is (initial seed or first update)
             self._readData[status_payload_type] = status_entities
             self._logger.debug(
-                f"[WS] _update_realtime_cache: Initialized {status_payload_type} with {len(status_entities)} entities"
+                f"[WS] _update_cache: Initialized {status_payload_type} with {len(status_entities)} entities"
             )
         else:
             # Merge incoming partial entity updates with existing cache
-            # Build dict for fast lookup by entity ID: {entity_id: entity}
             existing_dict = {
                 str(entity.get("ID")): entity for entity in existing_entities if "ID" in entity
             }
-
-            # Update/add entities from incoming broadcast
-            updates_count = 0
-            for new_entity in status_entities:
-                entity_id = str(new_entity.get("ID", ""))
-                if entity_id and entity_id != "":
-                    if entity_id in existing_dict:
-                        # Update existing entity - merge fields (new field values overwrite old)
-                        existing_dict[entity_id].update(new_entity)
-                        updates_count += 1
-                    else:
-                        # New entity not previously cached
-                        existing_dict[entity_id] = new_entity
-                        updates_count += 1
-                else:
-                    # Entity without ID field - shouldn't happen but handle gracefully
-                    self._logger.warning(
-                        f"[WS] _update_realtime_cache: Entity without ID field in {status_payload_type}: {new_entity}"
-                    )
-
-            # Convert back to entity list and store in unified cache
+            updates_count = self._merge_entity_updates(
+                existing_dict, status_entities, status_payload_type
+            )
             self._readData[status_payload_type] = list(existing_dict.values())
             self._logger.debug(
-                f"[WS] _update_realtime_cache: Merged {updates_count} entity updates into {status_payload_type} "
+                f"[WS] _update_cache: Merged {updates_count} entity updates into {status_payload_type} "
                 f"(total cached entities: {len(existing_dict)})"
             )
 
@@ -1555,7 +1596,8 @@ class WebSocketManager:
                     await callback(data)
                 except Exception as e:
                     self._logger.error(
-                        f"[WS] Error in listener callback for {listener_type}: {e}", exc_info=True
+                        f"[WS] Error in listener callback for {listener_type}: {e}",
+                        exc_info=True,
                     )
 
     @staticmethod
@@ -1667,7 +1709,6 @@ class WebSocketManager:
                 # Connection closed during command send - trigger reconnection
                 self._logger.error(f"Connection lost sending command: {e.__class__.__name__}: {e}")
                 self._connection_state = ConnectionState.DISCONNECTED
-                self._running = False
                 # Reject the pending command
                 cmd_id = command_data.get("command_id")
                 if cmd_id and cmd_id in self._pending_commands:
@@ -1757,7 +1798,7 @@ class WebSocketManager:
         self._logger.debug(
             f"Batch command completed: {sum(1 for r in results if r)}/{len(commands)} succeeded"
         )
-        return results
+        return [bool(r) for r in results]
 
     async def bypass_zone(self, zone_id, mode):
         """Bypass or unbypass a zone.
@@ -2023,7 +2064,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getLights, returning empty list"
@@ -2052,7 +2093,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getRolls, returning empty list"
@@ -2089,7 +2130,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getSwitches, returning empty list"
@@ -2098,11 +2139,12 @@ class WebSocketManager:
 
             # Get entities from status payload type
             status_entities = self._readData.get("STATUS_OUTPUTS", [])
-            # Get switch entities from config payload type (non-LIGHT outputs)
+            # Get switch entities from config payload type (non-LIGHT, non-ROLL outputs)
+            # ROLL outputs are handled by cover.py via getRolls(), so exclude them here
             switch_config_entities = [
                 entity
                 for entity in self._readData.get("OUTPUTS", [])
-                if entity.get("CAT") != "LIGHT"
+                if entity.get("CAT") not in ("LIGHT", "ROLL")
             ]
 
             return self._merge_state_data(switch_config_entities, status_entities)
@@ -2150,7 +2192,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning("Initial data not available for getDom, returning empty list")
                 return []
@@ -2182,7 +2224,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     f"Initial data not available for getSensor({sName}), returning empty list"
@@ -2255,7 +2297,7 @@ class WebSocketManager:
             Empty list if data unavailable.
         """
         try:
-            await self.wait_for_initial_data(timeout=60)
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
             if not self._readData:
                 self._logger.warning(
                     "Initial data not available for getSystem, returning empty list"

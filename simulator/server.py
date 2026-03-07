@@ -58,6 +58,7 @@ DOMUS_LABEL = "Living Room Domus"
 # Output labels
 OUTPUT_LABEL_SIREN = "Outdoor siren"
 OUTPUT_LABEL_LIGHT = "Hall light"
+OUTPUT_LABEL_COVER = "Living Room Blinds"
 
 # Partition labels
 PARTITION_LABEL_SHELL = "Shell/Perimeter Protection"
@@ -86,6 +87,7 @@ ZONE_4 = "4"
 # Output IDs
 OUTPUT_SIREN = "1"
 OUTPUT_LIGHT = "2"
+OUTPUT_COVER = "3"
 
 # ============================================================================
 # Utility Functions
@@ -205,30 +207,16 @@ def get_partition_arm_state_description(arm_code: str) -> str:
 
 def get_partition_status_data(partition: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Get partition data with STA field updated based on ARM state.
-    Ensures all required fields (AST, TST, T) are present in broadcasts.
+    Get partition status data matching real hardware format.
+    Real hardware sends: ID, ARM, T, AST, TST (no STA field).
     """
-    # Map ARM codes to STA descriptive text
-    arm_to_sta = {
-        ARM_STATE_DISARMED: "Disarmed",
-        ARM_STATE_DELAYED_ARM: "Delayed Arming",
-        ARM_STATE_IMMEDIATE_ARM: "Immediate Arming",
-        ARM_STATE_ENTRY_DELAY: "Intrusion",
-        ARM_STATE_EXIT_DELAY: "Delayed Arming",
+    return {
+        "ID": partition["ID"],
+        "ARM": partition["ARM"],
+        "T": partition.get("T", "0"),
+        "AST": partition.get("AST", ALARM_OK),
+        "TST": partition.get("TST", TAMPER_OK),
     }
-
-    partition_data = {**partition}
-    partition_data["STA"] = arm_to_sta.get(partition["ARM"], partition.get("STA", ""))
-
-    # Ensure all required fields present for broadcasts
-    if "T" not in partition_data:
-        partition_data["T"] = "0"
-    if "AST" not in partition_data:
-        partition_data["AST"] = ALARM_OK
-    if "TST" not in partition_data:
-        partition_data["TST"] = TAMPER_OK
-
-    return partition_data
 
 
 # ============================================================================
@@ -258,8 +246,9 @@ class SimulatorState:
     def _init_outputs(self) -> Dict[str, Dict[str, Any]]:
         """Initialize output devices."""
         return {
-            OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "STA": "OFF", "LBL": OUTPUT_LABEL_SIREN},
+            OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "STA": "OFF", "LBL": OUTPUT_LABEL_SIREN, "CNV": "H"},
             OUTPUT_LIGHT: {"ID": OUTPUT_LIGHT, "STA": "OFF", "LBL": OUTPUT_LABEL_LIGHT},
+            OUTPUT_COVER: {"ID": OUTPUT_COVER, "STA": "OFF", "LBL": OUTPUT_LABEL_COVER, "CAT": "ROLL", "POS": "0"},
         }
 
     def _init_zone_config(self) -> Dict[str, Dict[str, Any]]:
@@ -359,7 +348,6 @@ class SimulatorState:
                 "ID": PARTITION_1,
                 "DES": PARTITION_LABEL_SHELL,
                 "LBL": PARTITION_LABEL_SHELL,
-                "STA": "disarmed",
                 "ARM": ARM_STATE_DISARMED,
                 "AST": ALARM_OK,
                 "TST": TAMPER_OK,
@@ -370,7 +358,6 @@ class SimulatorState:
                 "ID": PARTITION_2,
                 "DES": PARTITION_LABEL_VOLUME,
                 "LBL": PARTITION_LABEL_VOLUME,
-                "STA": "disarmed",
                 "ARM": ARM_STATE_DISARMED,
                 "AST": ALARM_OK,
                 "TST": TAMPER_OK,
@@ -543,7 +530,7 @@ async def broadcast_partitions_and_system(system_status: Dict[str, Any] | str) -
     # This matches real Ksenia hardware behavior (see real-target logs)
     combined_payload = {
         "STATUS_PARTITIONS": partitions_update,
-        "STATUS_SYSTEM": [{"ID": "1", "INFO": [], "ARM": arm_obj, "AST": "OK"}]
+        "STATUS_SYSTEM": [{"ID": "1", "INFO": [], "ARM": arm_obj}]
     }
     
     logger.debug(f"[SIMULATOR] broadcast_partitions_and_system: Broadcasting combined STATUS_PARTITIONS + STATUS_SYSTEM")
@@ -732,7 +719,6 @@ async def delayed_entry_delay_expired(partition_id: str) -> None:
         state.partitions[partition_id]["ARM"] = ARM_STATE_IMMEDIATE_ARM
         # 2. Update AST field to AL (alarm active)
         state.partitions[partition_id]["AST"] = ALARM_ACTIVE
-        state.partitions[partition_id]["STA"] = "armed"
         logger.info(f"[SIMULATOR] Partition state updated: ARM={ARM_STATE_IMMEDIATE_ARM}, AST={ALARM_ACTIVE}")
         logger.info(f"[SIMULATOR] 🚨 ALARM TRIGGERED 🚨 - Partition {partition_id} entry delay expired, alarm now active (AST={ALARM_ACTIVE})")
         logger.info(f"[SIMULATOR] Alarm Trigger Status: ALARM ACTIVE (Partition {partition_id} AST={ALARM_ACTIVE})")
@@ -841,9 +827,6 @@ async def execute_scenario(sid: str):
         for partition_id, arm_state in partitions_config.items():
             old_arm = state.partitions[partition_id]["ARM"]
             state.partitions[partition_id]["ARM"] = arm_state
-            state.partitions[partition_id]["STA"] = (
-                "armed" if arm_state != ARM_STATE_DISARMED else "disarmed"
-            )
             logger.debug(f"[SIMULATOR] execute_scenario({sid}): Partition {partition_id} ARM state updated: {old_arm} → {arm_state}")
 
             # Match disarm endpoint behavior: move active alarms to memory, otherwise clear
@@ -1082,6 +1065,16 @@ async def home(request: Request) -> str:
             f"<td><button onclick=updateDomus('{sid}')>Send</button></td></tr>"
         )
     domus_rows = "".join(domus_rows_parts)
+    covers = [o for o in state.outputs.values() if o.get("CAT") == "ROLL"]
+    covers_rows = "".join(
+        f"<tr><td>{c['ID']}</td><td>{c['LBL']}</td><td>{c.get('POS', '0')}</td>"
+        f"<td><button onclick=coverCmd('{c['ID']}','UP')>Open</button>"
+        f"<button onclick=coverCmd('{c['ID']}','DOWN')>Close</button>"
+        f"<button onclick=coverCmd('{c['ID']}','ALT')>Stop</button>"
+        f"<input id='cover-pos-{c['ID']}' type='number' min='0' max='100' value='{c.get('POS', '0')}' style='width:50px'>"
+        f"<button onclick=coverSetPos('{c['ID']}')>Set</button></td></tr>"
+        for c in covers
+    )
     scenarios = [
         {"ID": "1", "DES": SCENARIO_LABEL_DISARM},
         {"ID": "2", "DES": SCENARIO_LABEL_ARM_AWAY},
@@ -1127,6 +1120,7 @@ async def home(request: Request) -> str:
                         <tr><th>Setting</th><th>Value</th><th>Action</th></tr>
                         <tr><td>Entry Delay (seconds)</td><td><input id="entry-delay" type="number" value="{ENTRY_DELAY}"></td><td><button onclick="setDelays()">Update</button></td></tr>
                         <tr><td>Exit Delay (seconds)</td><td><input id="exit-delay" type="number" value="{EXIT_DELAY}"></td><td></td></tr>
+                        <tr><td>Reconnect Test</td><td>Force WebSocket drop</td><td><button onclick="forceDisconnectWs()">Drop WS Clients</button></td></tr>
                     </table>
 
                     <h2>System Status</h2>
@@ -1146,6 +1140,9 @@ async def home(request: Request) -> str:
 
                     <h2>Domus Sensors</h2>
                       <table><tr><th>ID</th><th>Label</th><th>Temp (°C)</th><th>Humidity (%)</th><th>Light (lux)</th><th>PIR</th><th>TL</th><th>TH</th><th>Action</th></tr><tbody id="domus-body">{domus_rows}</tbody></table>
+
+                    <h2>Covers</h2>
+                      <table><tr><th>ID</th><th>Label</th><th>Position (%)</th><th>Action</th></tr><tbody id="covers-body">{covers_rows}</tbody></table>
                 </div>
 
                 <div class="status">
@@ -1245,6 +1242,35 @@ async def home(request: Request) -> str:
                     refreshState();
                 }}
 
+                let coverDirty = false;
+
+                function renderCovers(covers) {{
+                    if (coverDirty) return;
+                    const tbody = document.getElementById('covers-body');
+                    tbody.innerHTML = covers.map(c =>
+                        `<tr><td>${{c.ID}}</td><td>${{c.LBL}}</td><td>${{c.POS || '0'}}</td>`+
+                        `<td><button onclick=coverCmd('${{c.ID}}','UP')>Open</button>`+
+                        `<button onclick=coverCmd('${{c.ID}}','DOWN')>Close</button>`+
+                        `<button onclick=coverCmd('${{c.ID}}','ALT')>Stop</button>`+
+                        `<input id='cover-pos-${{c.ID}}' type='number' min='0' max='100' value='${{c.POS || 0}}' style='width:50px'>`+
+                        `<button onclick=coverSetPos('${{c.ID}}')>Set</button></td></tr>`
+                    ).join('');
+                    tbody.querySelectorAll('input').forEach(el => el.addEventListener('input', () => {{ coverDirty = true; }}));
+                }}
+
+                async function coverCmd(id, cmd) {{
+                    await fetch(`/api/covers/${{id}}/command`, {{ method: 'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify({{ cmd }}) }});
+                    coverDirty = false;
+                    refreshState();
+                }}
+
+                async function coverSetPos(id) {{
+                    const pos = document.getElementById(`cover-pos-${{id}}`).value;
+                    await fetch(`/api/covers/${{id}}/command`, {{ method: 'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify({{ cmd: pos }}) }});
+                    coverDirty = false;
+                    refreshState();
+                }}
+
                 function renderLogs(logs) {{
                     if (!logs || logs.length === 0) {{
                         return 'No logs';
@@ -1264,6 +1290,7 @@ async def home(request: Request) -> str:
                     renderAlarmStatus(data.partitions || []);
                     document.getElementById('system-status').innerHTML = renderSystem(data.system);
                     renderDomus(data.bus_ha_sensors || []);
+                    renderCovers(data.covers || []);
                     document.getElementById('logs').innerHTML = renderLogs(data.logs);
                 }}
                 async function toggleOutput(id) {{
@@ -1295,6 +1322,16 @@ async def home(request: Request) -> str:
                     const exit = document.getElementById('exit-delay').value;
                     await fetch('/api/config/delays', {{ method: 'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify({{ entry_delay: parseInt(entry), exit_delay: parseInt(exit) }}) }});
                     alert('Delays updated');
+                }}
+                async function forceDisconnectWs() {{
+                    const res = await fetch('/api/ws/disconnect', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ code: 1011, reason: 'simulated_network_drop' }}),
+                    }});
+                    const data = await res.json();
+                    alert(`Forced WS disconnect: closed=${{data.closed}} code=${{data.code}}`);
+                    setTimeout(refreshState, 500);
                 }}
         refreshState();
         setInterval(refreshState, 3000);
@@ -1348,6 +1385,7 @@ async def api_state() -> Dict[str, Any]:
 
     return {
         "outputs": list(state.outputs.values()),
+        "covers": [o for o in state.outputs.values() if o.get("CAT") == "ROLL"],
         "zones": list(state.zones.values()),
         "partitions": [get_partition_status_data(p) for p in state.partitions.values()],
         "system": [{"ID": "1", "INFO": [], "ARM": system_arm}],
@@ -1413,6 +1451,29 @@ async def api_update_domus(domus_id: str, values: Dict[str, str]) -> Response:
         return JSONResponse(content=sensor)
 
 
+@app.post("/api/covers/{cover_id}/command", response_model=None)
+async def api_cover_command(cover_id: str, request: Request) -> Response:
+    """Send a command to a cover (open/close/stop/set position)."""
+    body = await request.json()
+    cmd = str(body.get("cmd", "")).upper()
+    async with state.lock:
+        cover = state.outputs.get(cover_id)
+        if not cover or cover.get("CAT") != "ROLL":
+            return JSONResponse(status_code=404, content={"detail": "Cover not found"})
+        if cmd == "UP":
+            cover["POS"] = "100"
+        elif cmd == "DOWN":
+            cover["POS"] = "0"
+        elif cmd == "ALT":
+            pass  # stop — keep current position
+        elif cmd.isdigit():
+            cover["POS"] = str(max(0, min(100, int(cmd))))
+        else:
+            return JSONResponse(status_code=400, content={"detail": f"Unknown command: {cmd}"})
+        await state.broadcast_realtime({"STATUS_OUTPUTS": [cover]})
+        return JSONResponse(content=cover)
+
+
 @app.post("/api/partitions/{partition_id}/arm", response_model=None)
 async def api_arm_partition(partition_id: str) -> Response:
     """Arm a partition (immediate arming)."""
@@ -1420,7 +1481,6 @@ async def api_arm_partition(partition_id: str) -> Response:
         part = state.partitions.get(partition_id)
         if not part:
             return JSONResponse(status_code=404, content={"detail": "Partition not found"})
-        part["STA"] = "armed"
         part["ARM"] = ARM_STATE_IMMEDIATE_ARM
         part["AST"] = ALARM_OK
         await auto_bypass_active_zones([partition_id])
@@ -1442,7 +1502,6 @@ async def api_disarm_partition(partition_id: str) -> Response:
         part = state.partitions.get(partition_id)
         if not part:
             return JSONResponse(status_code=404, content={"detail": "Partition not found"})
-        part["STA"] = "disarmed"
         part["ARM"] = ARM_STATE_DISARMED
 
         # Transition from alarm to alarm memory
@@ -1596,6 +1655,48 @@ async def set_delays(request: Request) -> Dict[str, Any]:
     return {"status": "updated", "entry_delay": ENTRY_DELAY, "exit_delay": EXIT_DELAY}
 
 
+@app.post("/api/ws/disconnect")
+async def force_disconnect_websockets(request: Request) -> Dict[str, Any]:
+    """Force-close all active WebSocket clients for reconnect testing.
+
+    Optional JSON body:
+    - code: close code (default 1011)
+    - reason: close reason (default "simulated_network_drop")
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    close_code = int(body.get("code", 1011))
+    reason = str(body.get("reason", "simulated_network_drop"))
+
+    connections = list(state.connections)
+    closed = 0
+    for ws in connections:
+        try:
+            await ws.close(code=close_code, reason=reason)
+            closed += 1
+        except Exception as e:
+            logger.warning(
+                f"[HTTP API] Failed to close websocket {getattr(ws, 'client', '?')}: {e}"
+            )
+
+    # Ensure stale references are dropped even if a close raises
+    state.connections.clear()
+
+    logger.warning(
+        f"[HTTP API] Forced websocket disconnect executed: closed={closed}, code={close_code}, reason={reason}"
+    )
+    return {
+        "status": "ok",
+        "closed": closed,
+        "code": close_code,
+        "reason": reason,
+    }
+
+
 # ============================================================================
 # WebSocket Command Handlers
 # ============================================================================
@@ -1698,7 +1799,24 @@ async def handle_websocket_cmd_set_output(ws: WebSocket, msg_id: str, payload: D
     sta = str(output.get("STA", "OFF")).upper()
     async with state.lock:
         if oid in state.outputs:
-            state.outputs[oid]["STA"] = sta
+            device = state.outputs[oid]
+            if device.get("CAT") == "ROLL":
+                # Cover commands: UP, DOWN, ALT (stop), or numeric position
+                if sta == "UP":
+                    device["POS"] = "100"
+                    device["STA"] = "OFF"
+                elif sta == "DOWN":
+                    device["POS"] = "0"
+                    device["STA"] = "OFF"
+                elif sta == "ALT":
+                    device["STA"] = "OFF"
+                elif sta.isdigit():
+                    device["POS"] = str(max(0, min(100, int(sta))))
+                    device["STA"] = "OFF"
+                else:
+                    device["STA"] = sta
+            else:
+                device["STA"] = sta
             await state.broadcast_realtime({"STATUS_OUTPUTS": [state.outputs[oid]]})
     response = build_message(
         cmd="CMD_USR_RES",

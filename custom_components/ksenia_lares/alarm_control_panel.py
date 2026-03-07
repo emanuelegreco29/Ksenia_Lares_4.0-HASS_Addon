@@ -5,7 +5,6 @@ Scenarios are discovered from SCENARIOS configuration using CAT (category) field
 """
 
 import logging
-from datetime import timedelta
 
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
@@ -17,7 +16,8 @@ from homeassistant.components.alarm_control_panel.const import (
 )
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN
+from .const import DOMAIN, PartitionArmStatus
+from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +51,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     try:
         ws_manager = hass.data[DOMAIN]["ws_manager"]
         device_info = hass.data[DOMAIN].get("device_info")
+        base_id = hass.data[DOMAIN].get("mac") or ws_manager.ip
 
         # Discover scenarios and build CAT-based mapping
         scenarios = await ws_manager.getScenarios()
@@ -64,13 +65,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             return
 
         # Create single alarm panel entity for entire device
-        entity = KseniaAlarmControlPanel(ws_manager, scenario_map, device_info)
-        async_add_entities([entity], update_before_add=True)
+        entity = KseniaAlarmControlPanel(ws_manager, scenario_map, device_info, base_id)
+        async_add_entities([entity])
     except Exception as e:
         _LOGGER.error("Error setting up alarm control panel: %s", e, exc_info=True)
 
 
-class KseniaAlarmControlPanel(AlarmControlPanelEntity):
+class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
     """Alarm control panel entity for Ksenia Lares device.
 
     Manages all partitions as a single device entity using scenarios.
@@ -80,7 +81,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "alarm_control_panel"
 
-    def __init__(self, ws_manager, scenario_map, device_info=None):
+    def __init__(self, ws_manager, scenario_map, device_info=None, base_id=None):
         """Initialize the alarm control panel.
 
         Args:
@@ -88,23 +89,38 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             scenario_map: Dictionary mapping scenario CAT→ID
                 Example: {"DISARM": "1", "ARM": "2", "PARTIAL": "3"}
             device_info: Device information for grouping entities
+            base_id: MAC address or IP for unique_id generation
         """
         self.ws_manager = ws_manager
         self._scenarios = scenario_map
         self._device_info = device_info
-        self._state = AlarmControlPanelState.DISARMED
+        self._base_id = base_id or ws_manager.ip
+        self._state = None  # Unknown until real data arrives from device
         self._system_status = {}  # Track system status from STATUS_SYSTEM
         self._partitions_status = []  # Track partition status from STATUS_PARTITIONS
+        self._attr_changed_by = "Unknown"
+        self._ha_action_pending = False  # Track if state change was initiated from HA
 
     async def async_added_to_hass(self):
         """Subscribe to system and partition status realtime updates."""
+        await super().async_added_to_hass()
         _LOGGER.debug("[KseniaACP] Registering listener for 'systems' realtime updates")
         self.ws_manager.register_listener("systems", self._handle_system_status_update)
         _LOGGER.debug("[KseniaACP] Registering listener for 'partitions' realtime updates")
         self.ws_manager.register_listener("partitions", self._handle_partition_status_update)
         _LOGGER.debug("[KseniaACP] Listeners registered successfully")
 
-        # Load initial partition data from cache if available
+        # Load initial data from cache if available
+        try:
+            system = self.ws_manager.get_cached_data("STATUS_SYSTEM")
+            if system and len(system) > 0:
+                self._system_status.update(system[0])
+                _LOGGER.debug(f"[KseniaACP] Loaded initial system data from cache: {system[0]}")
+            else:
+                _LOGGER.debug("[KseniaACP] No STATUS_SYSTEM in cache")
+        except Exception as e:
+            _LOGGER.debug(f"[KseniaACP] Could not load initial system data: {e}")
+
         try:
             partitions = self.ws_manager.get_cached_data("STATUS_PARTITIONS")
             if partitions:
@@ -112,6 +128,11 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
                 _LOGGER.debug(f"[KseniaACP] Loaded initial partition data from cache: {partitions}")
         except Exception as e:
             _LOGGER.debug(f"[KseniaACP] Could not load initial partition data: {e}")
+
+        # Compute initial state from cached data
+        if self._system_status or self._partitions_status:
+            self._compute_state_from_system()
+            _LOGGER.debug(f"[KseniaACP] Initial state from cache: {self._state}")
 
     async def _handle_system_status_update(self, system_list):
         """Handle realtime system status changes.
@@ -126,8 +147,12 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         )
         if system_list and len(system_list) > 0:
             _LOGGER.debug(f"[KseniaACP] System data: {system_list[0]}")
+            old_state = self._state
             self._system_status.update(system_list[0])
             self._compute_state_from_system()
+            if self._state != old_state and not self._ha_action_pending:
+                self._attr_changed_by = "External"
+            self._ha_action_pending = False
             _LOGGER.debug(f"[KseniaACP] Computed state: {self._state}")
             self.async_write_ha_state()
         else:
@@ -168,6 +193,14 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         Uses system status (from STATUS_SYSTEM) plus partition alarm status (AST)
         and zone bypass status to determine overall alarm control panel state.
         """
+        # Don't compute until at least one data source has arrived from the device.
+        # This prevents publishing a false state before we have real information.
+        # Note: partition alarms (AST) are still checked even if system status is
+        # absent, so a genuine AL cannot be missed during the startup window.
+        if not self._system_status and not self._partitions_status:
+            _LOGGER.debug("[KseniaACP] No data yet — skipping state computation")
+            return
+
         arm_state = self._get_arm_state_code()
         has_bypassed_zones = self._has_bypassed_zones()
         partition_alarm_active = self._has_partition_alarm()
@@ -237,25 +270,38 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         return arm_state in ("T_IN", "P_IN", "T_OUT", "P_OUT")
 
     def _has_partition_alarm(self) -> bool:
-        """Check if any partition has active or memory alarm.
+        """Check if any partition has an ongoing alarm.
 
         Uses AST (Alarm Status) field to detect alarms:
-        - AL: Ongoing alarm
-        - AM: Alarm memory (recent alarm, now cleared)
+        - AL: Ongoing alarm → triggers TRIGGERED state
+        - AM: Alarm memory (past alarm, now cleared) → surfaced as attribute only,
+              does NOT trigger TRIGGERED to avoid false positives on boot/reconnect
 
         Returns:
-            True if any partition reports alarm state via AST field
+            True if any partition reports an active AL alarm via AST field
         """
         for partition in self._partitions_status:
             partition_ast = partition.get("AST", "OK")
             # Only check AST field for alarm states, not ARM field
             # ARM field only contains armed modes (D, IA, DA, IT, OT), never alarm states
-            if partition_ast in ("AL", "AM"):
+            if partition_ast == "AL":
                 _LOGGER.debug(
-                    f"[KseniaACP] Partition {partition.get('ID')} alarm detected: AST={partition_ast}"
+                    f"[KseniaACP] Partition {partition.get('ID')} active alarm detected: AST={partition_ast}"
                 )
                 return True
         return False
+
+    def _has_partition_alarm_memory(self) -> bool:
+        """Check if any partition has alarm memory (past alarm, now cleared).
+
+        AM means the alarm has already been cleared but not yet acknowledged.
+        Surfaced as an attribute so users/automations can act on it without
+        the panel entering TRIGGERED.
+
+        Returns:
+            True if any partition reports AST=AM
+        """
+        return any(partition.get("AST", "OK") == "AM" for partition in self._partitions_status)
 
     def _has_bypassed_zones(self) -> bool:
         """Check if any zones are bypassed.
@@ -281,12 +327,7 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
     @property
     def unique_id(self):
         """Return unique ID for the entity."""
-        return f"{self.ws_manager._ip}_alarm_control_panel"
-
-    @property
-    def device_info(self):
-        """Return device information about this entity."""
-        return self._device_info
+        return build_unique_id(self._base_id, "alarm_control_panel")
 
     @property
     def alarm_state(self):
@@ -326,47 +367,6 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
 
         return features
 
-    @property
-    def should_poll(self) -> bool:
-        """Poll periodically as fallback for missed realtime updates."""
-        return True
-
-    @property
-    def scan_interval(self):
-        """Poll every 60 seconds as fallback."""
-        return timedelta(seconds=60)
-
-    async def async_update(self):
-        """Fallback polling to ensure state is current.
-
-        Requests latest system and partition status if realtime update missed.
-        HA will automatically call async_write_ha_state() after this method returns.
-        """
-        try:
-            # Fetch fresh system status to ensure exit/entry delays are reflected
-            # This is critical because the device may not broadcast STATUS_SYSTEM updates
-            # during countdown periods
-            system_data = await self.ws_manager.getSensor("STATUS_SYSTEM")
-            if system_data and len(system_data) > 0:
-                self._system_status.update(system_data[0])
-
-            # Also fetch partition status to detect alarm states
-            # Partition alarm status is only available in STATUS_PARTITIONS
-            try:
-                partitions = self.ws_manager.get_cached_data("STATUS_PARTITIONS")
-                if partitions:
-                    self._partitions_status = partitions
-            except Exception as partition_err:
-                _LOGGER.debug(f"Could not fetch partition status during polling: {partition_err}")
-
-            if system_data:
-                self._compute_state_from_system()
-                _LOGGER.debug(f"Polling update: alarm state = {self._state}")
-            else:
-                _LOGGER.debug("No system status available in polling update")
-        except Exception as e:
-            _LOGGER.debug(f"Polling update failed for alarm panel: {e}", exc_info=True)
-
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         """Disarm all partitions.
 
@@ -397,6 +397,8 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             success = await self.ws_manager.executeScenario_with_login(scenario_id, pin=code)
 
             if success:
+                self._attr_changed_by = "HA Alarm control panel"
+                self._ha_action_pending = True
                 _LOGGER.info("All partitions disarmed successfully")
             else:
                 _LOGGER.error("Failed to disarm partitions")
@@ -450,6 +452,8 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             success = await self.ws_manager.executeScenario_with_login(scenario_id, pin=code)
 
             if success:
+                self._attr_changed_by = "HA Alarm control panel"
+                self._ha_action_pending = True
                 _LOGGER.info("All partitions armed in away mode")
             else:
                 _LOGGER.error("Failed to arm partitions in away mode")
@@ -507,6 +511,8 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             success = await self.ws_manager.executeScenario_with_login(scenario_id, pin=code)
 
             if success:
+                self._attr_changed_by = "HA Alarm control panel"
+                self._ha_action_pending = True
                 _LOGGER.info("All partitions armed in home mode")
             else:
                 _LOGGER.error("Failed to arm partitions in home mode")
@@ -543,7 +549,35 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
             AlarmControlPanelState.TRIGGERED: "mdi:alarm-light",
             AlarmControlPanelState.PENDING: "mdi:alarm-light-outline",
         }
+        if self._state is None:
+            return "mdi:shield"
         return icon_map.get(self._state, "mdi:shield")
+
+    def _get_bypassed_zones(self) -> list:
+        """Return a list of human-readable bypassed zone strings."""
+        result = []
+        try:
+            for zone in self.ws_manager.get_cached_data("STATUS_ZONES"):
+                zone_byp = zone.get("BYP", "NO")
+                if zone_byp != "NO":
+                    zone_id = zone.get("ID", "Unknown")
+                    zone_label = zone.get("LBL", "") or zone.get("DES", f"Zone {zone_id}")
+                    bypass_type = "Manual" if zone_byp in ("MAN_M", "MAN_T") else "Auto"
+                    result.append(f"{zone_label} ({bypass_type})")
+        except Exception as e:
+            _LOGGER.debug(f"Error loading bypassed zones for attributes: {e}")
+        return result
+
+    def _get_partition_status(self) -> dict:
+        """Return a dict mapping partition_<id> to a readable ARM state string."""
+        result = {}
+        for part in self._partitions_status:
+            part_id = part.get("ID", "Unknown")
+            part_arm = part.get("ARM", "Unknown")
+            result[f"partition_{part_id}"] = next(
+                (s.name for s in PartitionArmStatus if s == part_arm), part_arm
+            )
+        return result
 
     @property
     def extra_state_attributes(self):
@@ -559,55 +593,13 @@ class KseniaAlarmControlPanel(AlarmControlPanelEntity):
         device_description = (
             arm_data.get("D", "Unknown") if isinstance(arm_data, dict) else "Unknown"
         )
-
-        # Map alarm status to readable string
-        ast_status = self._system_status.get("AST", "Unknown")
-        ast_map = {"OK": "No Alarm", "AL": "Ongoing Alarm", "AM": "Alarm Memory"}
-        readable_alarm_status = ast_map.get(ast_status, ast_status)
-
-        # Get bypassed zones from realtime data
-        bypassed_zones = []
-        try:
-            zones = self.ws_manager.get_cached_data("STATUS_ZONES")
-            for zone in zones:
-                zone_byp = zone.get("BYP", "NO")
-                if zone_byp != "NO":  # Zone is bypassed
-                    zone_id = zone.get("ID", "Unknown")
-                    zone_label = zone.get("LBL", "") or zone.get("DES", f"Zone {zone_id}")
-                    bypass_type = "Manual" if zone_byp in ("MAN_M", "MAN_T") else "Auto"
-                    bypassed_zones.append(f"{zone_label} ({bypass_type})")
-        except Exception as e:
-            _LOGGER.debug(f"Error loading bypassed zones for attributes: {e}")
-
-        # Get partition status from realtime data
-        partition_status = {}
-        try:
-            partitions = self.ws_manager.get_cached_data("STATUS_PARTITIONS")
-            for part in partitions:
-                part_id = part.get("ID", "Unknown")
-                part_arm = part.get("ARM", "Unknown")
-                # Map partition ARM codes to readable descriptions
-                arm_map = {
-                    "D": "Disarmed",
-                    "IA": "Armed",
-                    "DA": "Arming (exit delay)",
-                    "IT": "Entry delay active",
-                    "OT": "Exit delay active",
-                    "AL": "Alarm triggered",
-                    "AM": "Alarm memory",
-                }
-                readable_arm = arm_map.get(part_arm, part_arm)
-                partition_status[f"partition_{part_id}"] = readable_arm
-        except Exception as e:
-            _LOGGER.debug(f"Error loading partition status for attributes: {e}")
-
+        bypassed_zones = self._get_bypassed_zones()
         return {
-            "device_status": device_description,  # Device's description
-            "alarm_condition": readable_alarm_status,  # No Alarm / Ongoing Alarm / Alarm Memory
-            "bypassed_zones": (
-                bypassed_zones if bypassed_zones else "None"
-            ),  # List of bypassed zones with type
-            "partition_status": partition_status,  # Status of each partition
+            "device_status": device_description,
+            "alarm_condition": ("Ongoing Alarm" if self._has_partition_alarm() else "No Alarm"),
+            "alarm_memory": self._has_partition_alarm_memory(),
+            "bypassed_zones": bypassed_zones if bypassed_zones else "None",
+            "partition_status": self._get_partition_status(),
             "scenarios_available": list(self._scenarios.keys()),
             "connection_state": (
                 self.ws_manager.get_connection_state().name

@@ -15,7 +15,19 @@ CONF_PLATFORMS = "platforms"
 # Defaults
 DEFAULT_PORT = 443
 DEFAULT_SSL = True
-DEFAULT_PLATFORMS = ["light", "cover", "switch", "sensor", "button", "alarm_control_panel"]
+SETUP_TIMEOUT = 60  # seconds; allow for device startup delays and initial data fetch retries
+DEFAULT_PLATFORMS = [
+    "light",
+    "cover",
+    "switch",
+    "sensor",
+    "binary_sensor",
+    "button",
+    "alarm_control_panel",
+]
+
+# Categories of zones that should be treated as binary sensors (shared by sensor.py and binary_sensor.py)
+BINARY_ZONE_CATS = {"DOOR", "WINDOW", "IMOV", "EMOV", "PMC", "SMOKE", "SEISM", "CMD", "GEN"}
 
 # Entity types
 ENTITY_TYPES = {
@@ -46,6 +58,16 @@ HA_TO_KSENIA_ALARM_STATE = {
     "armed_custom_bypass": "armed",
 }
 
+_ARM_STATE_MAP = {
+    "T": "fully_armed",
+    "T_IN": "fully_armed_entry_delay",
+    "T_OUT": "fully_armed_exit_delay",
+    "P": "partially_armed",
+    "P_IN": "partially_armed_entry_delay",
+    "P_OUT": "partially_armed_exit_delay",
+    "D": "disarmed",
+}
+
 
 class ArmState(StrEnum):
     """ARM.S field states from device."""
@@ -62,21 +84,35 @@ class ArmState(StrEnum):
 class AlarmStatus(StrEnum):
     """AST field states from device (partition alarm status)."""
 
-    OK = "OK"
-    ALARM_ACTIVE = "AL"
+    NO_ALARM = "OK"
+    ONGOING_ALARM = "AL"
     ALARM_MEMORY = "AM"
+
+
+class PartitionTamperStatus(StrEnum):
+    """TST field states from partition (STATUS_PARTITIONS.TST)."""
+
+    NO_TAMPERING = "OK"
+    ONGOING_TAMPERING = "TAM"
+    TAMPERING_MEMORY = "TM"
+
+
+class TriggeredStatus(StrEnum):
+    """Custom enum for representing alarm triggered status sensor entity states."""
+
+    NOT_TRIGGERED = "not_triggered"
+    ONGOING_ALARM = "ongoing_alarm"
+    ALARM_MEMORY = "alarm_memory"
 
 
 class PartitionArmStatus(StrEnum):
-    """ARM field states from partition (can include alarm states)."""
+    """ARM field states from partition (STATUS_PARTITIONS.ARM)."""
 
     DISARMED = "D"
-    IMMEDIATE_ARM = "IA"
-    DELAYED_ARM = "DA"
-    IMMEDIATE_TRIGGERED = "IT"
-    DELAYED_TRIGGERED = "OT"
-    ALARM_ACTIVE = "AL"
-    ALARM_MEMORY = "AM"
+    IMMEDIATE_ARMING = "IA"
+    DELAYED_ARMING = "DA"
+    ENTRY_DELAY_ACTIVE = "IT"
+    EXIT_DELAY_ACTIVE = "OT"
 
 
 class ZoneBypassState(StrEnum):
@@ -88,6 +124,45 @@ class ZoneBypassState(StrEnum):
     MANUAL_TEST = "MAN_T"
 
 
+class SystemTamperingStatus(StrEnum):
+    """System tampering sensor states"""
+
+    OK = "ok"
+    RF_JAMMING = "rf_jamming_detected"
+    PANEL_TAMPERING = "panel_tampering"
+    PERIPHERAL_TAMPERING = "peripheral_tampering"
+    ZONE_TAMPERING = "zone_tampering"
+    ONGOING_TAMPERING = "ongoing_tampering"
+    TAMPERING_MEMORY = "tampering_memory"
+
+
+class ConnectionStatus(StrEnum):
+    """Connection status states"""
+
+    ETHERNET = "ethernet"
+    MOBILE = "mobile"
+    CLOUD = "cloud"
+    OFFLINE = "offline"
+
+
+class PowerSupplyStatus(StrEnum):
+    """Power supply sensor states"""
+
+    OK = "ok"
+    LOW_BATTERY = "low_battery"
+    LOW_MAIN_POWER = "low_main_power"
+    CRITICAL = "critical"
+
+
+class SystemFaults(StrEnum):
+    """System faults sensor states"""
+
+    OK = "ok"
+    MINOR_FAULTS = "minor_faults"
+    MULTIPLE_FAULTS = "multiple_faults"
+    CRITICAL_FAULTS = "critical_faults"
+
+
 class InfoFlag(StrEnum):
     """INFO field flags indicating system states."""
 
@@ -95,3 +170,11 @@ class InfoFlag(StrEnum):
     BYPASS_AUTO = "BYP_AUTO"
     BYPASS_MANUAL_MAIN = "BYP_MAN_M"
     BYPASS_MANUAL_TEST = "BYP_MAN_T"
+
+
+class ClearCommand(StrEnum):
+    """Clear command protocol identifiers sent to the panel."""
+
+    COMMUNICATIONS = "communications"
+    ALARM_CYCLES = "cycles_or_memories"
+    FAULTS_MEMORY = "faults_memory"
