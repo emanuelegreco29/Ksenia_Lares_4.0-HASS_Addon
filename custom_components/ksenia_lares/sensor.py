@@ -153,7 +153,7 @@ async def _add_zone_sensors(ws_manager, device_info, base_id, entities):
         if cat in BINARY_ZONE_CATS:
             continue
         # Remaining zones (e.g. CAT=AN) use raw STA value
-        entities.append(KseniaSensorEntity(ws_manager, sensor, "zones", device_info, base_id))
+        entities.append(KseniaZoneSensor(ws_manager, sensor, device_info, base_id))
 
 
 async def _add_system_sensors(ws_manager, device_info, base_id, entities):
@@ -239,6 +239,15 @@ class KseniaSensorEntity(KseniaEntity, SensorEntity):
         attributes = dict(self._attributes)
         attributes["raw_data"] = self._raw_data
         return attributes
+
+
+class KseniaZoneSensor(KseniaSensorEntity):
+    """Sensor entity for zones not in BINARY_ZONE_CATS (e.g. AN)."""
+
+    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
+        """Initialise an analog zone sensor."""
+        super().__init__(ws_manager, sensor_data, "zones", device_info, base_id)
+        self._attr_name = self._base_name
 
 
 class KseniaPowerlineSensor(KseniaSensorEntity):
