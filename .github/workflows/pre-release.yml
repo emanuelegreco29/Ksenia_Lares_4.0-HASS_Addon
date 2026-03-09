@@ -1,0 +1,154 @@
+---
+name: Create Pre-Release
+# yamllint disable rule:truthy
+# yamllint disable rule:line-length
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "custom_components/ksenia_lares/manifest.json"
+
+jobs:
+  release:
+    name: Check Quality Gates & Create Pre-Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      discussions: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if version was bumped
+        id: version
+        run: |
+          python3 << 'PYEOF'
+          import json, os, subprocess, sys
+          from packaging.version import Version
+
+          MANIFEST = 'custom_components/ksenia_lares/manifest.json'
+
+          old_raw = subprocess.check_output(['git', 'show', f'HEAD~1:{MANIFEST}'], text=True)
+          old_str = json.loads(old_raw)['version']
+          with open(MANIFEST) as f:
+              new_str = json.load(f)['version']
+
+          print(f"Old version: {old_str}")
+          print(f"New version: {new_str}")
+
+          old = Version(old_str)
+          new = Version(new_str)
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as gh:
+              gh.write(f"old={old_str}\n")
+              gh.write(f"new={new_str}\n")
+              if new > old:
+                  gh.write("bumped=true\n")
+                  print("Version properly bumped — will create pre-release.")
+              elif new == old:
+                  gh.write("bumped=false\n")
+                  print("Version unchanged (non-version manifest edit) — skipping release.")
+              else:
+                  gh.write("bumped=false\n")
+                  print(f"ERROR: Version downgraded: {old_str} -> {new_str}", file=sys.stderr)
+                  sys.exit(1)
+          PYEOF
+
+      - name: Wait for other workflows to complete
+        if: steps.version.outputs.bumped == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const EXCLUDE    = ['pre-release.yml'];
+            const INITIAL_MS = 60 * 1000;       // 1 min: let GitHub queue all workflows
+            const POLL_MS    = 30 * 1000;       // poll every 30 s
+            const TIMEOUT_MS = 15 * 60 * 1000;  // give up after 15 min
+
+            core.info(`Waiting ${INITIAL_MS / 1000}s for sibling workflows to be queued...`);
+            await new Promise(r => setTimeout(r, INITIAL_MS));
+
+            const deadline = Date.now() + TIMEOUT_MS;
+
+            while (Date.now() < deadline) {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: context.sha,
+                per_page: 50,
+              });
+
+              const siblings = data.workflow_runs.filter(
+                r => !EXCLUDE.some(name => r.path.endsWith(name))
+              );
+              const pending = siblings.filter(r => r.status !== 'completed');
+
+              if (pending.length === 0) {
+                core.info(`All ${siblings.length} sibling workflow(s) completed.`);
+                break;
+              }
+
+              core.info(`Waiting for: ${pending.map(r => `${r.name} (${r.status})`).join(', ')}`);
+              await new Promise(r => setTimeout(r, POLL_MS));
+            }
+
+            if (Date.now() >= deadline) {
+              core.setFailed('Timed out (15 min) waiting for sibling workflows to complete');
+            }
+
+      - name: Check quality gates
+        if: steps.version.outputs.bumped == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const workflows = [
+              { id: 'lint.yml',      name: 'Lint' },
+              { id: 'test.yml',      name: 'Tests' },
+              { id: 'hassfest.yaml', name: 'Hassfest' },
+              { id: 'validate.yaml', name: 'HACS validation' },
+            ];
+
+            for (const wf of workflows) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: wf.id,
+                branch: 'main',
+                per_page: 10,
+              });
+
+              // Prefer a run for the current commit; fall back to the last completed run on main
+              const run = data.workflow_runs.find(r => r.head_sha === context.sha)
+                       ?? data.workflow_runs.find(r => r.status === 'completed');
+
+              if (!run) {
+                core.setFailed(`No completed ${wf.name} run found on main branch`);
+              } else if (run.conclusion !== 'success') {
+                core.setFailed(`${wf.name} did not pass — conclusion: ${run.conclusion} (${run.html_url})`);
+              } else {
+                core.info(`${wf.name} passed: ${run.html_url}`);
+              }
+            }
+
+      - name: Create pre-release
+        if: steps.version.outputs.bumped == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          TAG="v${VERSION}"
+          if gh release view "$TAG" &>/dev/null; then
+            echo "Release $TAG already exists, skipping."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --title "${TAG}" \
+            --prerelease \
+            --generate-notes \
+            --target main \
+            --discussion-category "Pre-Releases / Beta Releases"
+          echo "Pre-release $TAG created."

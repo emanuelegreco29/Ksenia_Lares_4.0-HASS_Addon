@@ -124,6 +124,17 @@ if [[ "$LINT_FAILED" == "false" ]]; then
 fi
 
 
+# Actionlint (GitHub Actions workflows)
+if [[ "$LINT_FAILED" == "false" ]]; then
+    echo "Running: Actionlint (GitHub Actions workflows)"
+    if actionlint .github/workflows/* 2>&1; then
+        echo "✓ Actionlint passed"
+    else
+        LINT_FAILED=true
+    fi
+    echo
+fi
+
 # Bandit (security)
 if [[ "$LINT_FAILED" == "false" ]]; then
     echo "Running: Bandit (security)"

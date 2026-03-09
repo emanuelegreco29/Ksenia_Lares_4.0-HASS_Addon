@@ -50,6 +50,7 @@ ZONE_LABEL_FRONT_DOOR = "Front Door"
 ZONE_LABEL_LIVING_ROOM_MOTION = "Living Room Motion"
 ZONE_LABEL_SMOKE_DETECTOR = "Ceiling Smoke Detector"
 ZONE_LABEL_DOORBELL = "Doorbell"
+ZONE_LABEL_VELVET = "Velvet zone"
 
 # Domus sensor
 DOMUS_ID = "1"
@@ -83,6 +84,7 @@ ZONE_1 = "1"
 ZONE_2 = "2"
 ZONE_3 = "3"
 ZONE_4 = "4"
+ZONE_5 = "5"
 
 # Output IDs
 OUTPUT_SIREN = "1"
@@ -236,6 +238,7 @@ class SimulatorState:
         self.logs: List[Dict[str, Any]] = []
         self.delayed_arm_task: Optional[asyncio.Task] = None  # Track pending delayed arm tasks
 
+        self.output_configs = self._init_output_configs()
         self.outputs = self._init_outputs()
         self.zone_config = self._init_zone_config()
         self.zones = self._init_zones()
@@ -243,12 +246,20 @@ class SimulatorState:
         self.bus_has = self._init_bus_has()
         self.bus_ha_sensors = self._init_bus_ha_sensors()
 
-    def _init_outputs(self) -> Dict[str, Dict[str, Any]]:
-        """Initialize output devices."""
+    def _init_output_configs(self) -> Dict[str, Dict[str, Any]]:
+        """Initialize output configuration (matches real hardware OUTPUTS format)."""
         return {
-            OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "STA": "OFF", "LBL": OUTPUT_LABEL_SIREN, "CNV": "H"},
-            OUTPUT_LIGHT: {"ID": OUTPUT_LIGHT, "STA": "OFF", "LBL": OUTPUT_LABEL_LIGHT},
-            OUTPUT_COVER: {"ID": OUTPUT_COVER, "STA": "OFF", "LBL": OUTPUT_LABEL_COVER, "CAT": "ROLL", "POS": "0"},
+            OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "DES": OUTPUT_LABEL_SIREN, "CNV": "H", "CAT": "GEN", "MOD": "A"},
+            OUTPUT_LIGHT: {"ID": OUTPUT_LIGHT, "DES": OUTPUT_LABEL_LIGHT, "CAT": "GEN", "MOD": "A"},
+            OUTPUT_COVER: {"ID": OUTPUT_COVER, "DES": OUTPUT_LABEL_COVER, "CAT": "ROLL", "MOD": "A"},
+        }
+
+    def _init_outputs(self) -> Dict[str, Dict[str, Any]]:
+        """Initialize output runtime state."""
+        return {
+            OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "STA": "OFF"},
+            OUTPUT_LIGHT: {"ID": OUTPUT_LIGHT, "STA": "OFF"},
+            OUTPUT_COVER: {"ID": OUTPUT_COVER, "STA": "OFF", "POS": "0"},
         }
 
     def _init_zone_config(self) -> Dict[str, Dict[str, Any]]:
@@ -288,6 +299,15 @@ class SimulatorState:
                 "CMD": "T",
                 "BYP_EN": "T",
                 "CAT": "CMD",
+                "AN": "F",
+            },
+            ZONE_5: {
+                "ID": ZONE_5,
+                "DES": ZONE_LABEL_VELVET,
+                "PRT": "ALL",
+                "CMD": "F",
+                "BYP_EN": "T",
+                "CAT": "PCUR",
                 "AN": "F",
             },
         }
@@ -339,6 +359,17 @@ class SimulatorState:
                 "VAS": "F",
                 "LBL": ZONE_LABEL_DOORBELL,
             },
+            ZONE_5: {
+                "ID": ZONE_5,
+                "STA": "R",
+                "BYP": "NO",
+                "T": "N",
+                "A": "N",
+                "FM": "F",
+                "OHM": "NA",
+                "VAS": "F",
+                "LBL": ZONE_LABEL_VELVET,
+            },
         }
 
     def _init_partitions(self) -> Dict[str, Dict[str, Any]]:
@@ -347,7 +378,6 @@ class SimulatorState:
             PARTITION_1: {
                 "ID": PARTITION_1,
                 "DES": PARTITION_LABEL_SHELL,
-                "LBL": PARTITION_LABEL_SHELL,
                 "ARM": ARM_STATE_DISARMED,
                 "AST": ALARM_OK,
                 "TST": TAMPER_OK,
@@ -357,7 +387,6 @@ class SimulatorState:
             PARTITION_2: {
                 "ID": PARTITION_2,
                 "DES": PARTITION_LABEL_VOLUME,
-                "LBL": PARTITION_LABEL_VOLUME,
                 "ARM": ARM_STATE_DISARMED,
                 "AST": ALARM_OK,
                 "TST": TAMPER_OK,
@@ -971,7 +1000,7 @@ def initial_read_payload(types: List[str]) -> Dict[str, Any]:
         elif t == "STATUS_BUS_HA_SENSORS":
             payload["STATUS_BUS_HA_SENSORS"] = list(state.bus_ha_sensors.values())
         elif t == "OUTPUTS":
-            payload["OUTPUTS"] = list(state.outputs.values())
+            payload["OUTPUTS"] = list(state.output_configs.values())
         elif t == "ZONES":
             payload["ZONES"] = list(state.zone_config.values())
         elif t == "PARTITIONS":
@@ -988,9 +1017,18 @@ def initial_read_payload(types: List[str]) -> Dict[str, Any]:
         elif t == "STATUS_PANEL":
             payload["STATUS_PANEL"] = panel_status_payload()
         elif t == "FAULTS":
-            payload["STATUS_FAULTS"] = [{"ZONE": [], "SYSTEM": []}]
+            payload["STATUS_FAULTS"] = [{
+                "PS_MISS": [], "PS_LOW": [], "PS_FAULT": [], "FUSE": [],
+                "LOW_BATT": [], "BAD_BATT": [], "LOST_BUS": [], "LOST_WLS": [],
+                "ZONE": [], "LAN_ETH": [], "REM_ETH": [], "PSTN": [],
+                "MOBILE": [], "SIM_DATE": [], "SIM_CRE": [], "COMMUNICATION": [],
+                "SIAIP_SUP": [], "SYSTEM": [], "LOST_IP_PER": [],
+            }]
         elif t == "TAMPERS":
-            payload["STATUS_TAMPERS"] = [{"ZONE": [], "PANEL": []}]
+            payload["STATUS_TAMPERS"] = [{
+                "PANEL": [], "BUS_PER": [], "WLS_PER": [], "JAM_868": [],
+                "LOST_BUS": [], "LOST_WLS": [], "ZONE": [], "LOST_IP_PER": [], "IP_PER": [],
+            }]
         elif t == "SERVICES":
             payload["STATUS_SERVICES"] = [
                 {"ID": "0", "TYP": "BACKUP", "STA": "EN", "SUB_TYP": "DEFAULT"}
@@ -1027,19 +1065,19 @@ async def home(request: Request) -> str:
     # Simple manual control UI
 
     outputs_rows = "".join(
-        f"<tr><td>{o['ID']}</td><td>{o['LBL']}</td><td>{o['STA']}</td>"
+        f"<tr><td>{o['ID']}</td><td>{state.output_configs.get(o['ID'], {}).get('DES', '')}</td><td>{o['STA']}</td>"
         f"<td><button onclick=toggleOutput('{o['ID']}')>Toggle</button></td></tr>"
         for o in state.outputs.values()
     )
     zones_rows = "".join(
-        f"<tr><td>{z['ID']}</td><td>{z['LBL']}</td><td>{z['STA']}</td><td>{z['BYP']}</td><td>{z['OHM']}</td>"
+        f"<tr><td>{z['ID']}</td><td>{z['LBL']}</td><td>{state.zone_config.get(z['ID'], {}).get('PRT', '')}</td><td>{z['STA']}</td><td>{z['BYP']}</td><td>{z['OHM']}</td>"
         f"<td><button onclick=bypassZone('{z['ID']}','MAN_M')>Bypass</button>"
         f"<button onclick=bypassZone('{z['ID']}','NO')>Unbypass</button>"
         f"<button onclick=triggerZone('{z['ID']}')>Trigger</button></td></tr>"
         for z in state.zones.values()
     )
     partitions_rows = "".join(
-        f"<tr><td>{p['ID']}</td><td>{p['LBL']}</td><td>{p['STA']}</td><td>{p['ARM']}</td><td>{p.get('AST', 'OK')}</td>"
+        f"<tr><td>{p['ID']}</td><td>{p.get('DES', '')}</td><td>{p.get('ARM', '')}</td><td>{p.get('AST', 'OK')}</td>"
         f"<td><button onclick=armPartition('{p['ID']}')>Arm</button>"
         f"<button onclick=disarmPartition('{p['ID']}')>Disarm</button></td></tr>"
         for p in state.partitions.values()
@@ -1065,9 +1103,13 @@ async def home(request: Request) -> str:
             f"<td><button onclick=updateDomus('{sid}')>Send</button></td></tr>"
         )
     domus_rows = "".join(domus_rows_parts)
-    covers = [o for o in state.outputs.values() if o.get("CAT") == "ROLL"]
+    covers = [
+        {**state.outputs[oid], "DES": state.output_configs[oid]["DES"]}
+        for oid in state.outputs
+        if state.output_configs.get(oid, {}).get("CAT") == "ROLL"
+    ]
     covers_rows = "".join(
-        f"<tr><td>{c['ID']}</td><td>{c['LBL']}</td><td>{c.get('POS', '0')}</td>"
+        f"<tr><td>{c['ID']}</td><td>{c['DES']}</td><td>{c.get('POS', '0')}</td>"
         f"<td><button onclick=coverCmd('{c['ID']}','UP')>Open</button>"
         f"<button onclick=coverCmd('{c['ID']}','DOWN')>Close</button>"
         f"<button onclick=coverCmd('{c['ID']}','ALT')>Stop</button>"
@@ -1133,10 +1175,10 @@ async def home(request: Request) -> str:
                       <table><tr><th>ID</th><th>Label</th><th>Status</th><th>Action</th></tr><tbody id="outputs-body">{outputs_rows}</tbody></table>
 
                     <h2>Zones</h2>
-                      <table><tr><th>ID</th><th>Label</th><th>Status</th><th>Bypass</th><th>OHM</th><th>Action</th></tr><tbody id="zones-body">{zones_rows}</tbody></table>
+                      <table><tr><th>ID</th><th>Label</th><th>Partition</th><th>Status</th><th>Bypass</th><th>OHM</th><th>Action</th></tr><tbody id="zones-body">{zones_rows}</tbody></table>
 
                     <h2>Partitions</h2>
-                      <table><tr><th>ID</th><th>Label</th><th>Status</th><th>ARM</th><th>AST</th><th>Action</th></tr><tbody id="parts-body">{partitions_rows}</tbody></table>
+                      <table><tr><th>ID</th><th>Label</th><th>ARM</th><th>AST</th><th>Action</th></tr><tbody id="parts-body">{partitions_rows}</tbody></table>
 
                     <h2>Domus Sensors</h2>
                       <table><tr><th>ID</th><th>Label</th><th>Temp (°C)</th><th>Humidity (%)</th><th>Light (lux)</th><th>PIR</th><th>TL</th><th>TH</th><th>Action</th></tr><tbody id="domus-body">{domus_rows}</tbody></table>
@@ -1159,7 +1201,7 @@ async def home(request: Request) -> str:
                 function renderOutputs(outputs) {{
                     const tbody = document.getElementById('outputs-body');
                     tbody.innerHTML = outputs.map(o =>
-                        `<tr><td>${{o.ID}}</td><td>${{o.LBL}}</td><td>${{o.STA}}</td>`+
+                        `<tr><td>${{o.ID}}</td><td>${{o.DES}}</td><td>${{o.STA}}</td>`+
                         `<td><button onclick=toggleOutput('${{o.ID}}')>Toggle</button></td></tr>`
                     ).join('');
                 }}
@@ -1167,7 +1209,7 @@ async def home(request: Request) -> str:
                 function renderZones(zones) {{
                     const tbody = document.getElementById('zones-body');
                     tbody.innerHTML = zones.map(z =>
-                        `<tr><td>${{z.ID}}</td><td>${{z.LBL}}</td><td>${{z.STA}}</td><td>${{z.BYP}}</td><td>${{z.OHM}}</td>`+
+                        `<tr><td>${{z.ID}}</td><td>${{z.LBL}}</td><td>${{z.PRT || ''}}</td><td>${{z.STA}}</td><td>${{z.BYP}}</td><td>${{z.OHM}}</td>`+
                         `<td><button onclick=bypassZone('${{z.ID}}','MAN_M')>Bypass</button>`+
                         `<button onclick=bypassZone('${{z.ID}}','NO')>Unbypass</button>`+
                         `<button onclick=triggerZone('${{z.ID}}')>Trigger</button></td></tr>`
@@ -1177,7 +1219,7 @@ async def home(request: Request) -> str:
                 function renderPartitions(parts) {{
                     const tbody = document.getElementById('parts-body');
                     tbody.innerHTML = parts.map(p =>
-                        `<tr><td>${{p.ID}}</td><td>${{p.LBL || p.DES}}</td><td>${{p.STA}}</td><td>${{p.ARM}}</td><td>${{p.AST || 'OK'}}</td>`+
+                        `<tr><td>${{p.ID}}</td><td>${{p.DES}}</td><td>${{p.ARM}}</td><td>${{p.AST || 'OK'}}</td>`+
                         `<td><button onclick=armPartition('${{p.ID}}')>Arm</button>`+
                         `<button onclick=disarmPartition('${{p.ID}}')>Disarm</button></td></tr>`
                     ).join('');
@@ -1196,7 +1238,7 @@ async def home(request: Request) -> str:
                         }} else if (ast === 'AM') {{
                             color = 'orange'; label = 'MEMORY';
                         }}
-                        return `<tr><td>${{p.ID}} - ${{p.LBL || p.DES}}</td><td>${{ast}}</td><td style='color:${{color}};font-weight:bold'>${{label}}</td></tr>`;
+                        return `<tr><td>${{p.ID}} - ${{p.DES}}</td><td>${{ast}}</td><td style='color:${{color}};font-weight:bold'>${{label}}</td></tr>`;
                     }}).join('');
                     return anyAlarm ? 'YES' : 'NO';
                 }}
@@ -1248,7 +1290,7 @@ async def home(request: Request) -> str:
                     if (coverDirty) return;
                     const tbody = document.getElementById('covers-body');
                     tbody.innerHTML = covers.map(c =>
-                        `<tr><td>${{c.ID}}</td><td>${{c.LBL}}</td><td>${{c.POS || '0'}}</td>`+
+                        `<tr><td>${{c.ID}}</td><td>${{c.DES}}</td><td>${{c.POS || '0'}}</td>`+
                         `<td><button onclick=coverCmd('${{c.ID}}','UP')>Open</button>`+
                         `<button onclick=coverCmd('${{c.ID}}','DOWN')>Close</button>`+
                         `<button onclick=coverCmd('${{c.ID}}','ALT')>Stop</button>`+
@@ -1384,10 +1426,17 @@ async def api_state() -> Dict[str, Any]:
         system_arm = {"D": "Disarmed", "S": ARM_STATE_DISARMED}
 
     return {
-        "outputs": list(state.outputs.values()),
-        "covers": [o for o in state.outputs.values() if o.get("CAT") == "ROLL"],
-        "zones": list(state.zones.values()),
-        "partitions": [get_partition_status_data(p) for p in state.partitions.values()],
+        "outputs": [
+            {**state.outputs[oid], "DES": state.output_configs[oid]["DES"]}
+            for oid in state.outputs
+        ],
+        "covers": [
+            {**state.outputs[oid], "DES": state.output_configs[oid]["DES"]}
+            for oid in state.outputs
+            if state.output_configs.get(oid, {}).get("CAT") == "ROLL"
+        ],
+        "zones": [{**z, "PRT": state.zone_config.get(z["ID"], {}).get("PRT", "")} for z in state.zones.values()],
+        "partitions": [{**get_partition_status_data(p), "DES": p.get("DES", "")} for p in state.partitions.values()],
         "system": [{"ID": "1", "INFO": [], "ARM": system_arm}],
         "bus_ha_sensors": [
             {**s, "DES": state.bus_has.get(s["ID"], {}).get("DES", s["ID"])}
@@ -1458,7 +1507,7 @@ async def api_cover_command(cover_id: str, request: Request) -> Response:
     cmd = str(body.get("cmd", "")).upper()
     async with state.lock:
         cover = state.outputs.get(cover_id)
-        if not cover or cover.get("CAT") != "ROLL":
+        if not cover or state.output_configs.get(cover_id, {}).get("CAT") != "ROLL":
             return JSONResponse(status_code=404, content={"detail": "Cover not found"})
         if cmd == "UP":
             cover["POS"] = "100"
@@ -1800,7 +1849,7 @@ async def handle_websocket_cmd_set_output(ws: WebSocket, msg_id: str, payload: D
     async with state.lock:
         if oid in state.outputs:
             device = state.outputs[oid]
-            if device.get("CAT") == "ROLL":
+            if state.output_configs.get(oid, {}).get("CAT") == "ROLL":
                 # Cover commands: UP, DOWN, ALT (stop), or numeric position
                 if sta == "UP":
                     device["POS"] = "100"
