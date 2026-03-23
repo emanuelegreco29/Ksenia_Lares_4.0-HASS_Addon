@@ -106,13 +106,15 @@ class TriggeredStatus(StrEnum):
 
 
 class PartitionArmStatus(StrEnum):
-    """ARM field states from partition (STATUS_PARTITIONS.ARM)."""
+    """ARM field states from partition (STATUS_PARTITIONS.ARM), plus alarm states derived from AST."""
 
     DISARMED = "D"
     IMMEDIATE_ARMING = "IA"
     DELAYED_ARMING = "DA"
     ENTRY_DELAY_ACTIVE = "IT"
     EXIT_DELAY_ACTIVE = "OT"
+    ONGOING_ALARM = "OA"
+    ALARM_MEMORY = "AM"
 
 
 class ZoneBypassState(StrEnum):

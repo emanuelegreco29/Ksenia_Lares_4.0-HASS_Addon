@@ -76,7 +76,9 @@
           "delayed_arming": "Inserimento Ritardato",
           "immediate_arming": "Inserimento Immediato",
           "entry_delay_active": "Ritardo ingresso attivo",
-          "exit_delay_active": "Ritardo uscita attivo"
+          "exit_delay_active": "Ritardo uscita attivo",
+          "ongoing_alarm": "Allarme in Corso",
+          "alarm_memory": "Memoria Allarme"
         }
       },
       "alarm_system_status": {

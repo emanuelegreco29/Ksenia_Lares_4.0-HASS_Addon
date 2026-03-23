@@ -313,12 +313,19 @@ class KseniaPartitionSensor(KseniaSensorEntity):
     def _apply_partition_data(self, data: dict) -> None:
         """Parse partition data and set state/attributes."""
         raw_arm = data.get("ARM", "")
+        raw_ast = data.get("AST", "OK")
         arm_desc = (
             next((s.name.lower() for s in PartitionArmStatus if s == raw_arm), raw_arm)
             if raw_arm
             else None
         )
-        self._state = arm_desc
+        # Prioritize alarm state over arming state
+        if raw_ast == AlarmStatus.ONGOING_ALARM:
+            self._state = PartitionArmStatus.ONGOING_ALARM.name.lower()
+        elif raw_ast == AlarmStatus.ALARM_MEMORY:
+            self._state = PartitionArmStatus.ALARM_MEMORY.name.lower()
+        else:
+            self._state = arm_desc
 
         self._attributes = {
             "Partition": data.get("ID"),
