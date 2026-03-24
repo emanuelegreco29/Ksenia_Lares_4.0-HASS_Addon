@@ -113,7 +113,7 @@ class PartitionArmStatus(StrEnum):
     DELAYED_ARMING = "DA"
     ENTRY_DELAY_ACTIVE = "IT"
     EXIT_DELAY_ACTIVE = "OT"
-    ONGOING_ALARM = "OA"
+    ONGOING_ALARM = "AL"
     ALARM_MEMORY = "AM"
 
 
