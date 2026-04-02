@@ -77,8 +77,7 @@
           "immediate_arming": "Immediate Arming",
           "entry_delay_active": "Entry delay active",
           "exit_delay_active": "Exit delay active",
-          "ongoing_alarm": "Ongoing Alarm",
-          "alarm_memory": "Alarm Memory"
+          "ongoing_alarm": "Ongoing Alarm"
         }
       },
       "alarm_system_status": {

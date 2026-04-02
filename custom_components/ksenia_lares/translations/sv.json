@@ -77,8 +77,7 @@
           "immediate_arming": "Omedelbar Aktivering",
           "entry_delay_active": "Ingångsfördröjning aktiv",
           "exit_delay_active": "Utgångsfördröjning aktiv",
-          "ongoing_alarm": "Pågående Larm",
-          "alarm_memory": "Larmminne"
+          "ongoing_alarm": "Pågående Larm"
         }
       },
       "alarm_system_status": {

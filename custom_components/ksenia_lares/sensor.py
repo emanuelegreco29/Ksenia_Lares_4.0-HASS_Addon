@@ -319,11 +319,9 @@ class KseniaPartitionSensor(KseniaSensorEntity):
             if raw_arm
             else None
         )
-        # Prioritize alarm state over arming state
+        # Ongoing alarm overrides the arming state; alarm memory is exposed as attribute only
         if raw_ast == AlarmStatus.ONGOING_ALARM:
             self._state = PartitionArmStatus.ONGOING_ALARM.name.lower()
-        elif raw_ast == AlarmStatus.ALARM_MEMORY:
-            self._state = PartitionArmStatus.ALARM_MEMORY.name.lower()
         else:
             self._state = arm_desc
 
@@ -336,6 +334,7 @@ class KseniaPartitionSensor(KseniaSensorEntity):
             "Alarm Description": next(
                 (s.name for s in AlarmStatus if s == data.get("AST", "")), ""
             ),
+            "Alarm Memory": raw_ast == AlarmStatus.ALARM_MEMORY,
             "Tamper Mode": data.get("TST"),
             "Tamper Description": next(
                 (s.name for s in PartitionTamperStatus if s == data.get("TST", "")), ""
