@@ -162,6 +162,16 @@ async def _add_system_sensors(ws_manager, device_info, base_id, entities):
     _LOGGER.debug("Found %d system sensors", len(systems))
     for sensor in systems:
         entities.append(KseniaAlarmSystemStatusSensor(ws_manager, sensor, device_info, base_id))
+        temp = sensor.get("TEMP", {})
+        if isinstance(temp, dict):
+            if "IN" in temp:
+                entities.append(
+                    KseniaSystemTemperatureSensor(ws_manager, sensor, device_info, base_id, "IN")
+                )
+            if "OUT" in temp:
+                entities.append(
+                    KseniaSystemTemperatureSensor(ws_manager, sensor, device_info, base_id, "OUT")
+                )
 
 
 def _add_status_sensors(ws_manager, device_info, base_id, entities):
@@ -590,6 +600,89 @@ class KseniaAlarmSystemStatusSensor(KseniaEntity, SensorEntity):
                 _ARM_STATE_MAP.get(state_code, state_code) if state_code is not None else state_code
             )
             self._attributes = {}
+            self._raw_data.update(data)
+            self.async_write_ha_state()
+            break
+
+
+class KseniaSystemTemperatureSensor(KseniaEntity, SensorEntity):
+    """Sensor entity for internal or external temperature reported by the Ksenia system (sirens)."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_icon = "mdi:thermometer"
+
+    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None, temp_key="IN"):
+        """Initialize a system temperature sensor.
+
+        Args:
+            temp_key: "IN" for internal temperature, "OUT" for external temperature.
+        """
+        self.ws_manager = ws_manager
+        self._id = sensor_data["ID"]
+        self._temp_key = temp_key
+        self._base_id = base_id or ws_manager.ip
+        self._device_info = device_info
+        self._raw_data = dict(sensor_data)
+
+        if temp_key == "IN":
+            self._attr_translation_key = "system_temp_internal"
+        else:
+            self._attr_translation_key = "system_temp_external"
+
+        suffix = "" if str(self._id) == "1" else f" {self._id}"
+        self._attr_translation_placeholders = {"suffix": suffix}
+
+        temp_data = sensor_data.get("TEMP", {})
+        self._state = self._parse_temp(temp_data.get(temp_key))
+
+    @staticmethod
+    def _parse_temp(value) -> float | None:
+        """Parse a temperature string like '+20.8' or '-3.5' to float."""
+        try:
+            return float(value.replace("+", "")) if value and value not in ("NA", "") else None
+        except Exception as e:
+            _LOGGER.error("Error parsing system temperature: %s", e)
+            return None
+
+    @property
+    def unique_id(self) -> str:
+        """Return unique ID for the sensor."""
+        direction = "internal" if self._temp_key == "IN" else "external"
+        return build_unique_id(self._base_id, f"system_temp_{direction}", self._id)
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current temperature."""
+        return self._state
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional state attributes."""
+        return {"raw_data": self._raw_data}
+
+    async def async_added_to_hass(self):
+        """Register realtime listener for system updates."""
+        await super().async_added_to_hass()
+        self.ws_manager.register_listener("systems", self._handle_realtime_update)
+
+    async def _handle_realtime_update(self, data_list):
+        """Handle realtime system data update and extract temperature."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            temp_data = data.get("TEMP", {})
+            if not isinstance(temp_data, dict):
+                break
+            raw_val = temp_data.get(self._temp_key)
+            _LOGGER.debug(
+                "[system_temp_%s] Entity %s update: raw=%s",
+                self._temp_key,
+                self._id,
+                raw_val,
+            )
+            self._state = self._parse_temp(raw_val)
             self._raw_data.update(data)
             self.async_write_ha_state()
             break

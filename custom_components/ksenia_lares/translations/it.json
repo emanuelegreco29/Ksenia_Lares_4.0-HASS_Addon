@@ -80,6 +80,12 @@
           "ongoing_alarm": "Allarme in Corso"
         }
       },
+      "system_temp_internal": {
+        "name": "Temperatura Interna{suffix}"
+      },
+      "system_temp_external": {
+        "name": "Temperatura Esterna{suffix}"
+      },
       "alarm_system_status": {
         "name": "Stato del Sistema di Allarme{suffix}",
         "state": {

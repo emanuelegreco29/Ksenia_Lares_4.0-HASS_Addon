@@ -80,6 +80,12 @@
           "ongoing_alarm": "Pågående Larm"
         }
       },
+      "system_temp_internal": {
+        "name": "Inomhustemperatur{suffix}"
+      },
+      "system_temp_external": {
+        "name": "Utomhustemperatur{suffix}"
+      },
       "alarm_system_status": {
         "name": "Larmsystemstatus{suffix}",
         "state": {

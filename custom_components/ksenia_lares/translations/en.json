@@ -80,6 +80,12 @@
           "ongoing_alarm": "Ongoing Alarm"
         }
       },
+      "system_temp_internal": {
+        "name": "Internal Temperature{suffix}"
+      },
+      "system_temp_external": {
+        "name": "External Temperature{suffix}"
+      },
       "alarm_system_status": {
         "name": "Alarm System Status{suffix}",
         "state": {
