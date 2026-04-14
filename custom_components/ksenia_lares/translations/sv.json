@@ -76,8 +76,15 @@
           "delayed_arming": "Fördröjd Aktivering",
           "immediate_arming": "Omedelbar Aktivering",
           "entry_delay_active": "Ingångsfördröjning aktiv",
-          "exit_delay_active": "Utgångsfördröjning aktiv"
+          "exit_delay_active": "Utgångsfördröjning aktiv",
+          "ongoing_alarm": "Pågående Larm"
         }
+      },
+      "system_temp_internal": {
+        "name": "Inomhustemperatur{suffix}"
+      },
+      "system_temp_external": {
+        "name": "Utomhustemperatur{suffix}"
       },
       "alarm_system_status": {
         "name": "Larmsystemstatus{suffix}",

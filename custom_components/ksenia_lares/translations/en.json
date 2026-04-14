@@ -76,8 +76,15 @@
           "delayed_arming": "Delayed Arming",
           "immediate_arming": "Immediate Arming",
           "entry_delay_active": "Entry delay active",
-          "exit_delay_active": "Exit delay active"
+          "exit_delay_active": "Exit delay active",
+          "ongoing_alarm": "Ongoing Alarm"
         }
+      },
+      "system_temp_internal": {
+        "name": "Internal Temperature{suffix}"
+      },
+      "system_temp_external": {
+        "name": "External Temperature{suffix}"
       },
       "alarm_system_status": {
         "name": "Alarm System Status{suffix}",
@@ -194,17 +201,17 @@
       "message": "Arm home command failed"
     }
   },
-      "selector": {
-      "platforms": {
-        "options": {  
-          "alarm_control_panel": "Alarm Control Panel",
-          "sensor": "Sensor",
-          "binary_sensor": "Binary Sensor",
-          "switch": "Switch",
-          "light": "Light",
-          "cover": "Cover",
-          "button": "Button"
-        }  
+  "selector": {
+    "platforms": {
+      "options": {
+        "alarm_control_panel": "Alarm Control Panel",
+        "sensor": "Sensor",
+        "binary_sensor": "Binary Sensor",
+        "switch": "Switch",
+        "light": "Light",
+        "cover": "Cover",
+        "button": "Button"
       }
     }
+  }
 }
