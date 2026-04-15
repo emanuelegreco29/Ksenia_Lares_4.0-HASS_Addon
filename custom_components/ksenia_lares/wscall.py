@@ -24,6 +24,9 @@ READ_TYPES = [
     "POWER_LINES",
     "PARTITIONS",
     "ZONES",
+    # Thermostat configuration
+    "TEMPERATURES",
+    "CFG_THERMOSTATS",
     # Status types (for polling fallback when REALTIME broadcasts are unreliable)
     "STATUS_OUTPUTS",
     "STATUS_BUS_HA_SENSORS",
@@ -33,6 +36,7 @@ READ_TYPES = [
     "STATUS_SYSTEM",
     "STATUS_CONNECTION",
     "STATUS_PANEL",
+    "STATUS_TEMPERATURES",
 ]
 
 REALTIME_TYPES = [
@@ -45,6 +49,8 @@ REALTIME_TYPES = [
     # Include diagnostic streams so sensors don't stay Unknown
     "STATUS_CONNECTION",
     "STATUS_PANEL",
+    # Thermostat real-time status
+    "STATUS_TEMPERATURES",
 ]
 
 # Command ID counter (max 65535 to fit in 2 bytes)
@@ -895,3 +901,47 @@ async def clearFaultsMemory(websocket, login_id, pin, command_data, queue, logge
     await _execute_clear_command(
         websocket, login_id, pin, command_data, queue, logger, "FAULTS_MEMORY"
     )
+
+
+async def writeThermostatConfig(websocket, login_id, command_data, queue, logger):
+    """Send WRITE_CFG command to update chronothermostat configuration.
+
+    Sends a partial thermostat config update (mode change, setpoint, etc.)
+    to the Ksenia Lares panel. Only the fields present in thermo_cfg are sent.
+
+    Args:
+        websocket: WebSocket connection object
+        login_id: Authenticated session ID
+        command_data: Command dictionary with thermo_cfg dict and future
+        queue: Pending commands queue
+        logger: Logger instance for diagnostics
+    """
+    command_id = _get_next_cmd_id()
+
+    try:
+        payload = {
+            "ID_LOGIN": str(login_id),
+            "CFG_THERMOSTATS": [command_data["thermo_cfg"]],
+        }
+        json_cmd = _build_message("WRITE_CFG", "CFG_THERMOSTATS", payload, msg_id=command_id)
+
+        command_data["command_id"] = command_id
+        command_data["message"] = {"CMD": "WRITE_CFG", "PAYLOAD_TYPE": "CFG_THERMOSTATS"}
+        command_data["created_at"] = time.monotonic()
+        queue[command_id] = command_data
+        logger.debug(f"WRITE_CFG CFG_THERMOSTATS: {_sanitize_logmessage(json_cmd)}")
+        logger.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
+        await websocket.send(json_cmd)
+        logger.debug(
+            f"Thermostat config sent: ID={command_id}, cfg={command_data['thermo_cfg']}"
+        )
+        asyncio.create_task(wait_for_future(command_data["future"], command_id, queue, logger))
+    except websockets.exceptions.WebSocketException as e:
+        logger.error(
+            f"WebSocket error in writeThermostatConfig: {e.__class__.__name__}: {e}",
+            exc_info=True,
+        )
+        queue.pop(command_id, None)
+    except Exception as e:
+        logger.error(f"Unexpected error in writeThermostatConfig: {e}", exc_info=True)
+        queue.pop(command_id, None)

@@ -32,6 +32,7 @@ from .wscall import (
     readData,
     realtime,
     setOutput,
+    writeThermostatConfig,
     ws_login,
     ws_logout,
 )
@@ -344,6 +345,7 @@ class WebSocketManager:
             "panel": [],
             "tampers": [],
             "faults": [],
+            "thermostats": [],
         }
 
         # Connection metrics
@@ -1184,7 +1186,7 @@ class WebSocketManager:
         payload = message.get("PAYLOAD", {})
         data = self._unwrap_payload_data(payload)
 
-        if cmd == "CMD_USR_RES" or cmd == "CLEAR_RES":
+        if cmd in ("CMD_USR_RES", "CLEAR_RES", "WRITE_CFG_RES"):
             result = payload.get("RESULT") == "OK"
             await self._handle_command_response(message, success=result)
         elif cmd in ("READ_RES", "READ"):
@@ -1301,11 +1303,19 @@ class WebSocketManager:
 
         # Try fallback matching if exact ID doesn't match
         if not command_data:
+            # Try CMD_USR prefix first (covers CMD_USR_RES and CLEAR_RES)
             fallback_id, command_data = self._find_pending_by_fallback(
                 self._pending_commands, message, "CMD_USR"
             )
             if command_data:
                 message_id = fallback_id  # Use matched ID for logging and cleanup
+
+        if not command_data and cmd_type == "WRITE_CFG_RES":
+            fallback_id, command_data = self._find_pending_by_fallback(
+                self._pending_commands, message, "WRITE_CFG"
+            )
+            if command_data:
+                message_id = fallback_id
 
         if command_data:
             self._logger.debug(f"Resolving command {message_id}: {success}")
@@ -1481,6 +1491,7 @@ class WebSocketManager:
             "STATUS_PANEL": ["panel"],
             "STATUS_TAMPERS": ["tampers"],
             "STATUS_FAULTS": ["faults"],
+            "STATUS_TEMPERATURES": ["thermostats"],
         }
 
         for status_payload_type, listener_types in status_handlers.items():
@@ -1663,6 +1674,15 @@ class WebSocketManager:
                     self._ws,
                     self._loginId,
                     self._pin,
+                    command_data,
+                    self._pending_commands,
+                    self._logger,
+                )
+        elif command_type == "WRITE_THERMO_CFG":
+            async with self._ws_lock:
+                await writeThermostatConfig(
+                    self._ws,
+                    self._loginId,
                     command_data,
                     self._pending_commands,
                     self._logger,
@@ -2312,6 +2332,103 @@ class WebSocketManager:
         except Exception as e:
             self._logger.error(f"Error retrieving system info: {e}", exc_info=True)
             return []  # Graceful degradation
+
+    async def getThermostats(self):
+        """Get all chronothermostat zones with config and real-time status.
+
+        Merges three data sources:
+        - TEMPERATURES: user-configured zone names and sensor-to-thermostat links
+        - CFG_THERMOSTATS: thermostat configuration (mode, season, setpoints, schedules)
+        - STATUS_TEMPERATURES: real-time status (current temp, active model, target temp, output)
+
+        Returns:
+            List of dicts, one per active thermostat zone (ID_TH != "NA"):
+            {
+                "sensor_id": str,   # TEMPERATURES.ID (key for STATUS_TEMPERATURES)
+                "thermo_id": str,   # TEMPERATURES.ID_TH (key for CFG_THERMOSTATS)
+                "DES": str,         # Zone name
+                "TYP": str,         # Sensor type (e.g. DOMUS)
+                "cfg": dict,        # CFG_THERMOSTATS entry (may be {})
+                "status": dict,     # STATUS_TEMPERATURES entry (may be {})
+            }
+            Empty list if data is unavailable.
+        """
+        try:
+            await self.wait_for_initial_data(timeout=DATA_WAIT_TIMEOUT)
+            if not self._readData:
+                self._logger.warning(
+                    "Initial data not available for getThermostats, returning empty list"
+                )
+                return []
+
+            temp_sensors = self._readData.get("TEMPERATURES", [])
+            cfg_thermostats = self._readData.get("CFG_THERMOSTATS", [])
+            status_temps = self._readData.get("STATUS_TEMPERATURES", [])
+
+            cfg_by_id = {str(t.get("ID")): t for t in cfg_thermostats}
+            status_by_id = {str(s.get("ID")): s for s in status_temps}
+
+            result = []
+            for sensor in temp_sensors:
+                id_th = sensor.get("ID_TH", "NA")
+                if str(id_th) == "NA":
+                    continue
+                sensor_id = str(sensor.get("ID"))
+                thermo_id = str(id_th)
+                result.append(
+                    {
+                        "sensor_id": sensor_id,
+                        "thermo_id": thermo_id,
+                        "DES": sensor.get("DES") or f"Thermostat {sensor_id}",
+                        "TYP": sensor.get("TYP", ""),
+                        "cfg": cfg_by_id.get(thermo_id, {}),
+                        "status": status_by_id.get(sensor_id, {}),
+                    }
+                )
+            return result
+        except Exception as e:
+            self._logger.error(f"Error retrieving thermostats: {e}", exc_info=True)
+            return []
+
+    async def write_thermostat_config(self, thermo_id: str, changes: dict) -> bool:
+        """Update chronothermostat configuration on the panel.
+
+        Sends a WRITE_CFG command with the given partial config. Only the fields
+        present in *changes* are sent; the panel merges them with the stored config.
+
+        Args:
+            thermo_id: Thermostat ID (CFG_THERMOSTATS.ID / TEMPERATURES.ID_TH)
+            changes: Partial thermostat config dict, e.g.:
+                     {"ACT_MODE": "MAN"}
+                     {"ACT_MODE": "MAN", "WIN": {"TM": "21.0"}}
+                     {"ACT_MODE": "WEEKLY"}
+
+        Returns:
+            True if the panel acknowledged the change, False otherwise.
+        """
+        future = asyncio.Future()
+        cfg = {"ID": str(thermo_id), **changes}
+        command_data = {
+            "thermo_cfg": cfg,
+            "future": future,
+            "command_id": 0,
+            "command_type": "WRITE_THERMO_CFG",
+        }
+        await self._command_queue.put(command_data)
+        self._logger.debug(f"Thermostat config change queued: thermo_id={thermo_id}, {changes}")
+
+        try:
+            success = await asyncio.wait_for(future, timeout=COMMAND_TIMEOUT)
+            if not success:
+                self._logger.warning(
+                    f"Thermostat config write for ID {thermo_id} failed"
+                )
+            return success
+        except TimeoutError:
+            self._logger.warning(
+                f"Timeout waiting for thermostat config write for ID {thermo_id}"
+            )
+            return False
 
     async def getSystemVersion(self):
         """Get panel system version and hardware information.
