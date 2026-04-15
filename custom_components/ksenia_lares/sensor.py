@@ -672,7 +672,9 @@ class KseniaSystemTemperatureSensor(KseniaEntity, SensorEntity):
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
-            temp_data = data.get("TEMP", {})
+            if "TEMP" not in data:
+                break  # No temperature in this update; preserve current state
+            temp_data = data["TEMP"]
             if not isinstance(temp_data, dict):
                 break
             raw_val = temp_data.get(self._temp_key)
