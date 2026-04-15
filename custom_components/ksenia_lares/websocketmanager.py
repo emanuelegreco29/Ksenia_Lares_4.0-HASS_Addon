@@ -2293,7 +2293,7 @@ class WebSocketManager:
         """Get system/partition information.
 
         Returns:
-            List of system dictionaries with ID and ARM status.
+            List of system dictionaries with ID, ARM status, and TEMP data.
             Empty list if data unavailable.
         """
         try:
@@ -2305,7 +2305,10 @@ class WebSocketManager:
                 return []
 
             sysList = self._readData.get("STATUS_SYSTEM", [])
-            return [{"ID": sys.get("ID"), "ARM": sys.get("ARM", {})} for sys in sysList]
+            return [
+                {"ID": sys.get("ID"), "ARM": sys.get("ARM", {}), "TEMP": sys.get("TEMP", {})}
+                for sys in sysList
+            ]
         except Exception as e:
             self._logger.error(f"Error retrieving system info: {e}", exc_info=True)
             return []  # Graceful degradation
