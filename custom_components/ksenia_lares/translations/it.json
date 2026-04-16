@@ -169,6 +169,19 @@
         }
       }
     },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "eco": "Eco",
+              "standard": "Standard",
+              "comfort": "Comfort"
+            }
+          }
+        }
+      }
+    },
     "switch": {
       "zone_bypass": {
         "name": "Esclusione {zone_name}"
@@ -210,7 +223,8 @@
         "switch": "Interruttore",
         "light": "Luce",
         "cover": "Copertura",
-        "button": "Pulsante"
+        "button": "Pulsante",
+        "climate": "Climatizzazione (Cronotermostato)"
       }
     }
   }

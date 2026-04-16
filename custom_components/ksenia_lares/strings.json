@@ -169,6 +169,19 @@
         }
       }
     },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "eco": "Eco",
+              "standard": "Standard",
+              "comfort": "Comfort"
+            }
+          }
+        }
+      }
+    },
     "switch": {
       "zone_bypass": {
         "name": "Bypass {zone_name}"
@@ -210,7 +223,8 @@
         "switch": "Switch",
         "light": "Light",
         "cover": "Cover",
-        "button": "Button"
+        "button": "Button",
+        "climate": "Climate (Chronothermostat)"
       }
     }
   }

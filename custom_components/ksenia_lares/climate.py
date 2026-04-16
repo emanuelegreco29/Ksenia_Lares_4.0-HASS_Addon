@@ -30,6 +30,29 @@ from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
 
+# Preset mode names — correspond to T1/T2/T3 thermostat thresholds
+PRESET_ECO = "eco"
+PRESET_STANDARD = "standard"
+PRESET_COMFORT = "comfort"
+
+# Maps STATUS_TEMPERATURES.THERM.TEMP_THR.T → HA preset name
+_THRESHOLD_TO_PRESET: dict[str, str] = {
+    "T1": PRESET_ECO,
+    "T2": PRESET_STANDARD,
+    "T3": PRESET_COMFORT,
+}
+
+# Maps HA preset name → CFG_THERMOSTATS season setpoint key
+_PRESET_TO_SETPOINT: dict[str, str] = {
+    PRESET_ECO: "T1",
+    PRESET_STANDARD: "T2",
+    PRESET_COMFORT: "T3",
+}
+
+# --- Mode tables ---
+# NOTE: these tables return the *base* mode without season context.
+# hvac_mode must promote HEAT → COOL when ACT_SEA=SUM.
+
 # Thermostat mode mappings (CFG_THERMOSTATS.ACT_MODE → HA HVACMode)
 _CFG_MODE_TO_HVAC: dict[str, HVACMode] = {
     "OFF": HVACMode.OFF,
@@ -61,10 +84,17 @@ _ACTIVE_MODEL_TO_HVAC: dict[str, HVACMode] = {
 _HVAC_TO_CFG_MODE: dict[HVACMode, str] = {
     HVACMode.OFF: "OFF",
     HVACMode.HEAT: "MAN",
+    HVACMode.COOL: "MAN",
     HVACMode.AUTO: "WEEKLY",
 }
 
-_SUPPORTED_HVAC_MODES = [HVACMode.OFF, HVACMode.HEAT, HVACMode.AUTO]
+# HA HVACMode → Ksenia ACT_SEA override (None = leave season unchanged)
+_HVAC_TO_CFG_SEASON: dict[HVACMode, str | None] = {
+    HVACMode.HEAT: "WIN",
+    HVACMode.COOL: "SUM",
+}
+
+_SUPPORTED_HVAC_MODES = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.AUTO]
 
 MIN_TEMP = 5.0
 MAX_TEMP = 35.0
@@ -112,12 +142,16 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
     """
 
     _attr_has_entity_name = True
+    _attr_translation_key = "thermostat"
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_hvac_modes = _SUPPORTED_HVAC_MODES
     _attr_min_temp = MIN_TEMP
     _attr_max_temp = MAX_TEMP
     _attr_target_temperature_step = TEMP_STEP
-    _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
+    _attr_supported_features = (
+        ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
+    )
+    _attr_preset_modes = [PRESET_ECO, PRESET_STANDARD, PRESET_COMFORT]
 
     def __init__(self, ws_manager, thermo_data: dict, device_info, base_id: str):
         """Initialise from merged thermostat data returned by getThermostats()."""
@@ -184,14 +218,25 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
             return None
 
     @property
+    def _active_season(self) -> str:
+        """Return current season ('WIN' or 'SUM') from status or config."""
+        therm = self._status_data.get("THERM", {})
+        return therm.get("ACT_SEA") or self._cfg_data.get("ACT_SEA", "WIN")
+
+    @property
     def hvac_mode(self) -> HVACMode:
         therm = self._status_data.get("THERM", {})
         active_model = therm.get("ACT_MODEL", "NA")
         if active_model and active_model != "NA":
-            return _ACTIVE_MODEL_TO_HVAC.get(active_model, HVACMode.OFF)
-        # Fall back to configured mode when status is not yet available
-        cfg_mode = self._cfg_data.get("ACT_MODE", "OFF")
-        return _CFG_MODE_TO_HVAC.get(cfg_mode, HVACMode.OFF)
+            base = _ACTIVE_MODEL_TO_HVAC.get(active_model, HVACMode.OFF)
+        else:
+            # Fall back to configured mode when status is not yet available
+            cfg_mode = self._cfg_data.get("ACT_MODE", "OFF")
+            base = _CFG_MODE_TO_HVAC.get(cfg_mode, HVACMode.OFF)
+        # Distinguish heating from cooling for manual operation
+        if base == HVACMode.HEAT and self._active_season == "SUM":
+            return HVACMode.COOL
+        return base
 
     @property
     def hvac_action(self) -> HVACAction | None:
@@ -201,10 +246,17 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
         therm = self._status_data.get("THERM", {})
         out_status = therm.get("OUT_STATUS", "NA")
         if out_status == "ON":
-            return HVACAction.HEATING
+            return HVACAction.COOLING if self._active_season == "SUM" else HVACAction.HEATING
         if out_status == "OFF":
             return HVACAction.IDLE
         return None
+
+    @property
+    def preset_mode(self) -> str | None:
+        """Return active preset based on the current threshold type (T1/T2/T3)."""
+        therm = self._status_data.get("THERM", {})
+        thr = therm.get("TEMP_THR", {})
+        return _THRESHOLD_TO_PRESET.get(thr.get("T", ""))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -230,23 +282,34 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
         return {k: v for k, v in attrs.items() if v is not None}
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Change the thermostat operating mode."""
+        """Change the thermostat operating mode.
+
+        HEAT → ACT_MODE=MAN, ACT_SEA=WIN
+        COOL → ACT_MODE=MAN, ACT_SEA=SUM
+        AUTO → ACT_MODE=WEEKLY (season left unchanged)
+        OFF  → ACT_MODE=OFF
+        """
         ksenia_mode = _HVAC_TO_CFG_MODE.get(hvac_mode)
         if ksenia_mode is None:
             _LOGGER.warning("Unsupported HVAC mode: %s", hvac_mode)
             return
+
+        changes: dict[str, Any] = {"ACT_MODE": ksenia_mode}
+        ksenia_season = _HVAC_TO_CFG_SEASON.get(hvac_mode)
+        if ksenia_season is not None:
+            changes["ACT_SEA"] = ksenia_season
+
         _LOGGER.debug(
-            "[thermostat %s] Setting HVAC mode %s → ACT_MODE=%s",
+            "[thermostat %s] Setting HVAC mode %s → %s",
             self._thermo_id,
             hvac_mode,
-            ksenia_mode,
+            changes,
         )
-        success = await self.ws_manager.write_thermostat_config(
-            self._thermo_id, {"ACT_MODE": ksenia_mode}
-        )
+        success = await self.ws_manager.write_thermostat_config(self._thermo_id, changes)
         if success:
-            # Optimistically update cfg so hvac_mode fallback is correct
             self._cfg_data["ACT_MODE"] = ksenia_mode
+            if ksenia_season is not None:
+                self._cfg_data["ACT_SEA"] = ksenia_season
             self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
@@ -257,9 +320,7 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
 
         temperature = round(float(temperature) * 2) / 2  # round to 0.5
 
-        # Determine active season to update the correct setpoint
-        therm = self._status_data.get("THERM", {})
-        season = therm.get("ACT_SEA") or self._cfg_data.get("ACT_SEA") or "WIN"
+        season = self._active_season
 
         _LOGGER.debug(
             "[thermostat %s] Setting temperature %.1f°C (season=%s)",
@@ -278,4 +339,49 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
             season_cfg = dict(self._cfg_data.get(season, {}))
             season_cfg["TM"] = str(temperature)
             self._cfg_data[season] = season_cfg
+            self.async_write_ha_state()
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Apply a named temperature preset (eco=T1, standard=T2, comfort=T3).
+
+        Looks up the stored T1/T2/T3 setpoint for the active season and writes it
+        as the manual temperature (TM), switching the thermostat to MAN mode.
+        """
+        setpoint_key = _PRESET_TO_SETPOINT.get(preset_mode)
+        if setpoint_key is None:
+            _LOGGER.warning("[thermostat %s] Unknown preset mode: %s", self._thermo_id, preset_mode)
+            return
+
+        season = self._active_season
+        season_cfg = self._cfg_data.get(season, {})
+        setpoint_val = season_cfg.get(setpoint_key)
+
+        if setpoint_val is None:
+            _LOGGER.warning(
+                "[thermostat %s] Setpoint %s not available for season %s",
+                self._thermo_id,
+                setpoint_key,
+                season,
+            )
+            return
+
+        _LOGGER.debug(
+            "[thermostat %s] Setting preset '%s' → %s=%s (season=%s)",
+            self._thermo_id,
+            preset_mode,
+            setpoint_key,
+            setpoint_val,
+            season,
+        )
+
+        changes: dict[str, Any] = {
+            "ACT_MODE": "MAN",
+            season: {"TM": str(setpoint_val)},
+        }
+        success = await self.ws_manager.write_thermostat_config(self._thermo_id, changes)
+        if success:
+            self._cfg_data["ACT_MODE"] = "MAN"
+            updated_season_cfg = dict(self._cfg_data.get(season, {}))
+            updated_season_cfg["TM"] = str(setpoint_val)
+            self._cfg_data[season] = updated_season_cfg
             self.async_write_ha_state()
