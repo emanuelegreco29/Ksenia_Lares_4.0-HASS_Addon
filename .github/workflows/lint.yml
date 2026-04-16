@@ -26,6 +26,9 @@ on:
       - ".github/workflows/**"
       - "!custom_components/ksenia_lares/manifest.json"  # Exclude manifest.json to avoid triggering on version updates
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint & Code Quality
