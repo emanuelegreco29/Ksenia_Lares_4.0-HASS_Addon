@@ -2,6 +2,9 @@
 name: Test Suite
 # yamllint disable rule:truthy
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
