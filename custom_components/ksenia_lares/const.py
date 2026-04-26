@@ -24,6 +24,7 @@ DEFAULT_PLATFORMS = [
     "binary_sensor",
     "button",
     "alarm_control_panel",
+    "climate",
 ]
 
 # Categories of zones that should be treated as binary sensors (shared by sensor.py and binary_sensor.py)

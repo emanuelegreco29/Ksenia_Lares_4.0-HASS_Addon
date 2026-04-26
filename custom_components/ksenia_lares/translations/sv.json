@@ -169,6 +169,19 @@
         }
       }
     },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "eco": "Eco",
+              "standard": "Standard",
+              "comfort": "Komfort"
+            }
+          }
+        }
+      }
+    },
     "switch": {
       "zone_bypass": {
         "name": "Förbikoppling {zone_name}"
@@ -210,7 +223,8 @@
         "switch": "Brytare",
         "light": "Ljus",
         "cover": "Lucka",
-        "button": "Knapp"
+        "button": "Knapp",
+        "climate": "Klimat (Kronotermostaten)"
       }
     }
   }
