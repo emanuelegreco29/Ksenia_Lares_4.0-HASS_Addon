@@ -932,9 +932,7 @@ async def writeThermostatConfig(websocket, login_id, command_data, queue, logger
         logger.debug(f"WRITE_CFG CFG_THERMOSTATS: {_sanitize_logmessage(json_cmd)}")
         logger.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
         await websocket.send(json_cmd)
-        logger.debug(
-            f"Thermostat config sent: ID={command_id}, cfg={command_data['thermo_cfg']}"
-        )
+        logger.debug(f"Thermostat config sent: ID={command_id}, cfg={command_data['thermo_cfg']}")
         asyncio.create_task(wait_for_future(command_data["future"], command_id, queue, logger))
     except websockets.exceptions.WebSocketException as e:
         logger.error(

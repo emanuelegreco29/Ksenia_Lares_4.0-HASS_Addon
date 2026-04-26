@@ -116,8 +116,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         _LOGGER.debug("Found %d thermostat zones", len(thermostats))
 
         entities = [
-            KseniaClimateEntity(ws_manager, thermo, device_info, base_id)
-            for thermo in thermostats
+            KseniaClimateEntity(ws_manager, thermo, device_info, base_id) for thermo in thermostats
         ]
 
         if entities:

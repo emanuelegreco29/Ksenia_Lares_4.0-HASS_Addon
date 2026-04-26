@@ -2420,14 +2420,10 @@ class WebSocketManager:
         try:
             success = await asyncio.wait_for(future, timeout=COMMAND_TIMEOUT)
             if not success:
-                self._logger.warning(
-                    f"Thermostat config write for ID {thermo_id} failed"
-                )
+                self._logger.warning(f"Thermostat config write for ID {thermo_id} failed")
             return success
         except TimeoutError:
-            self._logger.warning(
-                f"Timeout waiting for thermostat config write for ID {thermo_id}"
-            )
+            self._logger.warning(f"Timeout waiting for thermostat config write for ID {thermo_id}")
             return False
 
     async def getSystemVersion(self):
