@@ -14,6 +14,7 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 | Device | Compatibility |
 |:-----------------------|:------------------------------------:|
 | Alarm System | ✅ |
+| Climate | ✅ |
 | Lights | ✅ |
 | Roller Blinds | ✅ |
 | Window Shutters | ✅ |
