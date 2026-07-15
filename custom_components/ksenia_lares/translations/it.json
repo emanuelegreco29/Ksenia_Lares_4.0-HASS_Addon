@@ -9,6 +9,7 @@
           "pin": "PIN",
           "port": "Porta",
           "ssl": "SSL",
+          "brand": "Marca del dispositivo",
           "platforms": "Piattaforme da includere"
         }
       },
@@ -20,6 +21,7 @@
           "pin": "PIN",
           "port": "Porta",
           "ssl": "SSL",
+          "brand": "Marca del dispositivo",
           "platforms": "Piattaforme da includere"
         }
       }
@@ -225,6 +227,12 @@
         "cover": "Copertura",
         "button": "Pulsante",
         "climate": "Climatizzazione (Cronotermostato)"
+      }
+    },
+    "brand": {
+      "options": {
+        "ksenia": "Ksenia",
+        "bticino": "BTicino"
       }
     }
   }

@@ -9,6 +9,7 @@
           "pin": "PIN",
           "port": "Port",
           "ssl": "SSL",
+          "brand": "Enhetsmärke",
           "platforms": "Plattformar att inkludera"
         }
       },
@@ -20,6 +21,7 @@
           "pin": "PIN",
           "port": "Port",
           "ssl": "SSL",
+          "brand": "Enhetsmärke",
           "platforms": "Plattformar att inkludera"
         }
       }
@@ -225,6 +227,12 @@
         "cover": "Lucka",
         "button": "Knapp",
         "climate": "Klimat (Kronotermostaten)"
+      }
+    },
+    "brand": {
+      "options": {
+        "ksenia": "Ksenia",
+        "bticino": "BTicino"
       }
     }
   }

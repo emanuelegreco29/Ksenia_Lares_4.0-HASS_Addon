@@ -11,6 +11,7 @@ CONF_PORT = "port"
 CONF_PIN = "pin"
 CONF_SSL = "ssl"
 CONF_PLATFORMS = "platforms"
+CONF_BRAND = "brand"
 
 # Defaults
 DEFAULT_PORT = 443
@@ -180,3 +181,18 @@ class ClearCommand(StrEnum):
     COMMUNICATIONS = "communications"
     ALARM_CYCLES = "cycles_or_memories"
     FAULTS_MEMORY = "faults_memory"
+
+
+class DeviceBrand(StrEnum):
+    """Device brand, used to select TLS settings for the WebSocket connection.
+
+    BTicino panels (e.g. 4200C) are Ksenia Lares boards with different firmware
+    that only accepts legacy ciphers (AES128-SHA) at a relaxed OpenSSL security
+    level; Ksenia-branded panels use the default TLS settings.
+    """
+
+    KSENIA = "ksenia"
+    BTICINO = "bticino"
+
+
+DEFAULT_BRAND = DeviceBrand.KSENIA

@@ -9,19 +9,24 @@ from homeassistant import config_entries
 from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
 from .const import (
+    CONF_BRAND,
     CONF_HOST,
     CONF_PIN,
     CONF_PLATFORMS,
     CONF_PORT,
     CONF_SSL,
+    DEFAULT_BRAND,
     DEFAULT_PLATFORMS,
     DEFAULT_PORT,
     DEFAULT_SSL,
     DOMAIN,
+    DeviceBrand,
 )
 from .websocketmanager import AuthenticationError, WebSocketManager
 
 _LOGGER = logging.getLogger(__name__)
+
+_BRAND_OPTIONS = [brand.value for brand in DeviceBrand]
 
 # Validation schema
 _CONFIG_SCHEMA = vol.Schema(
@@ -30,6 +35,7 @@ _CONFIG_SCHEMA = vol.Schema(
         vol.Required(CONF_PIN): str,
         vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
         vol.Required(CONF_SSL, default=DEFAULT_SSL): bool,
+        vol.Required(CONF_BRAND, default=DEFAULT_BRAND): vol.In(_BRAND_OPTIONS),
         vol.Required(CONF_PLATFORMS, default=DEFAULT_PLATFORMS): cv.multi_select(DEFAULT_PLATFORMS),
     }
 )
@@ -54,6 +60,7 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 user_input.get(CONF_PORT, DEFAULT_PORT),
                 _LOGGER,
                 max_retries=1,
+                brand=user_input.get(CONF_BRAND, DEFAULT_BRAND),
             )
             if user_input.get(CONF_SSL, DEFAULT_SSL):
                 await ws_manager.connectSecure()
@@ -101,6 +108,16 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SSL,
                 default=user_input.get(CONF_SSL) if user_input else DEFAULT_SSL,
             ): bool,
+            vol.Required(
+                CONF_BRAND,
+                default=user_input.get(CONF_BRAND) if user_input else DEFAULT_BRAND,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=_BRAND_OPTIONS,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key="brand",
+                )
+            ),
             vol.Required(
                 CONF_PLATFORMS,
                 default=user_input.get(CONF_PLATFORMS) if user_input else DEFAULT_PLATFORMS,
@@ -159,6 +176,16 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     else config_entry.data.get("SSL", DEFAULT_SSL)
                 ),
             ): bool,
+            vol.Required(
+                CONF_BRAND,
+                default=config_entry.data.get(CONF_BRAND, DEFAULT_BRAND),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=_BRAND_OPTIONS,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key="brand",
+                )
+            ),
             vol.Required(
                 CONF_PLATFORMS,
                 default=config_entry.data.get(CONF_PLATFORMS)

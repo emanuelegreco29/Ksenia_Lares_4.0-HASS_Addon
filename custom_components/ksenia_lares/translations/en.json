@@ -9,6 +9,7 @@
           "pin": "Pin",
           "port": "Port",
           "ssl": "SSL",
+          "brand": "Device brand",
           "platforms": "Platforms to include"
         }
       },
@@ -20,6 +21,7 @@
           "pin": "Pin",
           "port": "Port",
           "ssl": "SSL",
+          "brand": "Device brand",
           "platforms": "Platforms to include"
         }
       }
@@ -225,6 +227,12 @@
         "cover": "Cover",
         "button": "Button",
         "climate": "Climate (Chronothermostat)"
+      }
+    },
+    "brand": {
+      "options": {
+        "ksenia": "Ksenia",
+        "bticino": "BTicino"
       }
     }
   }

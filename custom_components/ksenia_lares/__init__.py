@@ -11,11 +11,13 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 
 from .const import (
     BINARY_ZONE_CATS,
+    CONF_BRAND,
     CONF_HOST,
     CONF_PIN,
     CONF_PLATFORMS,
     CONF_PORT,
     CONF_SSL,
+    DEFAULT_BRAND,
     DEFAULT_PLATFORMS,
     DOMAIN,
     SETUP_TIMEOUT,
@@ -263,7 +265,7 @@ def _cleanup_ws_manager(hass) -> None:
         hass.data[DOMAIN].pop("ws_manager", None)
 
 
-async def _setup_connection(hass, entry, ip, port, pin, use_ssl) -> WebSocketManager:
+async def _setup_connection(hass, entry, ip, port, pin, use_ssl, brand) -> WebSocketManager:
     """Create and connect a WebSocketManager, seeding hass.data.
 
     Raises ConfigEntryNotReady on connection failure so HA retries with backoff.
@@ -285,6 +287,7 @@ async def _setup_connection(hass, entry, ip, port, pin, use_ssl) -> WebSocketMan
         _LOGGER,
         max_retries=3,
         on_prolonged_connection_loss=_on_prolonged_connection_loss,
+        brand=brand,
     )
     hass.data.setdefault(DOMAIN, {})["ws_manager"] = ws_manager
     try:
@@ -337,12 +340,13 @@ async def async_setup_entry(hass, entry):
         pin = entry.data.get(CONF_PIN) or entry.data.get("Pin")
         port = entry.data.get(CONF_PORT) or entry.data.get("Port", 443)
         use_ssl = entry.options.get(CONF_SSL, entry.data.get(CONF_SSL, entry.data.get("SSL", True)))
+        brand = entry.data.get(CONF_BRAND, DEFAULT_BRAND)
 
         if not ip or not pin:
             _LOGGER.error("Missing required configuration: host and/or pin not found")
             return False
 
-        ws_manager = await _setup_connection(hass, entry, ip, port, pin, use_ssl)
+        ws_manager = await _setup_connection(hass, entry, ip, port, pin, use_ssl, brand)
 
         system_info = await ws_manager.getSystemVersion()
         device_info = build_device_info(ip, port, use_ssl, system_info)

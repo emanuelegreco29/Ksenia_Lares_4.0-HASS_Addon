@@ -21,6 +21,7 @@ import websockets
 from websockets.asyncio.client import connect as ws_connect
 from websockets.typing import Subprotocol
 
+from .const import DEFAULT_BRAND, DeviceBrand
 from .wscall import (
     bypassZone,
     clearCommunications,
@@ -170,12 +171,7 @@ class WebSocketManager:
                 else f"ws://{self._ip}:{self._port}/KseniaWsock"
             )
             # Create fresh SSL context if secure connection is used
-            if self._connSecure:
-                ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
-                ssl_ctx.verify_mode = ssl.CERT_NONE
-                ssl_ctx.options |= 0x4  # ssl.OP_LEGACY_SERVER_CONNECT
-            else:
-                ssl_ctx = None
+            ssl_ctx = self._build_ssl_context() if self._connSecure else None
 
             self._logger.debug(f"Opening temporary connection for scenario {scenario_id} execution")
 
@@ -268,6 +264,7 @@ class WebSocketManager:
         logger,
         max_retries=None,
         on_prolonged_connection_loss: Callable[[], Awaitable[None] | None] | None = None,
+        brand: str = DEFAULT_BRAND,
     ):
         """Initialize WebSocket manager.
 
@@ -279,12 +276,16 @@ class WebSocketManager:
             max_retries: Maximum number of connection retries (default: MAX_RETRIES=20)
             on_prolonged_connection_loss: Optional async callback invoked when runtime
                 reconnection is exhausted and manager enters unrecoverable state.
+            brand: Device brand ("ksenia" or "bticino"), selects TLS settings used
+                for secure connections. BTicino panels (e.g. 4200C) need relaxed
+                cipher settings that plain Ksenia panels don't require.
         """
         # Connection settings
         self._ip = ip
         self._port = port
         self._pin = pin
         self._logger = logger
+        self._brand = brand
 
         # WebSocket state
         self._ws = None
@@ -601,6 +602,22 @@ class WebSocketManager:
         """
         await self._connect_with_uri(f"ws://{self._ip}:{self._port}/KseniaWsock", ssl=None)
 
+    def _build_ssl_context(self) -> ssl.SSLContext:
+        """Build a fresh SSL context for the secure WebSocket connection.
+
+        A fresh context is created for each connection attempt to avoid state
+        corruption. BTicino panels (e.g. 4200C) only offer legacy ciphers
+        (AES128-SHA) and need the OpenSSL security level relaxed, or the TLS
+        handshake fails before the connection can be established; Ksenia-branded
+        panels connect fine with the default security level.
+        """
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        ssl_ctx.options |= 0x4  # ssl.OP_LEGACY_SERVER_CONNECT
+        if self._brand == DeviceBrand.BTICINO:
+            ssl_ctx.set_ciphers("ALL@SECLEVEL=1")
+        return ssl_ctx
+
     async def connectSecure(self):
         """Establish SSL/TLS encrypted WebSocket connection to panel.
 
@@ -610,10 +627,7 @@ class WebSocketManager:
         Raises:
             Logs critical error if maximum retries exceeded.
         """
-        # Create fresh SSL context for each connection attempt to avoid state corruption
-        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
-        ssl_ctx.verify_mode = ssl.CERT_NONE
-        ssl_ctx.options |= 0x4  # ssl.OP_LEGACY_SERVER_CONNECT
+        ssl_ctx = self._build_ssl_context()
         await self._connect_with_uri(f"wss://{self._ip}:{self._port}/KseniaWsock", ssl=ssl_ctx)
 
     async def _connect_with_uri(self, uri, ssl):
