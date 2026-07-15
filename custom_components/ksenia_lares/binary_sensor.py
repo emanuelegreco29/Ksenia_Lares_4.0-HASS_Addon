@@ -27,30 +27,48 @@ _DEVICE_CLASS_MAP = {
     "smoke": BinarySensorDeviceClass.SMOKE,
     "seism": BinarySensorDeviceClass.VIBRATION,
     "siren": BinarySensorDeviceClass.SOUND,
+    "thermo_output": BinarySensorDeviceClass.HEAT,
 }
+
+
+def _hidden_output_sensor_type(switch: dict) -> str:
+    """Classify a hidden (CNV=H) output for binary_sensor purposes.
+
+    Hidden outputs are not directly controllable (see is_hidden_or_siren), but
+    they aren't all sirens: CAT=THERMO outputs are heating/cooling actuators
+    driven by a thermostat (e.g. an underfloor heating relay), and reporting
+    them as BinarySensorDeviceClass.SOUND is misleading. Everything else
+    hidden keeps the historical siren assumption.
+    """
+    if (switch.get("CAT") or "").upper() == "THERMO":
+        return "thermo_output"
+    return "siren"
 
 
 def _discover_sirens(
     switches, ws_manager, device_info, base_id, async_add_entities, discovered_ids
 ):
-    """Create siren binary sensor entities from newly discovered switches.
+    """Create binary sensor entities for hidden (siren/thermo output) switches.
 
     Returns the list of new entities added.
     """
     new_entities = []
     for switch in switches:
-        unique_id = f"siren_{switch.get('ID')}"
+        sensor_type = _hidden_output_sensor_type(switch)
+        unique_id = f"{sensor_type}_{switch.get('ID')}"
         if unique_id in discovered_ids:
             continue
         name = get_entity_name(switch, switch.get("ID"), "")
         if is_hidden_or_siren(switch, name):
             new_entities.append(
-                KseniaSirenBinarySensorEntity(ws_manager, switch, device_info, base_id)
+                KseniaSirenBinarySensorEntity(
+                    ws_manager, switch, device_info, base_id, sensor_type=sensor_type
+                )
             )
             discovered_ids.add(unique_id)
 
     if new_entities:
-        _LOGGER.info("Discovered %d siren binary sensor(s)", len(new_entities))
+        _LOGGER.info("Discovered %d hidden output binary sensor(s)", len(new_entities))
         async_add_entities(new_entities, update_before_add=True)
     return new_entities
 
@@ -161,7 +179,7 @@ def _parse_is_on(sensor_type: str, data: dict) -> bool | None:
 
     Returns True (on/open/detected), False (off/closed/clear), or None (unknown).
     """
-    if sensor_type == "siren":
+    if sensor_type in ("siren", "thermo_output"):
         sta = data.get("STA", "OFF")
         return sta.upper() == "ON"
     sta = data.get("STA")
@@ -220,23 +238,25 @@ class KseniaZoneBinarySensorEntity(KseniaEntity, BinarySensorEntity):
             break
 
 
-# --- Siren Binary Sensor ---
+# --- Siren / hidden-output Binary Sensor ---
 class KseniaSirenBinarySensorEntity(KseniaEntity, BinarySensorEntity):
-    """Binary sensor entity for Ksenia Lares sirens."""
+    """Binary sensor entity for Ksenia Lares hidden outputs (sirens, thermostat-driven relays)."""
 
     _attr_has_entity_name = True
 
-    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
+    def __init__(
+        self, ws_manager, sensor_data, device_info=None, base_id=None, sensor_type="siren"
+    ):
         self.ws_manager = ws_manager
         self._id = sensor_data["ID"]
-        self._sensor_type = "siren"
+        self._sensor_type = sensor_type
         self._base_id = base_id or ws_manager.ip
         self._device_info = device_info
         self._raw_data = dict(sensor_data)
-        self._attr_device_class = _DEVICE_CLASS_MAP.get("siren")
-        self._is_on = _parse_is_on("siren", sensor_data)
+        self._attr_device_class = _DEVICE_CLASS_MAP.get(sensor_type)
+        self._is_on = _parse_is_on(sensor_type, sensor_data)
         label = get_entity_name(
-            sensor_data, sensor_data.get("ID"), f"Siren {sensor_data.get('ID')}"
+            sensor_data, sensor_data.get("ID"), f"Output {sensor_data.get('ID')}"
         )
         self._extra_attributes = {
             "ID": sensor_data.get("ID"),
@@ -249,8 +269,8 @@ class KseniaSirenBinarySensorEntity(KseniaEntity, BinarySensorEntity):
 
     @property
     def unique_id(self):
-        """Return unique ID for siren binary sensor."""
-        return build_unique_id(self._base_id, "siren", self._id)
+        """Return unique ID for this hidden-output binary sensor."""
+        return build_unique_id(self._base_id, self._sensor_type, self._id)
 
     @property
     def is_on(self) -> bool | None:
@@ -271,8 +291,8 @@ class KseniaSirenBinarySensorEntity(KseniaEntity, BinarySensorEntity):
         for data in data_list:
             if str(data.get("ID")) != str(self._id):
                 continue
-            _LOGGER.debug("[siren] Entity %s update: %s", self._id, data)
-            new_state = _parse_is_on("siren", data)
+            _LOGGER.debug("[%s] Entity %s update: %s", self._sensor_type, self._id, data)
+            new_state = _parse_is_on(self._sensor_type, data)
             if new_state is not None:
                 self._is_on = new_state
             self._extra_attributes = {

@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import (
     LIGHT_LUX,
     PERCENTAGE,
@@ -261,11 +261,19 @@ class KseniaZoneSensor(KseniaSensorEntity):
 
 
 class KseniaPowerlineSensor(KseniaSensorEntity):
-    """Sensor entity for power line monitoring."""
+    """Sensor entity for power line monitoring (instantaneous power, in watts).
+
+    Ksenia's POWER_LINES payload only reports instantaneous power (PCONS/PPROD);
+    it has no cumulative energy counter. Reporting state_class MEASUREMENT (and
+    not hiding the entity as diagnostic) makes it a regular sensor that HA's
+    Energy dashboard "individual devices" flow can pick up directly, offering
+    to auto-create a Riemann-sum-integral helper to derive true kWh consumption
+    from it.
+    """
 
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:lightning-bolt-outline"
 
     def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
@@ -278,10 +286,8 @@ class KseniaPowerlineSensor(KseniaSensorEntity):
         """Parse power data and set state/attributes."""
         pcons_val = self._parse_power_float(data.get("PCONS"), "PCONS")
         pprod_val = self._parse_power_float(data.get("PPROD"), "PPROD")
-        consumption_kwh = round(pcons_val / 1000, 3) if pcons_val is not None else None
         self._state = pcons_val
         self._attributes = {
-            "Consumption": consumption_kwh,
             "Production": pprod_val,
             "Status": data.get("STATUS", "Unknown"),
         }

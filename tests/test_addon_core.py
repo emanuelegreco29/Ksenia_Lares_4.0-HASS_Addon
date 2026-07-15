@@ -379,6 +379,37 @@ def test_ksenia_switch_entity_siren_not_added(monkeypatch):
 
 
 @pytest.mark.asyncio
+def test_binary_sensor_thermo_output_not_classified_as_siren():
+    """CAT=THERMO hidden outputs (heating relays) must not get device_class SOUND.
+
+    Regression test: a thermostat-driven relay (e.g. underfloor heating output)
+    was previously lumped in with real sirens and reported with
+    BinarySensorDeviceClass.SOUND, which is misleading to users.
+    """
+    from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+    from custom_components.ksenia_lares import binary_sensor
+
+    real_siren = {"ID": "1", "DES": "Outdoor siren", "CNV": "H", "CAT": "GEN", "STA": "OFF"}
+    thermo_relay = {"ID": "8", "DES": "CDZ INTERRATO", "CNV": "H", "CAT": "THERMO", "STA": "ON"}
+
+    ws_manager = MagicMock()
+    async_add_entities = MagicMock()
+    discovered_ids: set[str] = set()
+
+    binary_sensor._discover_sirens(
+        [real_siren, thermo_relay], ws_manager, {}, "test_base", async_add_entities, discovered_ids
+    )
+
+    added_entities = async_add_entities.call_args[0][0]
+    by_id = {e._id: e for e in added_entities}
+
+    assert by_id["1"].device_class == BinarySensorDeviceClass.SOUND
+    assert by_id["8"].device_class == BinarySensorDeviceClass.HEAT
+    assert by_id["8"].device_class != BinarySensorDeviceClass.SOUND
+    assert by_id["8"].is_on is True
+
+
+@pytest.mark.asyncio
 def test_ksenia_switch_entity_non_siren_enabled(monkeypatch):
     """Test that non-siren, non-hidden switches are added and enabled by default (unit test for _add_output_switches)."""
     from custom_components.ksenia_lares import switch
@@ -518,6 +549,28 @@ async def test_ksenia_sensor_entity_initialization():
     assert entity._base_name == "Zone 1"
     assert entity._sensor_type == "zones"
     assert entity.ws_manager is ws_manager
+
+
+@pytest.mark.asyncio
+async def test_ksenia_powerline_sensor_not_diagnostic_and_has_state_class():
+    """Power line sensors must be regular sensors (not diagnostic) with a state_class.
+
+    Regression test: entity_category=DIAGNOSTIC hid these from HA's Energy
+    dashboard "individual devices" picker, and without a state_class they were
+    not eligible for the picker's power-to-energy (Riemann sum) helper either,
+    even though the panel reports usable instantaneous power (PCONS/PPROD).
+    """
+    from homeassistant.components.sensor import SensorStateClass
+    from custom_components.ksenia_lares.sensor import KseniaPowerlineSensor
+
+    ws_manager = MagicMock()
+    sensor_data = {"ID": "1", "DES": "Linea cucina L1 - Induz Forno", "PCONS": "150.0", "PPROD": "0.0"}
+
+    entity = KseniaPowerlineSensor(ws_manager, sensor_data)
+
+    assert entity.entity_category is None
+    assert entity._attr_state_class == SensorStateClass.MEASUREMENT
+    assert entity.native_value == 150.0
 
 
 @pytest.mark.asyncio
