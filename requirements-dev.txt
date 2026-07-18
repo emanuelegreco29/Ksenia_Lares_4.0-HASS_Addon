@@ -22,7 +22,7 @@ uvicorn[standard]==0.27.0
 
 # Dependencies
 voluptuous>=0.13.0
-websockets>=11.0.0
+websockets>=13.0
 pyyaml>=6.0
-homeassistant>=2024.1.0
+homeassistant>=2026.7.2
 

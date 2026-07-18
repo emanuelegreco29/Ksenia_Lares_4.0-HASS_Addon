@@ -19,7 +19,6 @@ from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACAction, HVACMode
-
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 
 from .const import DOMAIN
@@ -198,7 +197,7 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
             return None
         try:
             return float(raw)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
 
     @property
@@ -210,7 +209,7 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
             return None
         try:
             return float(val)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
 
     @property

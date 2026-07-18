@@ -103,7 +103,7 @@ class KseniaRollEntity(KseniaEntity, CoverEntity):
                     break
                 try:
                     new_pos = int(data["POS"])
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     new_pos = None
                 # If there's a recent pending command, keep the local state
                 if self._pending_command is not None:
