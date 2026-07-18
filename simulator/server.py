@@ -69,6 +69,7 @@ PARTITION_LABEL_VOLUME = "Volume/Motion Detection"
 SCENARIO_LABEL_DISARM = "Disarm"
 SCENARIO_LABEL_ARM_AWAY = "Arm Away"
 SCENARIO_LABEL_ARM_HOME = "Arm Home"
+SCENARIO_LABEL_ARM_MOTION = "ARM MOTION"
 
 # Tamper status codes
 TAMPER_OK = "OK"
@@ -865,6 +866,14 @@ async def execute_scenario(sid: str):
             {PARTITION_1: ARM_STATE_DELAYED_ARM, PARTITION_2: ARM_STATE_DISARMED},
             ([PARTITION_1], "P", "P"),  # Args for handle_delayed_arm
         ),
+        "4": (
+            "PARM",
+            LOG_EVENT_AREA_ARMED,
+            "P_OUT",
+            "P",
+            {PARTITION_1: ARM_STATE_DISARMED, PARTITION_2: ARM_STATE_DELAYED_ARM},
+            ([PARTITION_2], "P", "P"),  # Args for handle_delayed_arm
+        ),
     }
 
     if sid not in scenarios:
@@ -1086,6 +1095,7 @@ def initial_read_payload(types: List[str]) -> Dict[str, Any]:
                 {"ID": "1", "DES": SCENARIO_LABEL_DISARM, "PIN": "P", "CAT": "DISARM"},
                 {"ID": "2", "DES": SCENARIO_LABEL_ARM_AWAY, "PIN": "P", "CAT": "ARM"},
                 {"ID": "3", "DES": SCENARIO_LABEL_ARM_HOME, "PIN": "P", "CAT": "PARTIAL"},
+                {"ID": "4", "DES": SCENARIO_LABEL_ARM_MOTION, "PIN": "P", "CAT": "PARTIAL"},
             ]
         elif t == "STATUS_ZONES":
             # Return runtime zone state (includes BYP field)
@@ -1175,6 +1185,7 @@ async def home(request: Request) -> str:
         {"ID": "1", "DES": SCENARIO_LABEL_DISARM},
         {"ID": "2", "DES": SCENARIO_LABEL_ARM_AWAY},
         {"ID": "3", "DES": SCENARIO_LABEL_ARM_HOME},
+        {"ID": "4", "DES": SCENARIO_LABEL_ARM_MOTION},
     ]
     scenarios_rows = "".join(
         f"<tr><td>{s['ID']}</td><td>{s['DES']}</td><td><button onclick=exeScenario('{s['ID']}')>Execute</button></td></tr>"
@@ -1497,9 +1508,10 @@ async def api_state() -> Dict[str, Any]:
             for s in state.bus_ha_sensors.values()
         ],
         "scenarios": [
-            {"ID": "1", "DES": SCENARIO_LABEL_DISARM},
-            {"ID": "2", "DES": SCENARIO_LABEL_ARM_AWAY},
-            {"ID": "3", "DES": SCENARIO_LABEL_ARM_HOME},
+            {"ID": "1", "DES": SCENARIO_LABEL_DISARM, "PIN": "P", "CAT": "DISARM"},
+            {"ID": "2", "DES": SCENARIO_LABEL_ARM_AWAY, "PIN": "P", "CAT": "ARM"},
+            {"ID": "3", "DES": SCENARIO_LABEL_ARM_HOME, "PIN": "P", "CAT": "PARTIAL"},
+            {"ID": "4", "DES": SCENARIO_LABEL_ARM_MOTION, "PIN": "P", "CAT": "PARTIAL"},
         ],
         "logs": state.logs[-20:],
     }
