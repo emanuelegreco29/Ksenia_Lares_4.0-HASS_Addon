@@ -40,12 +40,16 @@
     "step": {
       "init": {
         "title": "Ksenia Lares-alternativ",
-        "description": "Välj vilket delvis aktiverings-scenario som Aktivera Hemma (Arm Home) utför. Du kan även välja ett för Aktivera Natt (Arm Night) — det förblir inaktiverat tills du väljer ett.",
+        "description": "Välj vilket delvis aktiverings-scenario som Aktivera Hemma (Arm Home) utför. Du kan även välja ett för Aktivera Natt (Arm Night) — det förblir inaktiverat tills du väljer ett. Du kan även ställa in avfrågningsintervallet, eller sätta det till 0 för att inaktivera avfrågning och enbart förlita dig på realtidsuppdateringar som skickas av centralapparaten.",
         "data": {
           "arm_home_scenario_id": "Scenario för Aktivera Hemma",
-          "arm_night_scenario_id": "Scenario för Aktivera Natt (valfritt)"
+          "arm_night_scenario_id": "Scenario för Aktivera Natt (valfritt)",
+          "scan_interval": "Avfrågningsintervall (sekunder, 0 = inaktiverat)"
         }
       }
+    },
+    "error": {
+      "scan_interval_too_low": "Avfrågningsintervallet måste vara 0 (inaktiverat) eller minst 10 sekunder."
     },
     "abort": {
       "not_connected": "Det går inte att läsa in scenarier — integrationen är för närvarande inte ansluten till centralapparaten.",

@@ -40,12 +40,16 @@
     "step": {
       "init": {
         "title": "Ksenia Lares Options",
-        "description": "Choose which Partial-arm scenario the Arm Home action executes. Optionally select one for the Arm Night action too — Arm Night stays disabled until you pick one.",
+        "description": "Choose which Partial-arm scenario the Arm Home action executes. Optionally select one for the Arm Night action too — Arm Night stays disabled until you pick one. You can also set the state-polling interval, or set it to 0 to disable polling and rely solely on realtime updates pushed by the panel.",
         "data": {
           "arm_home_scenario_id": "Arm Home scenario",
-          "arm_night_scenario_id": "Arm Night scenario (optional)"
+          "arm_night_scenario_id": "Arm Night scenario (optional)",
+          "scan_interval": "Polling interval (seconds, 0 = disabled)"
         }
       }
+    },
+    "error": {
+      "scan_interval_too_low": "Scan interval must be 0 (disabled) or at least 10 seconds."
     },
     "abort": {
       "not_connected": "Cannot load scenarios — integration is not currently connected to the panel.",

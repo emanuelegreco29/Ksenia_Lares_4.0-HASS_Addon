@@ -753,24 +753,23 @@ async def test_ksenia_event_log_sensor_initialization():
 
 @pytest.mark.asyncio
 async def test_ksenia_event_log_sensor_updates():
-    """Test KseniaEventLogSensor fetches logs correctly."""
+    """Test KseniaEventLogSensor processes a pushed batch of logs correctly."""
     from custom_components.ksenia_lares.sensor import KseniaEventLogSensor
-    
+
     ws_manager = MagicMock()
-    
-    # Mock getLastLogs to return sample logs (most recent first per API)
+
+    # Sample logs as pushed by the periodic-read task (most recent first per API)
     sample_logs = [
         {"EV": "ARM", "TYPE": "MANUAL", "DATE": "2024-01-03"},
         {"EV": "DISARM", "TYPE": "MANUAL", "DATE": "2024-01-02"},
         {"EV": "ALARM", "TYPE": "ZONE", "DATE": "2024-01-01"},
     ]
-    ws_manager.getLastLogs = AsyncMock(return_value=sample_logs)
-    
+
     entity = KseniaEventLogSensor(ws_manager)
     entity.async_write_ha_state = MagicMock()
-    
-    await entity.async_update()
-    
+
+    await entity._handle_logs_update(sample_logs)
+
     # Logs are stored as returned from API (newest first)
     # Input is [ARM, DISARM, ALARM] which is already in newest→oldest order
     assert entity._raw_logs is not None
@@ -779,7 +778,82 @@ async def test_ksenia_event_log_sensor_updates():
     assert entity._raw_logs[0].get("EV") == "ARM"
     # Last entry should be oldest: ALARM
     assert entity._raw_logs[-1].get("EV") == "ALARM"
-    ws_manager.getLastLogs.assert_called_once()
+    entity.async_write_ha_state.assert_called_once()
+
+
+def test_event_log_sensor_should_poll_is_false():
+    """KseniaEventLogSensor no longer overrides should_poll - fully listener-driven now."""
+    from custom_components.ksenia_lares.sensor import KseniaEventLogSensor
+
+    entity = KseniaEventLogSensor(MagicMock())
+    assert entity.should_poll is False
+
+
+def test_event_logs_channel_is_registerable():
+    """The "event_logs" channel is a recognized listener type."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    assert "event_logs" in manager.listeners
+
+
+@pytest.mark.asyncio
+async def test_periodic_read_task_fetches_and_notifies_logs(monkeypatch):
+    """Each periodic tick fetches recent logs and pushes them to "event_logs" listeners."""
+    from custom_components.ksenia_lares import websocketmanager as ws_module
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager(
+        "192.168.1.50", "1234", 443, MagicMock(), periodic_read_interval=1
+    )
+    manager._running = True
+    manager._last_periodic_read = 0  # ensures the "time since last" check passes immediately
+
+    async def fake_sleep(_seconds):
+        manager._running = False  # stop the loop after one iteration
+
+    monkeypatch.setattr(ws_module.asyncio, "sleep", fake_sleep)
+    manager._refresh_all_state = AsyncMock()
+    manager.getLastLogs = AsyncMock(return_value=[{"EV": "ARM"}])
+
+    received = []
+
+    async def logs_listener(logs):
+        received.append(logs)
+
+    manager.listeners["event_logs"] = [logs_listener]
+
+    await manager._periodic_read_task()
+
+    manager._refresh_all_state.assert_called_once()
+    manager.getLastLogs.assert_called_once_with(count=5)
+    assert received == [[{"EV": "ARM"}]]
+
+
+@pytest.mark.asyncio
+async def test_periodic_read_task_log_fetch_failure_does_not_affect_state_refresh(monkeypatch):
+    """A failed log fetch is caught independently and doesn't affect the state refresh."""
+    from custom_components.ksenia_lares import websocketmanager as ws_module
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager(
+        "192.168.1.50", "1234", 443, MagicMock(), periodic_read_interval=1
+    )
+    manager._running = True
+    manager._last_periodic_read = 0
+
+    async def fake_sleep(_seconds):
+        manager._running = False
+
+    monkeypatch.setattr(ws_module.asyncio, "sleep", fake_sleep)
+    manager._refresh_all_state = AsyncMock()
+    manager.getLastLogs = AsyncMock(side_effect=RuntimeError("network blip"))
+
+    # Should not raise despite the log fetch failing
+    await manager._periodic_read_task()
+
+    manager._refresh_all_state.assert_called_once()
+    manager.getLastLogs.assert_called_once_with(count=5)
 
 
 # ============================================================================
@@ -915,20 +989,48 @@ async def test_ksenia_button_entity_imports():
 @pytest.mark.asyncio
 async def test_websocket_manager_periodic_read_task_exists():
     """Test that WebSocketManager has periodic read task support."""
+    from custom_components.ksenia_lares.const import DEFAULT_SCAN_INTERVAL
     from custom_components.ksenia_lares.websocketmanager import WebSocketManager
-    
+
     manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
-    
+
     # Check that periodic read constants/methods exist
     assert hasattr(manager, "_periodic_read_task")
     assert hasattr(manager, "_last_periodic_read")
-    
-    # Check that PERIODIC_READ_INTERVAL is defined in the module
-    import inspect
-    from custom_components.ksenia_lares import websocketmanager
-    
-    source = inspect.getsource(websocketmanager)
-    assert "PERIODIC_READ_INTERVAL" in source
+
+    # Defaults to DEFAULT_SCAN_INTERVAL when not explicitly configured
+    assert manager._periodic_read_interval == DEFAULT_SCAN_INTERVAL
+
+
+def test_websocket_manager_periodic_read_interval_configurable():
+    """Test that periodic_read_interval can be overridden at construction."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock(), periodic_read_interval=30)
+
+    assert manager._periodic_read_interval == 30
+
+
+def test_websocket_manager_health_check_interval_scales_with_polling():
+    """Health-check threshold scales with the polling interval (floor: CONNECTION_HEALTH_CHECK)."""
+    from custom_components.ksenia_lares.websocketmanager import CONNECTION_HEALTH_CHECK, WebSocketManager
+
+    # Default (60s) interval keeps the existing 120s floor unchanged.
+    default_manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    assert default_manager._health_check_interval == CONNECTION_HEALTH_CHECK
+
+    # A larger interval (180s) scales the threshold up (360s), not stuck at 120s.
+    slow_manager = WebSocketManager(
+        "192.168.1.50", "1234", 443, MagicMock(), periodic_read_interval=180
+    )
+    assert slow_manager._health_check_interval == 360
+
+    # Disabled polling (0) still computes a (unused) floor value; the task
+    # simply never runs with it (see connect-time gating tests elsewhere).
+    disabled_manager = WebSocketManager(
+        "192.168.1.50", "1234", 443, MagicMock(), periodic_read_interval=0
+    )
+    assert disabled_manager._health_check_interval == CONNECTION_HEALTH_CHECK
 
 
 @pytest.mark.asyncio
@@ -1833,6 +1935,95 @@ async def test_options_flow_submit_creates_entry():
 
     assert result["type"] == "create_entry"
     assert result["data"] == user_input
+
+
+@pytest.mark.asyncio
+async def test_options_flow_submit_scan_interval_zero_disables_polling():
+    """Submitting scan_interval=0 is allowed (disables polling), not an error."""
+    from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
+    from homeassistant.const import CONF_SCAN_INTERVAL
+
+    flow = KseniaOptionsFlowHandler()
+    user_input = {CONF_SCAN_INTERVAL: 0}
+
+    result = await flow.async_step_init(user_input=user_input)
+
+    assert result["type"] == "create_entry"
+    assert result["data"] == user_input
+
+
+@pytest.mark.asyncio
+async def test_options_flow_submit_scan_interval_valid_nonzero():
+    """Submitting a valid non-zero scan_interval (>= MIN_SCAN_INTERVAL) is accepted."""
+    from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
+    from homeassistant.const import CONF_SCAN_INTERVAL
+
+    flow = KseniaOptionsFlowHandler()
+    user_input = {CONF_SCAN_INTERVAL: 30}
+
+    result = await flow.async_step_init(user_input=user_input)
+
+    assert result["type"] == "create_entry"
+    assert result["data"] == user_input
+
+
+@pytest.mark.asyncio
+async def test_options_flow_rejects_scan_interval_below_floor():
+    """A scan_interval between 1 and MIN_SCAN_INTERVAL-1 is rejected and the form is redisplayed."""
+    from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
+    from custom_components.ksenia_lares.const import DOMAIN
+    from homeassistant.const import CONF_SCAN_INTERVAL
+
+    scenarios = [
+        {"ID": "3", "DES": "Arm Home", "CAT": "PARTIAL"},
+    ]
+    ws_manager = MagicMock()
+    ws_manager.getScenarios = AsyncMock(return_value=scenarios)
+
+    config_entry = MagicMock()
+    config_entry.options = {}
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"ws_manager": ws_manager}}
+    hass.config_entries.async_get_known_entry = MagicMock(return_value=config_entry)
+
+    flow = KseniaOptionsFlowHandler()
+    flow.hass = hass
+    flow.handler = "test_entry_id"
+
+    result = await flow.async_step_init(user_input={CONF_SCAN_INTERVAL: 5})
+
+    assert result["type"] == "form"
+    assert result["errors"][CONF_SCAN_INTERVAL] == "scan_interval_too_low"
+
+
+@pytest.mark.asyncio
+async def test_options_flow_scan_interval_defaults_to_default_scan_interval():
+    """The scan_interval field suggests DEFAULT_SCAN_INTERVAL when never configured."""
+    from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
+    from custom_components.ksenia_lares.const import DEFAULT_SCAN_INTERVAL, DOMAIN
+    from homeassistant.const import CONF_SCAN_INTERVAL
+
+    scenarios = [
+        {"ID": "3", "DES": "Arm Home", "CAT": "PARTIAL"},
+    ]
+    ws_manager = MagicMock()
+    ws_manager.getScenarios = AsyncMock(return_value=scenarios)
+
+    config_entry = MagicMock()
+    config_entry.options = {}
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"ws_manager": ws_manager}}
+    hass.config_entries.async_get_known_entry = MagicMock(return_value=config_entry)
+
+    flow = KseniaOptionsFlowHandler()
+    flow.hass = hass
+    flow.handler = "test_entry_id"
+
+    result = await flow.async_step_init(user_input=None)
+
+    schema = result["data_schema"]
+    scan_interval_marker = next(m for m in schema.schema if m == CONF_SCAN_INTERVAL)
+    assert scan_interval_marker.description["suggested_value"] == DEFAULT_SCAN_INTERVAL
 
 
 @pytest.mark.asyncio

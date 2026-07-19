@@ -1062,40 +1062,37 @@ class KseniaEventLogSensor(KseniaEntity, SensorEntity):
         """Return the icon for the event log sensor."""
         return "mdi:file-document"
 
-    @property
-    def should_poll(self) -> bool:
-        """Poll periodically to fetch latest logs (not yet listener-driven)."""
-        return True
+    async def async_added_to_hass(self):
+        """Subscribe to periodic event-log pushes from the WebSocket manager."""
+        await super().async_added_to_hass()
+        self.ws_manager.register_listener("event_logs", self._handle_logs_update)
 
-    async def async_update(self):
-        """Fetch latest 5 logs and set state to EV from most recent.
+    async def _handle_logs_update(self, logs):
+        """Handle a pushed batch of the latest 5 logs and set state to EV from most recent.
 
         The real Ksenia system returns logs in descending order (newest → oldest).
         We keep them in that order for display, with log_1 being the latest entry.
         State is set to EV of the first (most recent) entry.
         """
-        try:
-            logs = await self.ws_manager.getLastLogs(count=5)
-            # Keep logs as-is: newest first (system returns them newest→oldest)
-            self._raw_logs = logs or []
+        # Keep logs as-is: newest first (system returns them newest→oldest)
+        self._raw_logs = logs or []
 
-            # Log detailed info about retrieved events (debug level to avoid spamming)
-            _LOGGER.debug(f"EVENT LOG SENSOR: Retrieved {len(self._raw_logs)} logs")
-            for idx, log in enumerate(self._raw_logs, 1):
-                ev = log.get("EV", "?")
-                typ = log.get("TYPE", "?")
-                data = log.get("DATA", "")
-                time_val = log.get("TIME", "")
-                _LOGGER.debug(f"  [{idx}] EV={ev}, TYPE={typ}, DateTime={data} {time_val}")
+        # Log detailed info about retrieved events (debug level to avoid spamming)
+        _LOGGER.debug(f"EVENT LOG SENSOR: Retrieved {len(self._raw_logs)} logs")
+        for idx, log in enumerate(self._raw_logs, 1):
+            ev = log.get("EV", "?")
+            typ = log.get("TYPE", "?")
+            data = log.get("DATA", "")
+            time_val = log.get("TIME", "")
+            _LOGGER.debug(f"  [{idx}] EV={ev}, TYPE={typ}, DateTime={data} {time_val}")
 
-            # Attributes are computed dynamically in extra_state_attributes
-            # Set state to EV of first (most recent) entry, if available
-            if self._raw_logs:
-                self._state = self._raw_logs[0].get("EV") or None
-            else:
-                self._state = None
-        except Exception as e:
-            _LOGGER.error(f"Error updating Event log sensor: {e}")
+        # Attributes are computed dynamically in extra_state_attributes
+        # Set state to EV of first (most recent) entry, if available
+        if self._raw_logs:
+            self._state = self._raw_logs[0].get("EV") or None
+        else:
+            self._state = None
+        self.async_write_ha_state()
 
 
 class KseniaLastAlarmEventSensor(KseniaEntity, SensorEntity):

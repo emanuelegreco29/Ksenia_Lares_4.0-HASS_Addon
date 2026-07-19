@@ -6,7 +6,11 @@ import logging
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -25,9 +29,11 @@ from .const import (
     DEFAULT_BRAND,
     DEFAULT_PLATFORMS,
     DEFAULT_PORT,
+    DEFAULT_SCAN_INTERVAL,
     DEFAULT_SSL,
     DOMAIN,
     DeviceBrand,
+    MIN_SCAN_INTERVAL,
 )
 from .websocketmanager import AuthenticationError, WebSocketManager
 
@@ -234,12 +240,18 @@ class KseniaOptionsFlowHandler(config_entries.OptionsFlow):
     Lets the installer choose which CAT=PARTIAL scenario the Arm Home and
     (optional) Arm Night actions execute, for panels that expose more than
     one PARTIAL scenario (e.g. "Arm Home" and a custom "Arm Motion" scenario).
+    Also lets them configure (or disable) the periodic state-polling interval.
     """
 
     async def async_step_init(self, user_input=None):
         """Manage integration options."""
+        errors = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            interval = user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+            if 0 < interval < MIN_SCAN_INTERVAL:
+                errors[CONF_SCAN_INTERVAL] = "scan_interval_too_low"
+            else:
+                return self.async_create_entry(title="", data=user_input)
 
         ws_manager = self.hass.data.get(DOMAIN, {}).get("ws_manager")
         if ws_manager is None:
@@ -277,12 +289,25 @@ class KseniaOptionsFlowHandler(config_entries.OptionsFlow):
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                # 0 disables polling entirely; 1-9 rejected server-side (see errors above).
+                vol.Optional(CONF_SCAN_INTERVAL): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0,
+                        max=3600,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="s",
+                    )
+                ),
             }
         )
 
         suggested_values = {
             CONF_ARM_HOME_SCENARIO_ID: self.config_entry.options.get(
                 CONF_ARM_HOME_SCENARIO_ID, default_home_id
+            ),
+            CONF_SCAN_INTERVAL: self.config_entry.options.get(
+                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
             ),
         }
         if CONF_ARM_NIGHT_SCENARIO_ID in self.config_entry.options:
@@ -291,4 +316,4 @@ class KseniaOptionsFlowHandler(config_entries.OptionsFlow):
             ]
         schema = self.add_suggested_values_to_schema(schema, suggested_values)
 
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
