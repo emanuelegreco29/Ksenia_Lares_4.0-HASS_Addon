@@ -1394,10 +1394,24 @@ async def test_alarm_control_panel_supported_features():
     ws_manager = MagicMock()
     scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "3"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
-    
+
     features = panel.supported_features
     assert features & AlarmControlPanelEntityFeature.ARM_AWAY
     assert features & AlarmControlPanelEntityFeature.ARM_HOME
+    # ARM_NIGHT is disabled by default — no "NIGHT" scenario configured
+    assert not features & AlarmControlPanelEntityFeature.ARM_NIGHT
+
+
+def test_alarm_control_panel_supported_features_arm_night_enabled():
+    """ARM_NIGHT appears once a NIGHT scenario is present in the map."""
+    from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
+    from homeassistant.components.alarm_control_panel import AlarmControlPanelEntityFeature
+
+    ws_manager = MagicMock()
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "3", "NIGHT": "4"}
+    panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
+
+    assert panel.supported_features & AlarmControlPanelEntityFeature.ARM_NIGHT
 
 
 @pytest.mark.asyncio
@@ -1480,8 +1494,55 @@ async def test_alarm_control_panel_arm_home():
     scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "3"}
     panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
     panel.async_write_ha_state = MagicMock()
-    
+
     await panel.async_alarm_arm_home(code="123456")
+
+
+@pytest.mark.asyncio
+async def test_alarm_control_panel_arm_night_success():
+    """Test arm night executes the configured NIGHT scenario."""
+    from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
+
+    ws_manager = MagicMock()
+    ws_manager.executeScenario_with_login = AsyncMock(return_value=True)
+    ws_manager.register_listener = MagicMock()
+
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "3", "NIGHT": "4"}
+    panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
+    panel.async_write_ha_state = MagicMock()
+
+    await panel.async_alarm_arm_night(code="123456")
+
+    ws_manager.executeScenario_with_login.assert_called_once_with("4", pin="123456")
+
+
+@pytest.mark.asyncio
+async def test_alarm_control_panel_arm_night_requires_code():
+    """Test arm night requires a PIN."""
+    from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
+
+    ws_manager = MagicMock()
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "3", "NIGHT": "4"}
+    panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
+
+    with pytest.raises(HomeAssistantError):
+        await panel.async_alarm_arm_night(code=None)
+
+
+@pytest.mark.asyncio
+async def test_alarm_control_panel_arm_night_not_configured():
+    """Test arm night raises when no NIGHT scenario is configured (default state)."""
+    from custom_components.ksenia_lares.alarm_control_panel import KseniaAlarmControlPanel
+
+    ws_manager = MagicMock()
+    ws_manager.executeScenario_with_login = AsyncMock(return_value=True)
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "3"}
+    panel = KseniaAlarmControlPanel(ws_manager, scenario_map)
+
+    with pytest.raises(HomeAssistantError):
+        await panel.async_alarm_arm_night(code="123456")
+
+    ws_manager.executeScenario_with_login.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1618,11 +1679,76 @@ def test_apply_arm_home_override_stale_override_falls_back():
     assert scenario_map["PARTIAL"] == "4"
 
 
+def test_apply_arm_night_scenario_not_configured_by_default():
+    """No configured Arm Night scenario leaves the map without a NIGHT entry."""
+    from custom_components.ksenia_lares.alarm_control_panel import _apply_arm_night_scenario
+
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "4"}
+    scenarios = [
+        {"ID": "3", "DES": "Arm Home", "CAT": "PARTIAL"},
+        {"ID": "4", "DES": "ARM MOTION", "CAT": "PARTIAL"},
+    ]
+    config_entry = MagicMock()
+    config_entry.options = {}
+
+    _apply_arm_night_scenario(scenario_map, scenarios, config_entry)
+
+    assert "NIGHT" not in scenario_map
+
+
+def test_apply_arm_night_scenario_valid_selection():
+    """A configured, valid PARTIAL scenario ID enables Arm Night."""
+    from custom_components.ksenia_lares.alarm_control_panel import (
+        CONF_ARM_NIGHT_SCENARIO_ID,
+        _apply_arm_night_scenario,
+    )
+
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "4"}
+    scenarios = [
+        {"ID": "3", "DES": "Arm Home", "CAT": "PARTIAL"},
+        {"ID": "4", "DES": "ARM MOTION", "CAT": "PARTIAL"},
+    ]
+    config_entry = MagicMock()
+    config_entry.options = {CONF_ARM_NIGHT_SCENARIO_ID: "3"}
+
+    _apply_arm_night_scenario(scenario_map, scenarios, config_entry)
+
+    assert scenario_map["NIGHT"] == "3"
+
+
+def test_apply_arm_night_scenario_stale_selection_stays_disabled():
+    """A configured scenario ID that's no longer CAT=PARTIAL leaves Arm Night disabled."""
+    from custom_components.ksenia_lares.alarm_control_panel import (
+        CONF_ARM_NIGHT_SCENARIO_ID,
+        _apply_arm_night_scenario,
+    )
+
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "4"}
+    # Scenario 3 was removed from the panel since the option was configured.
+    scenarios = [
+        {"ID": "4", "DES": "ARM MOTION", "CAT": "PARTIAL"},
+    ]
+    config_entry = MagicMock()
+    config_entry.options = {CONF_ARM_NIGHT_SCENARIO_ID: "3"}
+
+    _apply_arm_night_scenario(scenario_map, scenarios, config_entry)
+
+    assert "NIGHT" not in scenario_map
+
+
 @pytest.mark.asyncio
 async def test_options_flow_lists_only_partial_scenarios_defaulting_to_last():
-    """Options flow form only offers CAT=PARTIAL scenarios, defaulting to the last one."""
+    """Options flow offers CAT=PARTIAL scenarios for both fields.
+
+    Arm Home defaults to the last one (today's actual behavior); Arm Night
+    has no default — it stays unselected until explicitly configured.
+    """
     from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
-    from custom_components.ksenia_lares.const import CONF_ARM_HOME_SCENARIO_ID, DOMAIN
+    from custom_components.ksenia_lares.const import (
+        CONF_ARM_HOME_SCENARIO_ID,
+        CONF_ARM_NIGHT_SCENARIO_ID,
+        DOMAIN,
+    )
 
     scenarios = [
         {"ID": "1", "DES": "Disarm", "CAT": "DISARM"},
@@ -1649,12 +1775,49 @@ async def test_options_flow_lists_only_partial_scenarios_defaulting_to_last():
     assert result["type"] == "form"
     assert result["step_id"] == "init"
     schema = result["data_schema"]
-    (select_marker,) = schema.schema.keys()
-    assert select_marker == CONF_ARM_HOME_SCENARIO_ID
-    select_selector = schema.schema[select_marker]
-    offered_ids = {opt["value"] for opt in select_selector.config["options"]}
-    assert offered_ids == {"3", "4"}
-    assert select_marker.description["suggested_value"] == "4"
+    markers = {marker: marker for marker in schema.schema}
+    home_marker = markers[CONF_ARM_HOME_SCENARIO_ID]
+    night_marker = markers[CONF_ARM_NIGHT_SCENARIO_ID]
+
+    home_options = {opt["value"] for opt in schema.schema[home_marker].config["options"]}
+    night_options = {opt["value"] for opt in schema.schema[night_marker].config["options"]}
+    assert home_options == {"3", "4"}
+    assert night_options == {"3", "4"}
+
+    assert home_marker.description["suggested_value"] == "4"
+    # No default for Arm Night — stays unselected until explicitly configured.
+    assert not night_marker.description
+
+
+@pytest.mark.asyncio
+async def test_options_flow_shows_previously_configured_arm_night_selection():
+    """A previously-saved Arm Night scenario is preselected when reopening options."""
+    from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
+    from custom_components.ksenia_lares.const import CONF_ARM_NIGHT_SCENARIO_ID, DOMAIN
+
+    scenarios = [
+        {"ID": "3", "DES": "Arm Home", "CAT": "PARTIAL"},
+        {"ID": "4", "DES": "ARM MOTION", "CAT": "PARTIAL"},
+    ]
+    ws_manager = MagicMock()
+    ws_manager.getScenarios = AsyncMock(return_value=scenarios)
+
+    config_entry = MagicMock()
+    config_entry.options = {CONF_ARM_NIGHT_SCENARIO_ID: "3"}
+
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"ws_manager": ws_manager}}
+    hass.config_entries.async_get_known_entry = MagicMock(return_value=config_entry)
+
+    flow = KseniaOptionsFlowHandler()
+    flow.hass = hass
+    flow.handler = "test_entry_id"
+
+    result = await flow.async_step_init(user_input=None)
+
+    schema = result["data_schema"]
+    night_marker = next(m for m in schema.schema if m == CONF_ARM_NIGHT_SCENARIO_ID)
+    assert night_marker.description["suggested_value"] == "3"
 
 
 @pytest.mark.asyncio

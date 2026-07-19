@@ -40,9 +40,10 @@
     "step": {
       "init": {
         "title": "Ksenia Lares Options",
-        "description": "Choose which Partial-arm scenario the Arm Home action executes.",
+        "description": "Choose which Partial-arm scenario the Arm Home action executes. Optionally select one for the Arm Night action too — Arm Night stays disabled until you pick one.",
         "data": {
-          "arm_home_scenario_id": "Arm Home scenario"
+          "arm_home_scenario_id": "Arm Home scenario",
+          "arm_night_scenario_id": "Arm Night scenario (optional)"
         }
       }
     },
@@ -229,6 +230,12 @@
     },
     "arm_home_failed": {
       "message": "Arm home command failed"
+    },
+    "arm_night_not_configured": {
+      "message": "Arm Night is not configured. Select a scenario for it in the integration's options."
+    },
+    "arm_night_failed": {
+      "message": "Arm night command failed"
     }
   },
   "selector": {

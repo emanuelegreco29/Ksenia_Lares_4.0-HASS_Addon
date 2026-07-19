@@ -40,9 +40,10 @@
     "step": {
       "init": {
         "title": "Opzioni Ksenia Lares",
-        "description": "Scegli quale scenario di Inserimento Parziale esegue l'azione Inserito Parziale (Arm Home).",
+        "description": "Scegli quale scenario di Inserimento Parziale esegue l'azione Inserito Parziale (Arm Home). Puoi anche selezionarne uno per l'azione Notturno (Arm Night) — resta disabilitata finché non ne scegli uno.",
         "data": {
-          "arm_home_scenario_id": "Scenario per Inserito Parziale"
+          "arm_home_scenario_id": "Scenario per Inserito Parziale",
+          "arm_night_scenario_id": "Scenario per Notturno (opzionale)"
         }
       }
     },
@@ -229,6 +230,12 @@
     },
     "arm_home_failed": {
       "message": "Comando di inserimento parziale fallito"
+    },
+    "arm_night_not_configured": {
+      "message": "La funzione Notturno non è configurata. Seleziona uno scenario per essa nelle opzioni dell'integrazione."
+    },
+    "arm_night_failed": {
+      "message": "Comando di inserimento notturno fallito"
     }
   },
   "selector": {

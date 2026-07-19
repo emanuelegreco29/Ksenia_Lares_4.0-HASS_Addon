@@ -6,11 +6,17 @@ import logging
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .const import (
     CONF_BRAND,
     CONF_ARM_HOME_SCENARIO_ID,
+    CONF_ARM_NIGHT_SCENARIO_ID,
     CONF_HOST,
     CONF_PIN,
     CONF_PLATFORMS,
@@ -225,9 +231,9 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class KseniaOptionsFlowHandler(config_entries.OptionsFlow):
     """Ksenia Lares options flow.
 
-    Lets the installer choose which CAT=PARTIAL scenario the Arm Home action
-    executes, for panels that expose more than one (e.g. "Arm Home" and a
-    custom "Arm Motion" scenario).
+    Lets the installer choose which CAT=PARTIAL scenario the Arm Home and
+    (optional) Arm Night actions execute, for panels that expose more than
+    one PARTIAL scenario (e.g. "Arm Home" and a custom "Arm Motion" scenario).
     """
 
     async def async_step_init(self, user_input=None):
@@ -246,31 +252,43 @@ class KseniaOptionsFlowHandler(config_entries.OptionsFlow):
 
         # Matches _build_scenario_map's current last-CAT-wins behavior, so the
         # preselected default reflects what Arm Home actually does today.
-        default_id = str(partial_scenarios[-1].get("ID"))
+        default_home_id = str(partial_scenarios[-1].get("ID"))
+
+        partial_options: list[SelectOptionDict] = [
+            SelectOptionDict(
+                value=str(scenario.get("ID")),
+                label=f"{scenario.get('DES', scenario.get('ID'))} (ID {scenario.get('ID')})",
+            )
+            for scenario in partial_scenarios
+        ]
 
         schema = vol.Schema(
             {
                 vol.Optional(CONF_ARM_HOME_SCENARIO_ID): SelectSelector(
                     SelectSelectorConfig(
-                        options=[
-                            {
-                                "value": str(scenario.get("ID")),
-                                "label": f"{scenario.get('DES', scenario.get('ID'))} (ID {scenario.get('ID')})",
-                            }
-                            for scenario in partial_scenarios
-                        ],
+                        options=partial_options,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                # No default: Arm Night stays disabled until explicitly configured.
+                vol.Optional(CONF_ARM_NIGHT_SCENARIO_ID): SelectSelector(
+                    SelectSelectorConfig(
+                        options=partial_options,
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
             }
         )
-        schema = self.add_suggested_values_to_schema(
-            schema,
-            {
-                CONF_ARM_HOME_SCENARIO_ID: self.config_entry.options.get(
-                    CONF_ARM_HOME_SCENARIO_ID, default_id
-                )
-            },
-        )
+
+        suggested_values = {
+            CONF_ARM_HOME_SCENARIO_ID: self.config_entry.options.get(
+                CONF_ARM_HOME_SCENARIO_ID, default_home_id
+            ),
+        }
+        if CONF_ARM_NIGHT_SCENARIO_ID in self.config_entry.options:
+            suggested_values[CONF_ARM_NIGHT_SCENARIO_ID] = self.config_entry.options[
+                CONF_ARM_NIGHT_SCENARIO_ID
+            ]
+        schema = self.add_suggested_values_to_schema(schema, suggested_values)
 
         return self.async_show_form(step_id="init", data_schema=schema)

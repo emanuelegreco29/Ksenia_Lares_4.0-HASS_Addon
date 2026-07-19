@@ -16,7 +16,12 @@ from homeassistant.components.alarm_control_panel.const import (
 )
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import CONF_ARM_HOME_SCENARIO_ID, DOMAIN, PartitionArmStatus
+from .const import (
+    CONF_ARM_HOME_SCENARIO_ID,
+    CONF_ARM_NIGHT_SCENARIO_ID,
+    DOMAIN,
+    PartitionArmStatus,
+)
 from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,6 +47,15 @@ def _build_scenario_map(scenarios):
     return mapping
 
 
+def _get_valid_partial_ids(scenarios):
+    """Return the set of scenario IDs (as strings) with CAT=PARTIAL."""
+    return {
+        str(scenario.get("ID"))
+        for scenario in scenarios
+        if scenario.get("CAT", "").upper() == "PARTIAL"
+    }
+
+
 def _apply_arm_home_override(scenario_map, scenarios, config_entry):
     """Override the PARTIAL (Arm Home) scenario with the user's configured choice.
 
@@ -53,18 +67,35 @@ def _apply_arm_home_override(scenario_map, scenarios, config_entry):
     if not override_id:
         return
 
-    valid_partial_ids = {
-        str(scenario.get("ID"))
-        for scenario in scenarios
-        if scenario.get("CAT", "").upper() == "PARTIAL"
-    }
-    if str(override_id) in valid_partial_ids:
+    if str(override_id) in _get_valid_partial_ids(scenarios):
         scenario_map["PARTIAL"] = str(override_id)
     else:
         _LOGGER.warning(
             "Configured Arm Home scenario ID %s is no longer a valid PARTIAL "
             "scenario on the panel; falling back to default",
             override_id,
+        )
+
+
+def _apply_arm_night_scenario(scenario_map, scenarios, config_entry):
+    """Enable the optional Arm Night action if a CAT=PARTIAL scenario is configured.
+
+    Unlike Arm Home, there is no default: Arm Night has no fixed Ksenia
+    scenario, so ARM_NIGHT stays unavailable (not advertised in
+    supported_features) until the installer explicitly picks a scenario for
+    it via the integration's options flow.
+    """
+    night_id = config_entry.options.get(CONF_ARM_NIGHT_SCENARIO_ID)
+    if not night_id:
+        return
+
+    if str(night_id) in _get_valid_partial_ids(scenarios):
+        scenario_map["NIGHT"] = str(night_id)
+    else:
+        _LOGGER.warning(
+            "Configured Arm Night scenario ID %s is no longer a valid PARTIAL "
+            "scenario on the panel; Arm Night action will not be available",
+            night_id,
         )
 
 
@@ -83,6 +114,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         scenarios = await ws_manager.getScenarios()
         scenario_map = _build_scenario_map(scenarios)
         _apply_arm_home_override(scenario_map, scenarios, config_entry)
+        _apply_arm_night_scenario(scenario_map, scenarios, config_entry)
 
         if not scenario_map:
             _LOGGER.error(
@@ -382,7 +414,9 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
         """Return supported features based on configured scenarios.
 
         Dynamically adds ARM_AWAY and ARM_HOME based on available scenarios
-        with corresponding CAT (category) values.
+        with corresponding CAT (category) values. ARM_NIGHT is disabled by
+        default — it only appears once the installer selects a CAT=PARTIAL
+        scenario for it in the integration's options flow.
         """
         features = AlarmControlPanelEntityFeature(0)
 
@@ -391,6 +425,9 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
 
         if self._scenarios.get("PARTIAL"):
             features |= AlarmControlPanelEntityFeature.ARM_HOME
+
+        if self._scenarios.get("NIGHT"):
+            features |= AlarmControlPanelEntityFeature.ARM_NIGHT
 
         return features
 
@@ -561,6 +598,64 @@ class KseniaAlarmControlPanel(KseniaEntity, AlarmControlPanelEntity):
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="arm_home_failed",
+            ) from e
+
+    async def async_alarm_arm_night(self, code: str | None = None) -> None:
+        """Arm all partitions in night mode via the configured Night scenario.
+
+        Unlike Arm Away/Home, Night has no fixed Ksenia CAT — the installer
+        selects any CAT=PARTIAL scenario for it via the integration's options
+        flow. Disabled (not in supported_features) until one is selected.
+
+        Args:
+            code: PIN code required to arm (user-entered, dynamic)
+
+        Raises:
+            ValueError: If code is not provided
+            Exception: If no Night scenario configured or execution fails
+        """
+        if code is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="pin_required_arm",
+            )
+
+        scenario_id = self._scenarios.get("NIGHT")
+        if not scenario_id:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="arm_night_not_configured",
+            )
+
+        try:
+            _LOGGER.debug("Arming all partitions in night mode via scenario %s", scenario_id)
+            # Pass user-entered PIN to create separate authenticated session
+            success = await self.ws_manager.executeScenario_with_login(scenario_id, pin=code)
+
+            if success:
+                self._attr_changed_by = "HA Alarm control panel"
+                self._ha_action_pending = True
+                _LOGGER.info("All partitions armed in night mode")
+            else:
+                _LOGGER.error("Failed to arm partitions in night mode")
+                detail = self.ws_manager.get_last_command_error_detail()
+                if detail in ("LOGIN_KO", "WRONG_PIN"):
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="wrong_pin_check",
+                    )
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="arm_night_failed",
+                )
+
+        except HomeAssistantError:
+            raise
+        except Exception as e:
+            _LOGGER.error("Error arming partitions in night mode: %s", e)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="arm_night_failed",
             ) from e
 
     @property

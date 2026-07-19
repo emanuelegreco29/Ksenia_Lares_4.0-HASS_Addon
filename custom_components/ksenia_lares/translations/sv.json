@@ -40,9 +40,10 @@
     "step": {
       "init": {
         "title": "Ksenia Lares-alternativ",
-        "description": "Välj vilket delvis aktiverings-scenario som Aktivera Hemma (Arm Home) utför.",
+        "description": "Välj vilket delvis aktiverings-scenario som Aktivera Hemma (Arm Home) utför. Du kan även välja ett för Aktivera Natt (Arm Night) — det förblir inaktiverat tills du väljer ett.",
         "data": {
-          "arm_home_scenario_id": "Scenario för Aktivera Hemma"
+          "arm_home_scenario_id": "Scenario för Aktivera Hemma",
+          "arm_night_scenario_id": "Scenario för Aktivera Natt (valfritt)"
         }
       }
     },
@@ -229,6 +230,12 @@
     },
     "arm_home_failed": {
       "message": "Aktiveringskommandot (hemma) misslyckades"
+    },
+    "arm_night_not_configured": {
+      "message": "Aktivera Natt är inte konfigurerat. Välj ett scenario för det i integrationens alternativ."
+    },
+    "arm_night_failed": {
+      "message": "Aktiveringskommandot (natt) misslyckades"
     }
   },
   "selector": {
