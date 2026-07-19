@@ -36,6 +36,21 @@
       "reconfigure_successful": "Ksenia Lares-konfigurationen uppdaterades"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ksenia Lares-alternativ",
+        "description": "Välj vilket delvis aktiverings-scenario som Aktivera Hemma (Arm Home) utför.",
+        "data": {
+          "arm_home_scenario_id": "Scenario för Aktivera Hemma"
+        }
+      }
+    },
+    "abort": {
+      "not_connected": "Det går inte att läsa in scenarier — integrationen är för närvarande inte ansluten till centralapparaten.",
+      "no_partial_scenarios": "Inget scenario för delvis aktivering (CAT=PARTIAL) hittades på centralapparaten — inget att konfigurera."
+    }
+  },
   "entity": {
     "button": {
       "clear_communications": {

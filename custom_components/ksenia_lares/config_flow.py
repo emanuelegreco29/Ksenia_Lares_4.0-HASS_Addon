@@ -10,6 +10,7 @@ from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig,
 
 from .const import (
     CONF_BRAND,
+    CONF_ARM_HOME_SCENARIO_ID,
     CONF_HOST,
     CONF_PIN,
     CONF_PLATFORMS,
@@ -214,3 +215,62 @@ class KseniaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return True
         except ValueError:
             return False
+
+    @staticmethod
+    def async_get_options_flow(config_entry):  # noqa: ARG004
+        """Get the options flow for this handler."""
+        return KseniaOptionsFlowHandler()
+
+
+class KseniaOptionsFlowHandler(config_entries.OptionsFlow):
+    """Ksenia Lares options flow.
+
+    Lets the installer choose which CAT=PARTIAL scenario the Arm Home action
+    executes, for panels that expose more than one (e.g. "Arm Home" and a
+    custom "Arm Motion" scenario).
+    """
+
+    async def async_step_init(self, user_input=None):
+        """Manage integration options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        ws_manager = self.hass.data.get(DOMAIN, {}).get("ws_manager")
+        if ws_manager is None:
+            return self.async_abort(reason="not_connected")
+
+        scenarios = await ws_manager.getScenarios()
+        partial_scenarios = [s for s in scenarios if s.get("CAT", "").upper() == "PARTIAL"]
+        if not partial_scenarios:
+            return self.async_abort(reason="no_partial_scenarios")
+
+        # Matches _build_scenario_map's current last-CAT-wins behavior, so the
+        # preselected default reflects what Arm Home actually does today.
+        default_id = str(partial_scenarios[-1].get("ID"))
+
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_ARM_HOME_SCENARIO_ID): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            {
+                                "value": str(scenario.get("ID")),
+                                "label": f"{scenario.get('DES', scenario.get('ID'))} (ID {scenario.get('ID')})",
+                            }
+                            for scenario in partial_scenarios
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+        schema = self.add_suggested_values_to_schema(
+            schema,
+            {
+                CONF_ARM_HOME_SCENARIO_ID: self.config_entry.options.get(
+                    CONF_ARM_HOME_SCENARIO_ID, default_id
+                )
+            },
+        )
+
+        return self.async_show_form(step_id="init", data_schema=schema)

@@ -16,7 +16,7 @@ from homeassistant.components.alarm_control_panel.const import (
 )
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN, PartitionArmStatus
+from .const import CONF_ARM_HOME_SCENARIO_ID, DOMAIN, PartitionArmStatus
 from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,6 +42,32 @@ def _build_scenario_map(scenarios):
     return mapping
 
 
+def _apply_arm_home_override(scenario_map, scenarios, config_entry):
+    """Override the PARTIAL (Arm Home) scenario with the user's configured choice.
+
+    Falls back to _build_scenario_map's default (last CAT=PARTIAL scenario) if
+    no override is configured, or if a configured scenario ID no longer refers
+    to a CAT=PARTIAL scenario on the panel (e.g. it was renamed/removed).
+    """
+    override_id = config_entry.options.get(CONF_ARM_HOME_SCENARIO_ID)
+    if not override_id:
+        return
+
+    valid_partial_ids = {
+        str(scenario.get("ID"))
+        for scenario in scenarios
+        if scenario.get("CAT", "").upper() == "PARTIAL"
+    }
+    if str(override_id) in valid_partial_ids:
+        scenario_map["PARTIAL"] = str(override_id)
+    else:
+        _LOGGER.warning(
+            "Configured Arm Home scenario ID %s is no longer a valid PARTIAL "
+            "scenario on the panel; falling back to default",
+            override_id,
+        )
+
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up Ksenia Lares alarm control panel entity.
 
@@ -56,6 +82,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         # Discover scenarios and build CAT-based mapping
         scenarios = await ws_manager.getScenarios()
         scenario_map = _build_scenario_map(scenarios)
+        _apply_arm_home_override(scenario_map, scenarios, config_entry)
 
         if not scenario_map:
             _LOGGER.error(

@@ -36,6 +36,21 @@
       "reconfigure_successful": "Ksenia Lares configuration updated successfully"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ksenia Lares Options",
+        "description": "Choose which Partial-arm scenario the Arm Home action executes.",
+        "data": {
+          "arm_home_scenario_id": "Arm Home scenario"
+        }
+      }
+    },
+    "abort": {
+      "not_connected": "Cannot load scenarios — integration is not currently connected to the panel.",
+      "no_partial_scenarios": "No Partial-arm (CAT=PARTIAL) scenario found on the panel — nothing to configure."
+    }
+  },
   "entity": {
     "button": {
       "clear_communications": {

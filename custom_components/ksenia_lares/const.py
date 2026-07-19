@@ -12,6 +12,7 @@ CONF_PIN = "pin"
 CONF_SSL = "ssl"
 CONF_PLATFORMS = "platforms"
 CONF_BRAND = "brand"
+CONF_ARM_HOME_SCENARIO_ID = "arm_home_scenario_id"
 
 # Defaults
 DEFAULT_PORT = 443

@@ -314,6 +314,11 @@ async def _setup_connection(hass, entry, ip, port, pin, use_ssl, brand) -> WebSo
         raise ConfigEntryNotReady(error_msg) from e
 
 
+async def _async_update_listener(hass, entry):
+    """Reload the config entry when its options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_setup_entry(hass, entry):
     """Set up Ksenia Lares integration from a config entry.
 
@@ -333,6 +338,8 @@ async def async_setup_entry(hass, entry):
     current_task = asyncio.current_task()
     if current_task:
         _SETUP_TASKS[entry.entry_id] = current_task
+
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     try:
         # Extract configuration (fallback to legacy capitalized keys for backward compatibility)

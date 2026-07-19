@@ -36,6 +36,21 @@
       "reconfigure_successful": "Configurazione Ksenia Lares aggiornata correttamente"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni Ksenia Lares",
+        "description": "Scegli quale scenario di Inserimento Parziale esegue l'azione Inserito Parziale (Arm Home).",
+        "data": {
+          "arm_home_scenario_id": "Scenario per Inserito Parziale"
+        }
+      }
+    },
+    "abort": {
+      "not_connected": "Impossibile caricare gli scenari — l'integrazione non è attualmente connessa alla centrale.",
+      "no_partial_scenarios": "Nessuno scenario di Inserimento Parziale (CAT=PARTIAL) trovato sulla centrale — niente da configurare."
+    }
+  },
   "entity": {
     "button": {
       "clear_communications": {

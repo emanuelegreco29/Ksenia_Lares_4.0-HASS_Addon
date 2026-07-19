@@ -1561,6 +1561,160 @@ async def test_alarm_control_panel_state_update_from_realtime():
     assert panel._partitions_status == update_data
 
 
+def test_apply_arm_home_override_no_override_set():
+    """No configured override leaves the default PARTIAL mapping untouched."""
+    from custom_components.ksenia_lares.alarm_control_panel import _apply_arm_home_override
+
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "4"}
+    scenarios = [
+        {"ID": "3", "DES": "Arm Home", "CAT": "PARTIAL"},
+        {"ID": "4", "DES": "ARM MOTION", "CAT": "PARTIAL"},
+    ]
+    config_entry = MagicMock()
+    config_entry.options = {}
+
+    _apply_arm_home_override(scenario_map, scenarios, config_entry)
+
+    assert scenario_map["PARTIAL"] == "4"
+
+
+def test_apply_arm_home_override_valid_override():
+    """A configured, still-valid PARTIAL scenario ID overrides the default."""
+    from custom_components.ksenia_lares.alarm_control_panel import (
+        CONF_ARM_HOME_SCENARIO_ID,
+        _apply_arm_home_override,
+    )
+
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "4"}
+    scenarios = [
+        {"ID": "3", "DES": "Arm Home", "CAT": "PARTIAL"},
+        {"ID": "4", "DES": "ARM MOTION", "CAT": "PARTIAL"},
+    ]
+    config_entry = MagicMock()
+    config_entry.options = {CONF_ARM_HOME_SCENARIO_ID: "3"}
+
+    _apply_arm_home_override(scenario_map, scenarios, config_entry)
+
+    assert scenario_map["PARTIAL"] == "3"
+
+
+def test_apply_arm_home_override_stale_override_falls_back():
+    """A configured scenario ID that's no longer CAT=PARTIAL falls back to the default."""
+    from custom_components.ksenia_lares.alarm_control_panel import (
+        CONF_ARM_HOME_SCENARIO_ID,
+        _apply_arm_home_override,
+    )
+
+    scenario_map = {"DISARM": "1", "ARM": "2", "PARTIAL": "4"}
+    # Scenario 3 was removed from the panel since the option was configured.
+    scenarios = [
+        {"ID": "4", "DES": "ARM MOTION", "CAT": "PARTIAL"},
+    ]
+    config_entry = MagicMock()
+    config_entry.options = {CONF_ARM_HOME_SCENARIO_ID: "3"}
+
+    _apply_arm_home_override(scenario_map, scenarios, config_entry)
+
+    assert scenario_map["PARTIAL"] == "4"
+
+
+@pytest.mark.asyncio
+async def test_options_flow_lists_only_partial_scenarios_defaulting_to_last():
+    """Options flow form only offers CAT=PARTIAL scenarios, defaulting to the last one."""
+    from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
+    from custom_components.ksenia_lares.const import CONF_ARM_HOME_SCENARIO_ID, DOMAIN
+
+    scenarios = [
+        {"ID": "1", "DES": "Disarm", "CAT": "DISARM"},
+        {"ID": "2", "DES": "Arm Away", "CAT": "ARM"},
+        {"ID": "3", "DES": "Arm Home", "CAT": "PARTIAL"},
+        {"ID": "4", "DES": "ARM MOTION", "CAT": "PARTIAL"},
+    ]
+    ws_manager = MagicMock()
+    ws_manager.getScenarios = AsyncMock(return_value=scenarios)
+
+    config_entry = MagicMock()
+    config_entry.options = {}
+
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"ws_manager": ws_manager}}
+    hass.config_entries.async_get_known_entry = MagicMock(return_value=config_entry)
+
+    flow = KseniaOptionsFlowHandler()
+    flow.hass = hass
+    flow.handler = "test_entry_id"
+
+    result = await flow.async_step_init(user_input=None)
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "init"
+    schema = result["data_schema"]
+    (select_marker,) = schema.schema.keys()
+    assert select_marker == CONF_ARM_HOME_SCENARIO_ID
+    select_selector = schema.schema[select_marker]
+    offered_ids = {opt["value"] for opt in select_selector.config["options"]}
+    assert offered_ids == {"3", "4"}
+    assert select_marker.description["suggested_value"] == "4"
+
+
+@pytest.mark.asyncio
+async def test_options_flow_submit_creates_entry():
+    """Submitting the options form saves the selection."""
+    from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
+    from custom_components.ksenia_lares.const import CONF_ARM_HOME_SCENARIO_ID
+
+    flow = KseniaOptionsFlowHandler()
+    user_input = {CONF_ARM_HOME_SCENARIO_ID: "3"}
+
+    result = await flow.async_step_init(user_input=user_input)
+
+    assert result["type"] == "create_entry"
+    assert result["data"] == user_input
+
+
+@pytest.mark.asyncio
+async def test_options_flow_aborts_when_not_connected():
+    """Options flow aborts if the integration has no active ws_manager."""
+    from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
+    from custom_components.ksenia_lares.const import DOMAIN
+
+    hass = MagicMock()
+    hass.data = {DOMAIN: {}}
+
+    flow = KseniaOptionsFlowHandler()
+    flow.hass = hass
+
+    result = await flow.async_step_init(user_input=None)
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "not_connected"
+
+
+@pytest.mark.asyncio
+async def test_options_flow_aborts_when_no_partial_scenarios():
+    """Options flow aborts if the panel has no CAT=PARTIAL scenario configured."""
+    from custom_components.ksenia_lares.config_flow import KseniaOptionsFlowHandler
+    from custom_components.ksenia_lares.const import DOMAIN
+
+    ws_manager = MagicMock()
+    ws_manager.getScenarios = AsyncMock(
+        return_value=[
+            {"ID": "1", "DES": "Disarm", "CAT": "DISARM"},
+            {"ID": "2", "DES": "Arm Away", "CAT": "ARM"},
+        ]
+    )
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"ws_manager": ws_manager}}
+
+    flow = KseniaOptionsFlowHandler()
+    flow.hass = hass
+
+    result = await flow.async_step_init(user_input=None)
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "no_partial_scenarios"
+
+
 @pytest.mark.asyncio
 async def test_alarm_control_panel_state_map_disarmed():
     """Test Ksenia disarmed state maps correctly."""
