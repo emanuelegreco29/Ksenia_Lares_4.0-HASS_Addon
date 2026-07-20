@@ -922,12 +922,12 @@ async def test_light_entity_availability_listener_via_async_added_to_hass():
 
     await entity.async_added_to_hass()
 
-    # Should register both "lights" (realtime) and "connection" (availability) listeners
+    # Should register both "lights" (realtime) and "availability" listeners
     assert "lights" in listeners
-    assert "connection" in listeners
+    assert "availability" in listeners
 
     # Trigger connection change and verify state write
-    await listeners["connection"][0]({"state": "disconnected", "available": False})
+    await listeners["availability"][0]({"state": "disconnected", "available": False})
     entity.async_write_ha_state.assert_called_once()
 
 
@@ -1282,6 +1282,67 @@ async def test_ksenia_connection_status_sensor_initialization():
     
     assert entity.ws_manager is ws_manager
     assert entity._attr_translation_key == "connection_status"
+
+
+@pytest.mark.asyncio
+async def test_connection_status_sensor_handles_real_status_connection_list():
+    """The real STATUS_CONNECTION list payload still updates state correctly."""
+    from custom_components.ksenia_lares.sensor import KseniaConnectionStatusSensor
+
+    ws_manager = MagicMock()
+    entity = KseniaConnectionStatusSensor(ws_manager)
+    entity.async_write_ha_state = MagicMock()
+
+    await entity._handle_connection_update(
+        [{"ETH": {"LINK": "OK"}, "INET": "ETH"}]
+    )
+
+    assert entity._state == "ethernet"
+    entity.async_write_ha_state.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_connection_status_sensor_ignores_availability_dict_payload():
+    """The dict-shaped availability ping never reaches this sensor at all.
+
+    Regression test for the KeyError: 0 crash - the availability ping and
+    the real STATUS_CONNECTION data are on separate channels now, so this
+    sensor (registered only on "connection") should never even receive the
+    dict shape. Directly calling the handler with a dict (as could only
+    happen if something were misrouted) would still raise, since the
+    handler's own code was never changed - the fix is at the channel
+    routing level, not a defensive check here.
+    """
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+
+    received_on_connection = []
+    received_on_availability = []
+
+    async def connection_listener(payload):
+        received_on_connection.append(payload)
+
+    async def availability_listener(payload):
+        received_on_availability.append(payload)
+
+    manager.listeners["connection"] = [connection_listener]
+    manager.listeners["availability"] = [availability_listener]
+
+    await manager._notify_connection_state_change()
+
+    assert received_on_connection == []
+    assert len(received_on_availability) == 1
+    assert set(received_on_availability[0].keys()) == {"state", "available"}
+
+
+def test_availability_channel_is_registerable():
+    """The "availability" channel is a recognized listener type."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    assert "availability" in manager.listeners
+    assert "connection" in manager.listeners
 
 
 @pytest.mark.asyncio
@@ -2325,7 +2386,7 @@ async def test_notify_connection_state_after_cleanup_in_handle_connection_closed
     async def connection_listener(payload):
         observed_readData.append(manager._readData)
 
-    manager.listeners["connection"] = [connection_listener]
+    manager.listeners["availability"] = [connection_listener]
 
     # Prevent actual reconnection
     manager._reconnecting = True

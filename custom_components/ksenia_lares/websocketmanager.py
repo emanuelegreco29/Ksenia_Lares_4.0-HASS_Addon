@@ -21,8 +21,7 @@ import websockets
 from websockets.asyncio.client import connect as ws_connect
 from websockets.typing import Subprotocol
 
-from .const import DEFAULT_BRAND, DeviceBrand
-from .const import DEFAULT_SCAN_INTERVAL
+from .const import DEFAULT_BRAND, DEFAULT_SCAN_INTERVAL, DeviceBrand
 from .wscall import (
     bypassZone,
     clearCommunications,
@@ -352,7 +351,8 @@ class WebSocketManager:
             "partitions": [],
             "zones": [],
             "systems": [],
-            "connection": [],
+            "connection": [],  # Real STATUS_CONNECTION data from the panel (list of connection objects)
+            "availability": [],  # WS lifecycle ping (dict) - connect/disconnect/reconnect notifications
             "panel": [],
             "tampers": [],
             "faults": [],
@@ -409,13 +409,18 @@ class WebSocketManager:
         return self._connection_state == ConnectionState.CONNECTED
 
     async def _notify_connection_state_change(self) -> None:
-        """Notify listeners about connection state transitions."""
+        """Notify listeners about connection state transitions.
+
+        Uses the "availability" channel, distinct from "connection" (which
+        carries the real STATUS_CONNECTION list payload from the panel) -
+        this is just a lifecycle ping for entities to refresh `available`.
+        """
         payload = {
             "state": self._connection_state.value,
             "available": self.available,
         }
         try:
-            await self._notify_listeners(["connection"], payload)
+            await self._notify_listeners(["availability"], payload)
         except Exception as err:
             self._logger.debug("Error notifying connection listeners: %s", err)
 

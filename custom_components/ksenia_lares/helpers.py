@@ -41,14 +41,14 @@ class KseniaEntity:
         return False
 
     async def async_added_to_hass(self):
-        """Register connection listener to refresh availability on connect/disconnect."""
+        """Register availability listener to refresh state on connect/disconnect."""
         await super().async_added_to_hass()  # type: ignore[misc]
 
         async def _on_connection_change(_data: Any) -> None:
             if getattr(self, "hass", None) is not None:
                 self.async_write_ha_state()  # type: ignore[attr-defined]
 
-        self.ws_manager.register_listener("connection", _on_connection_change)
+        self.ws_manager.register_listener("availability", _on_connection_change)
 
 
 def build_unique_id(base: str, *parts: str | int) -> str:

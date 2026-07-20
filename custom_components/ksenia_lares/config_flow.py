@@ -18,9 +18,9 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
-    CONF_BRAND,
     CONF_ARM_HOME_SCENARIO_ID,
     CONF_ARM_NIGHT_SCENARIO_ID,
+    CONF_BRAND,
     CONF_HOST,
     CONF_PIN,
     CONF_PLATFORMS,
@@ -32,8 +32,8 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SSL,
     DOMAIN,
-    DeviceBrand,
     MIN_SCAN_INTERVAL,
+    DeviceBrand,
 )
 from .websocketmanager import AuthenticationError, WebSocketManager
 
