@@ -1697,6 +1697,7 @@ class WebSocketManager:
                 await writeThermostatConfig(
                     self._ws,
                     self._loginId,
+                    self._pin,
                     command_data,
                     self._pending_commands,
                     self._logger,

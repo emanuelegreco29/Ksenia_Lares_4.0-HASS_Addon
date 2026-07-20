@@ -23,10 +23,21 @@ async def async_get_config_entry_diagnostics(
     - Entity registry data
     - Real-time data snapshots
     """
-    ws_manager = hass.data[DOMAIN]["ws_manager"]
+    ws_manager = hass.data.get(DOMAIN, {}).get("ws_manager")
 
     # Gather entity information
     entities_data = _collect_entity_diagnostics(hass, entry)
+
+    if ws_manager is None:
+        # Entry is still in setup_retry (e.g. connection/authentication failed) so
+        # no WebSocketManager has been created yet - return what we can without it.
+        return {
+            "config_entry": _get_config_entry_info(entry),
+            "connection": {"connected": False, "state": "not_initialized"},
+            "system_info": None,
+            "entities": entities_data,
+            "websocket_data": None,
+        }
 
     # Get system information
     system_info = await ws_manager.getSystemVersion()

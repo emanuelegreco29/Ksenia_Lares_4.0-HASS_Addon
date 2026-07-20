@@ -216,6 +216,90 @@ def test_crc_function():
 
 
 @pytest.mark.asyncio
+async def test_ws_login_sends_pin_as_json_string():
+    """ws_login must send PIN as a JSON string, like every other PIN-bearing command.
+
+    Regression test: unlike setOutput/bypassZone/exeScenario/CLEAR_*/WRITE_CFG
+    (which all wrap the PIN with str(pin) before building the payload),
+    ws_login sent the raw `pin` value into the payload dict unconverted. If the
+    PIN ever reaches this call as a non-string (e.g. an int from a legacy
+    config entry using the old capitalized "Pin" key, or a YAML import), the
+    LOGIN payload gets serialized with a bare JSON number (`"PIN":1234`)
+    instead of a quoted string (`"PIN":"1234"`). Panels that strictly type-check
+    the PIN field reject this with RESULT_DETAIL LOGIN_KO even though every
+    other command on the same connection (which does str(pin)) works fine -
+    matching the real-world symptom of WebSocket LOGIN_KO while every other
+    authenticated command succeeds.
+    """
+    import json
+
+    from custom_components.ksenia_lares.wscall import ws_login
+
+    login_response = {
+        "SENDER": "",
+        "RECEIVER": "HomeAssistant",
+        "CMD": "LOGIN_RES",
+        "ID": "1",
+        "PAYLOAD_TYPE": "USER",
+        "PAYLOAD": {"RESULT": "OK", "ID_LOGIN": "5"},
+    }
+
+    ws = AsyncMock()
+    ws.recv = AsyncMock(return_value=json.dumps(login_response))
+
+    login_id, error_detail = await ws_login(ws, 1234, MagicMock())
+
+    assert login_id == 5
+    assert error_detail is None
+
+    sent_raw = ws.send.call_args[0][0]
+    sent_message = json.loads(sent_raw)
+    assert sent_message["PAYLOAD"]["PIN"] == "1234"
+    assert isinstance(sent_message["PAYLOAD"]["PIN"], str)
+    # The raw wire payload must be quoted, not a bare JSON number
+    assert '"PIN":"1234"' in sent_raw.replace(" ", "")
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_handles_missing_ws_manager(mock_hass):
+    """Diagnostics must not crash while a config entry is stuck in setup_retry.
+
+    Regression test: hass.data[DOMAIN]["ws_manager"] previously used direct
+    dict indexing (`hass.data[DOMAIN]["ws_manager"]`), which raises KeyError
+    whenever async_setup_entry hasn't successfully created a WebSocketManager
+    yet - e.g. while the entry is retrying after an authentication failure
+    (LOGIN_KO) or connection error. Downloading diagnostics in that state
+    should return a best-effort payload, not crash.
+    """
+    from custom_components.ksenia_lares.const import DOMAIN
+    from custom_components.ksenia_lares.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    mock_hass.data[DOMAIN] = {}  # No "ws_manager" key: entry still in setup_retry
+    mock_hass.states.get = MagicMock(return_value=None)
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry_id"
+    entry.data = {"host": "192.168.1.50", "port": 443}
+    entry.options = {}
+
+    with patch(
+        "custom_components.ksenia_lares.diagnostics.er.async_get"
+    ) as mock_async_get, patch(
+        "custom_components.ksenia_lares.diagnostics.er.async_entries_for_config_entry",
+        return_value=[],
+    ):
+        mock_async_get.return_value = MagicMock()
+        result = await async_get_config_entry_diagnostics(mock_hass, entry)
+
+    assert result["connection"]["connected"] is False
+    assert result["system_info"] is None
+    assert result["websocket_data"] is None
+    assert result["entities"]["total_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_scenario_execution_command_format():
     """Test that scenario execution follows the correct format."""
     from custom_components.ksenia_lares.wscall import exeScenario
@@ -233,6 +317,71 @@ async def test_scenario_execution_command_format():
     assert "login_id" in params or "scenario_id" in params
     assert "pin" in params or "id_to_return" in params
     assert "command_data" in params
+
+
+@pytest.mark.asyncio
+async def test_write_thermostat_config_includes_pin():
+    """WRITE_CFG for thermostats must include PIN like every other mutating command.
+
+    Regression test: writeThermostatConfig previously omitted PIN entirely from
+    its payload, unlike setOutput/bypassZone/exeScenario/CLEAR_*. Ksenia panels
+    require PIN authorization to accept configuration writes, so the panel
+    silently dropped the request (no WRITE_CFG_RES ever arrived) and HA's
+    thermostat mode/temperature/preset writes always timed out.
+    """
+    import json
+
+    from custom_components.ksenia_lares.wscall import writeThermostatConfig
+
+    ws = AsyncMock()
+    queue = {}
+    future = asyncio.Future()
+    command_data = {
+        "thermo_cfg": {"ID": "2", "ACT_MODE": "MAN"},
+        "future": future,
+    }
+
+    await writeThermostatConfig(ws, "12345", "9999", command_data, queue, MagicMock())
+
+    sent_message = json.loads(ws.send.call_args[0][0])
+    assert sent_message["CMD"] == "WRITE_CFG"
+    assert sent_message["PAYLOAD_TYPE"] == "CFG_THERMOSTATS"
+    assert sent_message["PAYLOAD"]["PIN"] == "9999"
+    assert sent_message["PAYLOAD"]["ID_LOGIN"] == "12345"
+    assert sent_message["PAYLOAD"]["CFG_THERMOSTATS"] == [{"ID": "2", "ACT_MODE": "MAN"}]
+
+    future.cancel()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_command_forwards_pin_to_thermostat_write(monkeypatch):
+    """_dispatch_command must forward the panel PIN for WRITE_THERMO_CFG commands.
+
+    Regression test for the same missing-PIN bug at the dispatch layer: the
+    manager was calling writeThermostatConfig without self._pin at all.
+    """
+    from custom_components.ksenia_lares import websocketmanager as ws_module
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "4321", 443, MagicMock())
+    manager._ws = MagicMock()
+    manager._loginId = 7
+
+    write_mock = AsyncMock()
+    monkeypatch.setattr(ws_module, "writeThermostatConfig", write_mock)
+
+    command_data = {
+        "thermo_cfg": {"ID": "2", "ACT_MODE": "MAN"},
+        "future": asyncio.Future(),
+        "command_id": 0,
+        "command_type": "WRITE_THERMO_CFG",
+    }
+
+    await manager._dispatch_command(command_data)
+
+    write_mock.assert_called_once_with(
+        manager._ws, 7, "4321", command_data, manager._pending_commands, manager._logger
+    )
 
 
 def test_const_imports():

@@ -175,7 +175,7 @@ async def ws_login(websocket, pin, _LOGGER):
         - login_id: Session ID on success, -1 on failure
         - result_detail: Error detail string (e.g., "LOGIN_KO") on failure, None on success
     """
-    payload = {"PIN": pin}
+    payload = {"PIN": str(pin)}
     json_cmd = _build_message("LOGIN", "USER", payload)
 
     _LOGGER.debug(f"[{datetime.now()}] Sending LOGIN request")
@@ -903,15 +903,22 @@ async def clearFaultsMemory(websocket, login_id, pin, command_data, queue, logge
     )
 
 
-async def writeThermostatConfig(websocket, login_id, command_data, queue, logger):
+async def writeThermostatConfig(websocket, login_id, pin, command_data, queue, logger):
     """Send WRITE_CFG command to update chronothermostat configuration.
 
     Sends a partial thermostat config update (mode change, setpoint, etc.)
     to the Ksenia Lares panel. Only the fields present in thermo_cfg are sent.
 
+    Like every other command that mutates panel state (setOutput, bypassZone,
+    exeScenario, the CLEAR_* commands), this requires the PIN alongside
+    ID_LOGIN; without it the panel silently drops the request instead of
+    replying with a WRITE_CFG_RES, which is why writes previously hung until
+    the client-side timeout.
+
     Args:
         websocket: WebSocket connection object
         login_id: Authenticated session ID
+        pin: Authentication PIN
         command_data: Command dictionary with thermo_cfg dict and future
         queue: Pending commands queue
         logger: Logger instance for diagnostics
@@ -921,6 +928,7 @@ async def writeThermostatConfig(websocket, login_id, command_data, queue, logger
     try:
         payload = {
             "ID_LOGIN": str(login_id),
+            "PIN": str(pin),
             "CFG_THERMOSTATS": [command_data["thermo_cfg"]],
         }
         json_cmd = _build_message("WRITE_CFG", "CFG_THERMOSTATS", payload, msg_id=command_id)
