@@ -91,6 +91,12 @@ OUTPUT_SIREN = "1"
 OUTPUT_LIGHT = "2"
 OUTPUT_COVER = "3"
 
+# Thermostat zone (TEMPERATURES.ID / STATUS_TEMPERATURES.ID)
+THERMO_SENSOR_ID = "1"
+# Thermostat config (CFG_THERMOSTATS.ID, linked via TEMPERATURES.ID_TH)
+THERMO_ID = "1"
+THERMO_LABEL = "Living Room Thermostat"
+
 # ============================================================================
 # Utility Functions
 # ============================================================================
@@ -245,6 +251,9 @@ class SimulatorState:
         self.partitions = self._init_partitions()
         self.bus_has = self._init_bus_has()
         self.bus_ha_sensors = self._init_bus_ha_sensors()
+        self.temperatures = self._init_temperatures()
+        self.thermostat_configs = self._init_thermostat_configs()
+        self.status_temperatures = self._init_status_temperatures()
 
     def _init_output_configs(self) -> Dict[str, Dict[str, Any]]:
         """Initialize output configuration (matches real hardware OUTPUTS format)."""
@@ -421,6 +430,45 @@ class SimulatorState:
                 "FW": "0.0.38",
                 "HW": "k035",
                 "INFO": []
+            }
+        }
+
+    def _init_temperatures(self) -> Dict[str, Dict[str, Any]]:
+        """Initialize TEMPERATURES config (zone name + sensor-to-thermostat link)."""
+        return {
+            THERMO_SENSOR_ID: {
+                "ID": THERMO_SENSOR_ID,
+                "DES": THERMO_LABEL,
+                "TYP": "DOMUS",
+                "ID_TH": THERMO_ID,
+            }
+        }
+
+    def _init_thermostat_configs(self) -> Dict[str, Dict[str, Any]]:
+        """Initialize CFG_THERMOSTATS (mode, season, setpoints per season)."""
+        return {
+            THERMO_ID: {
+                "ID": THERMO_ID,
+                "ACT_MODE": "OFF",
+                "ACT_SEA": "WIN",
+                "WIN": {"T1": "18.0", "T2": "20.0", "T3": "22.0", "TM": "20.0"},
+                "SUM": {"T1": "24.0", "T2": "26.0", "T3": "28.0", "TM": "26.0"},
+            }
+        }
+
+    def _init_status_temperatures(self) -> Dict[str, Dict[str, Any]]:
+        """Initialize STATUS_TEMPERATURES (current temp + realtime thermostat status)."""
+        return {
+            THERMO_SENSOR_ID: {
+                "ID": THERMO_SENSOR_ID,
+                "TEMP": "19.5",
+                "THERM": {
+                    "ACT_MODEL": "OFF",
+                    "ACT_SEA": "WIN",
+                    "TEMP_THR": {"T": "T2", "VAL": "20.0"},
+                    "OUT_STATUS": "OFF",
+                    "ACT_TOF": "F",
+                },
             }
         }
 
@@ -1050,6 +1098,12 @@ def initial_read_payload(types: List[str]) -> Dict[str, Any]:
             payload["STATUS_PARTITIONS"] = [
                 get_partition_status_data(state.partitions[p]) for p in [PARTITION_1, PARTITION_2]
             ]
+        elif t == "TEMPERATURES":
+            payload["TEMPERATURES"] = list(state.temperatures.values())
+        elif t == "CFG_THERMOSTATS":
+            payload["CFG_THERMOSTATS"] = list(state.thermostat_configs.values())
+        elif t == "STATUS_TEMPERATURES":
+            payload["STATUS_TEMPERATURES"] = list(state.status_temperatures.values())
 
     return payload
 
@@ -1826,6 +1880,7 @@ async def handle_websocket_realtime(ws: WebSocket, msg_id: str, payload_type: st
         ],
         "STATUS_CONNECTION": connection_status_payload(),
         "STATUS_PANEL": panel_status_payload(),
+        "STATUS_TEMPERATURES": list(state.status_temperatures.values()),
     }
     response = build_message(
         cmd="REALTIME_RES",
@@ -1947,6 +2002,90 @@ async def handle_websocket_cmd_byp_zone(ws: WebSocket, msg_id: str, payload: Dic
                     payload={"RESULT": "OK", "RESULT_DETAIL": "CMD_PROCESSED"},
                 )
                 await ws.send_text(response)
+
+
+async def handle_websocket_write_cfg(
+    ws: WebSocket, msg_id: str, payload_type: str, payload: Dict[str, Any]
+) -> None:
+    """Handle WRITE_CFG command. Currently only CFG_THERMOSTATS is supported."""
+    if payload_type == "CFG_THERMOSTATS":
+        await handle_websocket_write_cfg_thermostats(ws, msg_id, payload)
+    else:
+        response = build_message(
+            cmd="WRITE_CFG_RES",
+            msg_id=msg_id,
+            payload_type=payload_type,
+            payload={"RESULT": "FAIL", "RESULT_DETAIL": "UNKNOWN_WRITE_CFG_TYPE"},
+        )
+        await ws.send_text(response)
+
+
+async def handle_websocket_write_cfg_thermostats(
+    ws: WebSocket, msg_id: str, payload: Dict[str, Any]
+) -> None:
+    """Handle WRITE_CFG / CFG_THERMOSTATS: update a thermostat's mode/season/setpoints.
+
+    Requires PIN, exactly like CMD_USR/CLEAR/CMD_BYP_ZONE. This mirrors the real
+    Lares panel's believed behavior of silently rejecting unauthorized
+    configuration writes (no ack at all) rather than replying with a FAIL -
+    the client-observed symptom being a "timeout waiting for thermostat config
+    write" that never resolves.
+    """
+    if str(payload.get("PIN", "")) != state.pin:
+        logger.warning("[WEBSOCKET] WRITE_CFG CFG_THERMOSTATS rejected: missing/incorrect PIN")
+        response = build_message(
+            cmd="WRITE_CFG_RES",
+            msg_id=msg_id,
+            payload_type="CFG_THERMOSTATS",
+            payload={"RESULT": "FAIL", "RESULT_DETAIL": "WRONG_PIN"},
+        )
+        await ws.send_text(response)
+        return
+
+    entries = payload.get("CFG_THERMOSTATS", [])
+    updated_status = []
+    async with state.lock:
+        for entry in entries:
+            tid = str(entry.get("ID"))
+            cfg = state.thermostat_configs.get(tid)
+            if cfg is None:
+                continue
+            for key, value in entry.items():
+                if key == "ID":
+                    continue
+                if isinstance(value, dict) and isinstance(cfg.get(key), dict):
+                    cfg[key].update(value)
+                else:
+                    cfg[key] = value
+
+            # Reflect the config change into STATUS_TEMPERATURES, same as the real
+            # panel confirming a mode/setpoint change via realtime push.
+            sensor_id = next(
+                (sid for sid, t in state.temperatures.items() if t.get("ID_TH") == tid),
+                None,
+            )
+            if sensor_id is not None:
+                therm = state.status_temperatures[sensor_id]["THERM"]
+                therm["ACT_MODEL"] = cfg.get("ACT_MODE", therm.get("ACT_MODEL"))
+                therm["ACT_SEA"] = cfg.get("ACT_SEA", therm.get("ACT_SEA"))
+                season_cfg = cfg.get(therm["ACT_SEA"], {})
+                if "TM" in season_cfg:
+                    therm["TEMP_THR"] = {"T": "TM", "VAL": season_cfg["TM"]}
+                therm["OUT_STATUS"] = (
+                    "OFF" if therm["ACT_MODEL"] == "OFF" else therm.get("OUT_STATUS", "OFF")
+                )
+                updated_status.append(dict(state.status_temperatures[sensor_id]))
+
+    if updated_status:
+        await state.broadcast_realtime({"STATUS_TEMPERATURES": updated_status})
+
+    response = build_message(
+        cmd="WRITE_CFG_RES",
+        msg_id=msg_id,
+        payload_type="CFG_THERMOSTATS",
+        payload={"RESULT": "OK", "RESULT_DETAIL": "CMD_PROCESSED"},
+    )
+    await ws.send_text(response)
 
 
 async def handle_websocket_logs(ws: WebSocket, msg_id: str, payload: Dict[str, Any]) -> None:
@@ -2093,6 +2232,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         payload={"RESULT": "FAIL", "RESULT_DETAIL": "UNKNOWN_CMD_USR"},
                     )
                     await ws.send_text(response)
+            elif cmd == "WRITE_CFG":
+                await handle_websocket_write_cfg(ws, msg_id, payload_type, payload)
             elif cmd == "LOGS":
                 await handle_websocket_logs(ws, msg_id, payload)
             elif cmd == "CLEAR":
