@@ -909,11 +909,19 @@ async def writeThermostatConfig(websocket, login_id, pin, command_data, queue, l
     Sends a partial thermostat config update (mode change, setpoint, etc.)
     to the Ksenia Lares panel. Only the fields present in thermo_cfg are sent.
 
-    Like every other command that mutates panel state (setOutput, bypassZone,
-    exeScenario, the CLEAR_* commands), this requires the PIN alongside
-    ID_LOGIN; without it the panel silently drops the request instead of
-    replying with a WRITE_CFG_RES, which is why writes previously hung until
+    Per the Ksenia WebSocket SDK, WRITE_CFG's PAYLOAD_TYPE is *always*
+    "CFG_ALL" regardless of which configuration structure(s) the payload
+    actually carries - the structure itself is identified by its key inside
+    PAYLOAD (here "CFG_THERMOSTATS"). This previously sent
+    PAYLOAD_TYPE="CFG_THERMOSTATS" instead, a value the SDK never documents
+    for this command; that protocol violation is the most likely explanation
+    for the panel never sending a WRITE_CFG_RES and the write hanging until
     the client-side timeout.
+
+    The SDK also notes PIN is only mandatory for WRITE_CFG when logged in as
+    ERGO-T/IP_SUPERV; a USER-type login (what this integration always uses)
+    can omit it. It's still included here since sending it is harmless and
+    keeps this call consistent with every other mutating command.
 
     Args:
         websocket: WebSocket connection object
@@ -931,10 +939,10 @@ async def writeThermostatConfig(websocket, login_id, pin, command_data, queue, l
             "PIN": str(pin),
             "CFG_THERMOSTATS": [command_data["thermo_cfg"]],
         }
-        json_cmd = _build_message("WRITE_CFG", "CFG_THERMOSTATS", payload, msg_id=command_id)
+        json_cmd = _build_message("WRITE_CFG", "CFG_ALL", payload, msg_id=command_id)
 
         command_data["command_id"] = command_id
-        command_data["message"] = {"CMD": "WRITE_CFG", "PAYLOAD_TYPE": "CFG_THERMOSTATS"}
+        command_data["message"] = {"CMD": "WRITE_CFG", "PAYLOAD_TYPE": "CFG_ALL"}
         command_data["created_at"] = time.monotonic()
         queue[command_id] = command_data
         logger.debug(f"WRITE_CFG CFG_THERMOSTATS: {_sanitize_logmessage(json_cmd)}")

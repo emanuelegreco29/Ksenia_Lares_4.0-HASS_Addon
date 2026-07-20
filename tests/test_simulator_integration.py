@@ -9,8 +9,11 @@ production (wscall.py + websocketmanager.py), not mocks.
 This is the harness requested to catch protocol-level regressions locally,
 in particular the "Timeout waiting for thermostat config write" bug: that
 bug was invisible to the mock-based unit tests because the mocks never
-modeled the simulator's (and, we believe, the real panel's) requirement that
-WRITE_CFG requests carry a PIN.
+modeled the real WRITE_CFG wire format at all. Per the Ksenia WebSocket SDK
+(sdk.pdf), WRITE_CFG's PAYLOAD_TYPE is *always* "CFG_ALL" - the client was
+sending PAYLOAD_TYPE="CFG_THERMOSTATS" instead, a value the panel doesn't
+recognize for this command, so it never replied and the write hung until
+the client-side timeout.
 """
 
 import asyncio
@@ -27,6 +30,22 @@ import websockets
 SIMULATOR_DIR = Path(__file__).resolve().parents[1] / "simulator"
 TEST_HOST = "127.0.0.1"
 TEST_PORT = 18765
+
+
+async def _recv_until_cmd(ws, expected_cmd, max_messages=5):
+    """Read messages until one with CMD == expected_cmd arrives.
+
+    The simulator (like the real panel) can interleave REALTIME broadcasts
+    with direct command responses on the same connection, so a raw test
+    client - unlike WebSocketManager's listener loop, which dispatches by
+    CMD type regardless of arrival order - needs to skip past those to find
+    the response it's waiting for.
+    """
+    for _ in range(max_messages):
+        message = json.loads(await ws.recv())
+        if message.get("CMD") == expected_cmd:
+            return message
+    raise AssertionError(f"Did not receive a {expected_cmd} within {max_messages} messages")
 
 
 def _load_simulator_module():
@@ -64,9 +83,10 @@ async def test_thermostat_write_round_trip_via_real_websocket_manager(simulator)
 
     Drives the real WebSocketManager.write_thermostat_config() -> wscall.
     writeThermostatConfig() code path against a real WebSocket connection.
-    Before the PIN fix, this hung for COMMAND_TIMEOUT seconds and returned
-    False; with the fix it completes immediately and the change is visible
-    in getThermostats().
+    Before the PAYLOAD_TYPE fix (was "CFG_THERMOSTATS", must be "CFG_ALL" per
+    the SDK), the simulator - modeling the panel's real routing - had no
+    handler matching that PAYLOAD_TYPE, so this hung for COMMAND_TIMEOUT
+    seconds and returned False; with the fix it completes immediately.
     """
     from custom_components.ksenia_lares.websocketmanager import WebSocketManager
 
@@ -93,12 +113,50 @@ async def test_thermostat_write_round_trip_via_real_websocket_manager(simulator)
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_thermostat_write_without_pin_is_rejected_not_silently_dropped(simulator):
-    """The simulator's WRITE_CFG PIN check must reply with an explicit FAIL.
+async def test_write_cfg_thermostats_uses_cfg_all_payload_type(simulator):
+    """WRITE_CFG must be sent with PAYLOAD_TYPE="CFG_ALL", per the SDK.
 
-    This isolates the simulator-side contract so a future regression in
-    writeThermostatConfig() (e.g. the PIN silently dropped again) surfaces as
-    an immediate assertion failure instead of a 60s client timeout.
+    Locks in the actual wire format so a future regression back to
+    PAYLOAD_TYPE="CFG_THERMOSTATS" (the original, silently-ignored-by-the-
+    panel bug) is caught here instead of surfacing as a live-panel timeout.
+    """
+    from custom_components.ksenia_lares.wscall import _build_message
+
+    async with websockets.connect(
+        f"ws://{TEST_HOST}:{TEST_PORT}/KseniaWsock", subprotocols=["KS_WSOCK"]
+    ) as ws:
+        await ws.send(_build_message("LOGIN", "USER", {"PIN": simulator.state.pin}))
+        await ws.recv()  # LOGIN_RES
+
+        await ws.send(
+            _build_message(
+                "WRITE_CFG",
+                "CFG_ALL",
+                {
+                    "ID_LOGIN": "12345",
+                    "CFG_THERMOSTATS": [{"ID": simulator.THERMO_ID, "ACT_MODE": "MAN"}],
+                },
+                msg_id="99",
+            )
+        )
+        response = await _recv_until_cmd(ws, "WRITE_CFG_RES")
+
+        assert response["PAYLOAD_TYPE"] == "CFG_ALL"
+        assert response["PAYLOAD"]["RESULT"] == "OK"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_write_cfg_with_wrong_payload_type_is_rejected_not_silently_dropped(simulator):
+    """The original bug: PAYLOAD_TYPE="CFG_THERMOSTATS" (not "CFG_ALL") must be caught.
+
+    We don't know for certain how the real panel treats a non-compliant
+    PAYLOAD_TYPE on WRITE_CFG (the observed symptom was simply a timeout, with
+    no ack either way) - but the SDK is unambiguous that "CFG_ALL" is the only
+    correct value, so the simulator enforces that contract strictly and
+    replies with an explicit FAIL. That turns this exact regression into an
+    immediate assertion failure here instead of only surfacing as a 60s hang
+    against a live panel.
     """
     from custom_components.ksenia_lares.wscall import _build_message
 
@@ -119,11 +177,10 @@ async def test_thermostat_write_without_pin_is_rejected_not_silently_dropped(sim
                 msg_id="99",
             )
         )
-        response = json.loads(await ws.recv())
+        response = await _recv_until_cmd(ws, "WRITE_CFG_RES")
 
-        assert response["CMD"] == "WRITE_CFG_RES"
         assert response["PAYLOAD"]["RESULT"] == "FAIL"
-        assert response["PAYLOAD"]["RESULT_DETAIL"] == "WRONG_PIN"
+        assert response["PAYLOAD"]["RESULT_DETAIL"] == "UNKNOWN_WRITE_CFG_TYPE"
 
 
 @pytest.mark.integration

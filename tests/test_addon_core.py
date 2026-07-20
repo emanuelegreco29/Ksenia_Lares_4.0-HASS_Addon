@@ -320,14 +320,18 @@ async def test_scenario_execution_command_format():
 
 
 @pytest.mark.asyncio
-async def test_write_thermostat_config_includes_pin():
-    """WRITE_CFG for thermostats must include PIN like every other mutating command.
+async def test_write_thermostat_config_wire_format():
+    """WRITE_CFG for thermostats must use PAYLOAD_TYPE="CFG_ALL" and include PIN.
 
-    Regression test: writeThermostatConfig previously omitted PIN entirely from
-    its payload, unlike setOutput/bypassZone/exeScenario/CLEAR_*. Ksenia panels
-    require PIN authorization to accept configuration writes, so the panel
-    silently dropped the request (no WRITE_CFG_RES ever arrived) and HA's
-    thermostat mode/temperature/preset writes always timed out.
+    Regression test for the actual confirmed bug (per the Ksenia WebSocket SDK,
+    sdk.pdf): WRITE_CFG's PAYLOAD_TYPE must always be "CFG_ALL" - the config
+    structure being written is identified by its key inside PAYLOAD (here
+    "CFG_THERMOSTATS"), not by PAYLOAD_TYPE. This previously sent
+    PAYLOAD_TYPE="CFG_THERMOSTATS", a value never documented for this command,
+    which is the most likely reason the panel never replied with a
+    WRITE_CFG_RES and thermostat writes always timed out. PIN is included for
+    consistency with every other mutating command, though the SDK notes it
+    isn't strictly required here for a USER-type login.
     """
     import json
 
@@ -345,7 +349,7 @@ async def test_write_thermostat_config_includes_pin():
 
     sent_message = json.loads(ws.send.call_args[0][0])
     assert sent_message["CMD"] == "WRITE_CFG"
-    assert sent_message["PAYLOAD_TYPE"] == "CFG_THERMOSTATS"
+    assert sent_message["PAYLOAD_TYPE"] == "CFG_ALL"
     assert sent_message["PAYLOAD"]["PIN"] == "9999"
     assert sent_message["PAYLOAD"]["ID_LOGIN"] == "12345"
     assert sent_message["PAYLOAD"]["CFG_THERMOSTATS"] == [{"ID": "2", "ACT_MODE": "MAN"}]

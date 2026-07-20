@@ -2007,14 +2007,33 @@ async def handle_websocket_cmd_byp_zone(ws: WebSocket, msg_id: str, payload: Dic
 async def handle_websocket_write_cfg(
     ws: WebSocket, msg_id: str, payload_type: str, payload: Dict[str, Any]
 ) -> None:
-    """Handle WRITE_CFG command. Currently only CFG_THERMOSTATS is supported."""
-    if payload_type == "CFG_THERMOSTATS":
+    """Handle WRITE_CFG command.
+
+    Per the Ksenia SDK, WRITE_CFG's PAYLOAD_TYPE is always "CFG_ALL" - the
+    structure(s) being written are identified by their key(s) inside PAYLOAD
+    (e.g. "CFG_THERMOSTATS"), not by PAYLOAD_TYPE. We validate that contract
+    strictly (reject anything else with an explicit FAIL) rather than silently
+    tolerate a non-compliant PAYLOAD_TYPE, since the whole point of this
+    handler existing is to catch that class of client bug locally instead of
+    only against a live panel.
+    """
+    if payload_type != "CFG_ALL":
+        response = build_message(
+            cmd="WRITE_CFG_RES",
+            msg_id=msg_id,
+            payload_type="CFG_ALL",
+            payload={"RESULT": "FAIL", "RESULT_DETAIL": "UNKNOWN_WRITE_CFG_TYPE"},
+        )
+        await ws.send_text(response)
+        return
+
+    if "CFG_THERMOSTATS" in payload:
         await handle_websocket_write_cfg_thermostats(ws, msg_id, payload)
     else:
         response = build_message(
             cmd="WRITE_CFG_RES",
             msg_id=msg_id,
-            payload_type=payload_type,
+            payload_type="CFG_ALL",
             payload={"RESULT": "FAIL", "RESULT_DETAIL": "UNKNOWN_WRITE_CFG_TYPE"},
         )
         await ws.send_text(response)
@@ -2023,25 +2042,13 @@ async def handle_websocket_write_cfg(
 async def handle_websocket_write_cfg_thermostats(
     ws: WebSocket, msg_id: str, payload: Dict[str, Any]
 ) -> None:
-    """Handle WRITE_CFG / CFG_THERMOSTATS: update a thermostat's mode/season/setpoints.
+    """Handle WRITE_CFG carrying a CFG_THERMOSTATS structure: update mode/season/setpoints.
 
-    Requires PIN, exactly like CMD_USR/CLEAR/CMD_BYP_ZONE. This mirrors the real
-    Lares panel's believed behavior of silently rejecting unauthorized
-    configuration writes (no ack at all) rather than replying with a FAIL -
-    the client-observed symptom being a "timeout waiting for thermostat config
-    write" that never resolves.
+    Per the SDK, PIN is only mandatory here for ERGO-T/IP_SUPERV logins; a
+    USER-type login (as the LOGIN command always establishes) may omit it.
+    We accept it either way but don't reject a request that omits it, unlike
+    CMD_USR/CLEAR/CMD_BYP_ZONE where PIN is always required.
     """
-    if str(payload.get("PIN", "")) != state.pin:
-        logger.warning("[WEBSOCKET] WRITE_CFG CFG_THERMOSTATS rejected: missing/incorrect PIN")
-        response = build_message(
-            cmd="WRITE_CFG_RES",
-            msg_id=msg_id,
-            payload_type="CFG_THERMOSTATS",
-            payload={"RESULT": "FAIL", "RESULT_DETAIL": "WRONG_PIN"},
-        )
-        await ws.send_text(response)
-        return
-
     entries = payload.get("CFG_THERMOSTATS", [])
     updated_status = []
     async with state.lock:
@@ -2082,8 +2089,10 @@ async def handle_websocket_write_cfg_thermostats(
     response = build_message(
         cmd="WRITE_CFG_RES",
         msg_id=msg_id,
-        payload_type="CFG_THERMOSTATS",
-        payload={"RESULT": "OK", "RESULT_DETAIL": "CMD_PROCESSED"},
+        payload_type="CFG_ALL",
+        # "WRITE_OK" per the SDK's WRITE_CFG_RES example (CMD_USR_RES uses
+        # "CMD_PROCESSED" instead - different command family, different detail).
+        payload={"RESULT": "OK", "RESULT_DETAIL": "WRITE_OK"},
     )
     await ws.send_text(response)
 
