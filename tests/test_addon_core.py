@@ -531,7 +531,6 @@ def test_ksenia_switch_entity_siren_not_added(monkeypatch):
 
 
 
-@pytest.mark.asyncio
 def test_binary_sensor_thermo_output_not_classified_as_siren():
     """CAT=THERMO hidden outputs (heating relays) must not get device_class SOUND.
 
@@ -562,7 +561,6 @@ def test_binary_sensor_thermo_output_not_classified_as_siren():
     assert by_id["8"].is_on is True
 
 
-@pytest.mark.asyncio
 def test_ksenia_switch_entity_non_siren_enabled(monkeypatch):
     """Test that non-siren, non-hidden switches are added and enabled by default (unit test for _add_output_switches)."""
     from custom_components.ksenia_lares import switch
