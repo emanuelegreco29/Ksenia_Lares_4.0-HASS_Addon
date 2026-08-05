@@ -91,6 +91,9 @@
       "domus_light": {
         "name": "{name} Luminosità"
       },
+      "powerline_energy": {
+        "name": "{name} Energia"
+      },
       "partition_status": {
         "name": "{name}",
         "state": {

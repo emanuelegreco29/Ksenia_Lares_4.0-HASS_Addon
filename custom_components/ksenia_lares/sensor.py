@@ -9,9 +9,12 @@ from homeassistant.const import (
     LIGHT_LUX,
     PERCENTAGE,
     EntityCategory,
+    UnitOfEnergy,
     UnitOfPower,
     UnitOfTemperature,
 )
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     _ARM_STATE_MAP,
@@ -134,6 +137,7 @@ async def _add_powerline_sensors(ws_manager, device_info, base_id, entities):
     _LOGGER.debug("Found %d power lines", len(powerlines))
     for sensor in powerlines:
         entities.append(KseniaPowerlineSensor(ws_manager, sensor, device_info, base_id))
+        entities.append(KseniaPowerlineEnergySensor(ws_manager, sensor, device_info, base_id))
 
 
 async def _add_partition_sensors(ws_manager, device_info, base_id, entities):
@@ -311,6 +315,81 @@ class KseniaPowerlineSensor(KseniaSensorEntity):
         except Exception as e:
             _LOGGER.error("Error converting %s: %s", field_name, e)
             return None
+
+
+class KseniaPowerlineEnergySensor(KseniaEntity, RestoreEntity, SensorEntity):
+    """Energy sensor for a power line, integrating instantaneous power (PCONS) over time.
+
+    Ksenia's POWER_LINES payload has no cumulative energy counter — only
+    instantaneous power. This sensor performs its own trapezoidal (Riemann
+    sum) integration of PCONS as realtime/periodic updates arrive, so a
+    native kWh entity is available for HA's Energy dashboard "individual
+    devices" flow without requiring a manually-configured `integration`
+    helper. Accumulated total is restored across HA restarts.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "powerline_energy"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_icon = "mdi:lightning-bolt"
+
+    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
+        """Initialise a power line energy sensor."""
+        self.ws_manager = ws_manager
+        self._id = sensor_data["ID"]
+        self._base_id = base_id or ws_manager.ip
+        self._base_name = get_entity_name(sensor_data, self._id) or ""
+        self._device_info = device_info
+        self._attr_translation_placeholders = {"name": self._base_name}
+        self._total_kwh = 0.0
+        self._last_power_w = KseniaPowerlineSensor._parse_power_float(
+            sensor_data.get("PCONS"), "PCONS"
+        )
+        self._last_updated = dt_util.utcnow()
+
+    async def async_added_to_hass(self):
+        """Restore accumulated energy and register the realtime listener."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in (None, "unknown", "unavailable"):
+            try:
+                self._total_kwh = float(last_state.state)
+            except ValueError:
+                self._total_kwh = 0.0
+        self.ws_manager.register_listener("powerlines", self._handle_realtime_update)
+
+    async def _handle_realtime_update(self, data_list):
+        """Integrate newly reported power readings into accumulated energy."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            power_w = KseniaPowerlineSensor._parse_power_float(data.get("PCONS"), "PCONS")
+            now = dt_util.utcnow()
+            if power_w is not None and self._last_power_w is not None:
+                elapsed_hours = (now - self._last_updated).total_seconds() / 3600
+                avg_power_w = (self._last_power_w + power_w) / 2
+                self._total_kwh += (avg_power_w * elapsed_hours) / 1000
+            self._last_power_w = power_w
+            self._last_updated = now
+            self.async_write_ha_state()
+            break
+
+    @property
+    def unique_id(self) -> str:
+        """Returns a unique ID for the sensor."""
+        return build_unique_id(self._base_id, "powerlines", self._id, "energy")
+
+    @property
+    def native_value(self) -> float:
+        """Returns the accumulated energy in kWh."""
+        return round(self._total_kwh, 3)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Returns the last known instantaneous power used for integration."""
+        return {"last_power_w": self._last_power_w}
 
 
 class KseniaPartitionSensor(KseniaSensorEntity):
