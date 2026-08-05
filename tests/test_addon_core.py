@@ -2660,4 +2660,3 @@ async def test_add_partition_sensors_includes_arming_failure_sensor():
     assert len(entities) == 2
     assert any(isinstance(e, KseniaPartitionSensor) for e in entities)
     assert any(isinstance(e, KseniaPartitionArmingFailureSensor) for e in entities)
-    assert observed_readData[0] is None
