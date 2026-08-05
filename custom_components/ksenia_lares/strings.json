@@ -94,6 +94,9 @@
       "powerline_energy": {
         "name": "{name} Energy"
       },
+      "partition_arming_failed": {
+        "name": "{name} Arming Failed"
+      },
       "partition_status": {
         "name": "{name}",
         "state": {

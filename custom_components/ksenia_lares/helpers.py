@@ -114,3 +114,28 @@ def build_device_info(ip: str, port: int, use_ssl: bool, system_info: dict) -> d
         "sw_version": system_info.get("VER_LITE", {}).get("FW", "Unknown"),
         "configuration_url": f"{protocol}://{ip}:{port}",
     }
+
+
+def partition_in_mask(prt_value: str | None, partition_id: str | int) -> bool:
+    """Return True if partition_id is included in a Ksenia PRT partition-mask value.
+
+    PRT is either "ALL" (every partition), "0"/"" (no partition), or a hex
+    string where bit (partition_id - 1) set means membership. Used both for
+    ZONES.PRT (zone-to-partition assignment) and, when present, the PRT field
+    on LOGS entries (Ksenia Lares 4.0 SDK).
+    """
+    if prt_value is None:
+        return False
+    value = str(prt_value).strip().upper()
+    if value == "ALL":
+        return True
+    if value in ("", "0"):
+        return False
+    try:
+        mask = int(value, 16)
+        bit_index = int(partition_id) - 1
+    except (TypeError, ValueError):
+        return False
+    if bit_index < 0:
+        return False
+    return (mask >> bit_index) & 1 == 1

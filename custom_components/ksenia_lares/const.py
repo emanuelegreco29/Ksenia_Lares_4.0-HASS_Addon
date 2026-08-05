@@ -35,6 +35,10 @@ DEFAULT_PLATFORMS = [
 # Categories of zones that should be treated as binary sensors (shared by sensor.py and binary_sensor.py)
 BINARY_ZONE_CATS = {"DOOR", "WINDOW", "IMOV", "EMOV", "PMC", "SMOKE", "SEISM", "CMD", "GEN"}
 
+# Zone categories treated as physical openings for arming-failure detection
+# (subset of BINARY_ZONE_CATS — excludes motion/smoke/command/generic zones)
+OPENING_ZONE_CATS = {"DOOR", "WINDOW", "PMC"}
+
 # Entity types
 ENTITY_TYPES = {
     "lights": "Light",

@@ -12,4 +12,6 @@ __pycache__
 tool_simulator_mockup/__pycache__
 .coverage
 
+# AI Helpful files
 .claude/
+docs/
