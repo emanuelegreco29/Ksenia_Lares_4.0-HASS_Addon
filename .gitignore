@@ -1,4 +1,5 @@
 .venv
+.venv_test
 bin
 lib64
 lib
