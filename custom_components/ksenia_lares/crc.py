@@ -28,16 +28,15 @@ def _utf8_bytes(string):
             # Two-byte character
             bytes_array.append(192 | char_code >> 6)
             bytes_array.append(128 | 63 & char_code)
-        elif char_code < 55296 or char_code >= 57344:
+        elif char_code < 65536:
             # Three-byte character
             bytes_array.append(224 | char_code >> 12)
             bytes_array.append(128 | char_code >> 6 & 63)
             bytes_array.append(128 | 63 & char_code)
         else:
-            # Four-byte character (surrogate pair)
-            index += 1
-            next_char = ord(string[index])
-            char_code = 65536 + ((1023 & char_code) << 10 | 1023 & next_char)
+            # Four-byte character (astral plane, e.g. emoji). Python strings
+            # already hold the full code point per index (unlike JS's UTF-16
+            # code units), so no surrogate-pair recombination is needed here.
             bytes_array.append(240 | char_code >> 18)
             bytes_array.append(128 | char_code >> 12 & 63)
             bytes_array.append(128 | char_code >> 6 & 63)
