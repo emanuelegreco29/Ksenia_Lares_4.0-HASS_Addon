@@ -372,7 +372,7 @@ class WebSocketManager:
         # Debug mode based on logger level (safe for mocks)
         try:
             self._debug_mode = logger.getEffectiveLevel() <= logging.DEBUG
-        except TypeError, AttributeError:
+        except (TypeError, AttributeError):
             # Handle test mocks or non-standard loggers
             self._debug_mode = False
 
@@ -1673,7 +1673,7 @@ class WebSocketManager:
         """
         try:
             return int(value)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return default
 
     async def process_command_queue(self):

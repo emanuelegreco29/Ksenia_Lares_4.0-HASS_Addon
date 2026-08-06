@@ -197,7 +197,7 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
             return None
         try:
             return float(raw)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return None
 
     @property
@@ -209,7 +209,7 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
             return None
         try:
             return float(val)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return None
 
     @property
