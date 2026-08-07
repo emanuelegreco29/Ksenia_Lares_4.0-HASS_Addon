@@ -44,6 +44,18 @@ READ_TYPES = [
     "STATUS_TAMPERS",
 ]
 
+# The panel caps READ.PAYLOAD.TYPES at 15 items; READ_TYPES has 19.
+_MAX_READ_TYPES_PER_REQUEST = 15
+
+
+def _split_read_types(types: list[str]) -> list[list[str]]:
+    """Split a TYPES list into batches within the panel's per-READ item limit."""
+    return [
+        types[i : i + _MAX_READ_TYPES_PER_REQUEST]
+        for i in range(0, len(types), _MAX_READ_TYPES_PER_REQUEST)
+    ]
+
+
 REALTIME_TYPES = [
     "STATUS_OUTPUTS",
     "STATUS_BUS_HA_SENSORS",
@@ -302,6 +314,42 @@ async def realtime(websocket, login_id, _LOGGER, ws_lock=None, pending_realtime=
         raise
 
 
+async def _read_types_batch(websocket, login_id, _LOGGER, types_batch, ws_lock, pending_reads):
+    """Send one READ MULTI_TYPES request for a single (<=15 item) TYPES batch."""
+    msg_id = _get_next_cmd_id()
+    payload = {
+        "ID_LOGIN": str(login_id),
+        "ID_READ": msg_id,
+        "TYPES": types_batch,
+    }
+    json_cmd = _build_message("READ", "MULTI_TYPES", payload, msg_id=msg_id)
+
+    future = asyncio.Future()
+    pending_reads[msg_id] = {
+        "future": future,
+        "message": {"CMD": "READ", "PAYLOAD_TYPE": "MULTI_TYPES"},
+        "created_at": time.monotonic(),
+    }
+
+    _LOGGER.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
+    if ws_lock:
+        async with ws_lock:
+            await websocket.send(json_cmd)
+            _LOGGER.debug(f"[{datetime.now()}] READ {msg_id} sent via listener pattern")
+    else:
+        await websocket.send(json_cmd)
+
+    _LOGGER.debug(f"[{datetime.now()}] Waiting for READ {msg_id} response via listener")
+    try:
+        response = await asyncio.wait_for(future, timeout=30)
+        _LOGGER.debug(f"[{datetime.now()}] READ {msg_id} response received via listener")
+        return response.get("PAYLOAD", {})
+    except TimeoutError:
+        # Clean up pending request to prevent "invalid state" if response arrives late
+        pending_reads.pop(msg_id, None)
+        raise TimeoutError("Read data timeout: no response from device within 30s") from None
+
+
 async def readData(
     websocket,
     login_id,
@@ -311,74 +359,42 @@ async def readData(
     pending_reads=None,
     read_id=None,
 ):
-    """Retrieve static configuration data from panel.
+    """Retrieve static configuration and status data from panel.
 
-    Fetches all static configuration including outputs, scenarios,
-    zones, partitions, and system information.
+    Fetches all static configuration including outputs, scenarios, zones,
+    partitions, and system information, plus realtime-mirroring status
+    structures. Split across multiple READ requests to stay within the panel's
+    15-item-per-request limit on READ.PAYLOAD.TYPES (see _MAX_READ_TYPES_PER_REQUEST).
 
     Args:
         websocket: WebSocket connection object
         login_id: Authenticated session ID
         _LOGGER: Logger instance
         ws_lock: Optional asyncio.Lock for synchronizing send operations
-        realtime_handler: Optional callback for processing realtime updates
-        pending_reads: Optional dict to track pending READ operations (for listener routing)
-        read_id: Optional specific read ID to use (for tracking)
+        realtime_handler: Unused (kept for backward source compatibility)
+        pending_reads: Dict to track pending READ operations (required, for listener routing)
+        read_id: Unused (kept for backward source compatibility); each batch gets its own ID
 
     Returns:
-        Configuration data payload dictionary
+        Merged configuration/status data payload dictionary
     """
     _LOGGER.debug(f"[{datetime.now()}] Fetching static configuration data")
 
-    # Generate unique message ID if not provided
-    if read_id is None:
-        read_id = _get_next_cmd_id()
-
-    payload = {
-        "ID_LOGIN": str(login_id),
-        "ID_READ": read_id,
-        "TYPES": READ_TYPES,
-    }
-    json_cmd = _build_message("READ", "MULTI_TYPES", payload, msg_id=read_id)
+    if pending_reads is None:
+        raise ValueError("readData() requires pending_reads dict for listener pattern") from None
 
     try:
-        _LOGGER.debug(f"READ request: {json_cmd}")
-
-        # If we have pending_reads dict, use future-based pattern (listener will handle response)
-        if pending_reads is not None:
-            future = asyncio.Future()
-            pending_reads[read_id] = {
-                "future": future,
-                "message": {"CMD": "READ", "PAYLOAD_TYPE": "MULTI_TYPES"},
-                "created_at": time.monotonic(),
-            }
-
-            _LOGGER.debug(f"Sending message: {_sanitize_logmessage(json_cmd)}")
-            if ws_lock:
-                async with ws_lock:
-                    await websocket.send(json_cmd)
-                    _LOGGER.debug(f"[{datetime.now()}] READ {read_id} sent via listener pattern")
-            else:
-                await websocket.send(json_cmd)
-
-            # Wait for listener to resolve the future
-            _LOGGER.debug(f"[{datetime.now()}] Waiting for READ {read_id} response via listener")
-            try:
-                response = await asyncio.wait_for(future, timeout=30)
-                _LOGGER.debug(f"[{datetime.now()}] READ {read_id} response received via listener")
-                return response.get("PAYLOAD", {})
-            except TimeoutError:
-                # Clean up pending request to prevent "invalid state" if response arrives late
-                pending_reads.pop(read_id, None)
-                raise TimeoutError(
-                    "Read data timeout: no response from device within 30s"
-                ) from None
-
-        # Listener pattern is required - pending_reads must be provided
-        else:
-            raise ValueError(
-                "readData() requires pending_reads dict for listener pattern"
-            ) from None
+        batches = _split_read_types(READ_TYPES)
+        results = await asyncio.gather(
+            *(
+                _read_types_batch(websocket, login_id, _LOGGER, batch, ws_lock, pending_reads)
+                for batch in batches
+            )
+        )
+        merged: dict = {}
+        for result in results:
+            merged.update(result)
+        return merged
     except TimeoutError:
         _LOGGER.error(f"[{datetime.now()}] Read data timeout: no response from device within 30s")
         raise
@@ -919,19 +935,18 @@ async def writeThermostatConfig(websocket, login_id, pin, command_data, queue, l
     Sends a partial thermostat config update (mode change, setpoint, etc.)
     to the Ksenia Lares panel. Only the fields present in thermo_cfg are sent.
 
-    Per the Ksenia WebSocket SDK, WRITE_CFG's PAYLOAD_TYPE is *always*
-    "CFG_ALL" regardless of which configuration structure(s) the payload
-    actually carries - the structure itself is identified by its key inside
-    PAYLOAD (here "CFG_THERMOSTATS"). This previously sent
-    PAYLOAD_TYPE="CFG_THERMOSTATS" instead, a value the SDK never documents
-    for this command; that protocol violation is the most likely explanation
-    for the panel never sending a WRITE_CFG_RES and the write hanging until
-    the client-side timeout.
+    WRITE_CFG's PAYLOAD_TYPE is *always* "CFG_ALL" regardless of which
+    configuration structure(s) the payload actually carries - the structure
+    itself is identified by its key inside PAYLOAD (here "CFG_THERMOSTATS").
+    This previously sent PAYLOAD_TYPE="CFG_THERMOSTATS" instead, a value the
+    panel never recognizes for this command; that protocol violation is the
+    most likely explanation for the panel never sending a WRITE_CFG_RES and
+    the write hanging until the client-side timeout.
 
-    The SDK also notes PIN is only mandatory for WRITE_CFG when logged in as
-    ERGO-T/IP_SUPERV; a USER-type login (what this integration always uses)
-    can omit it. It's still included here since sending it is harmless and
-    keeps this call consistent with every other mutating command.
+    PIN is only mandatory for WRITE_CFG when logged in as ERGO-T/IP_SUPERV;
+    a USER-type login (what this integration always uses) can omit it. It's
+    still included here since sending it is harmless and keeps this call
+    consistent with every other mutating command.
 
     Args:
         websocket: WebSocket connection object

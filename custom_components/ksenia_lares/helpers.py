@@ -122,7 +122,7 @@ def partition_in_mask(prt_value: str | None, partition_id: str | int) -> bool:
     PRT is either "ALL" (every partition), "0"/"" (no partition), or a hex
     string where bit (partition_id - 1) set means membership. Used both for
     ZONES.PRT (zone-to-partition assignment) and, when present, the PRT field
-    on LOGS entries (Ksenia Lares 4.0 SDK).
+    on LOGS entries.
     """
     if prt_value is None:
         return False

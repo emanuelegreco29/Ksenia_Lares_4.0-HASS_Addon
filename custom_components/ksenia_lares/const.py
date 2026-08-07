@@ -14,6 +14,9 @@ CONF_PLATFORMS = "platforms"
 CONF_BRAND = "brand"
 CONF_ARM_HOME_SCENARIO_ID = "arm_home_scenario_id"
 CONF_ARM_NIGHT_SCENARIO_ID = "arm_night_scenario_id"
+CONF_COLD_TOLERANCE = "cold_tolerance"
+CONF_HOT_TOLERANCE = "hot_tolerance"
+CONF_MIN_CYCLE_DURATION = "min_cycle_duration"
 
 # Defaults
 DEFAULT_PORT = 443
@@ -21,6 +24,9 @@ DEFAULT_SSL = True
 SETUP_TIMEOUT = 60  # seconds; allow for device startup delays and initial data fetch retries
 DEFAULT_SCAN_INTERVAL = 60  # seconds; matches the integration's historical hardcoded behavior
 MIN_SCAN_INTERVAL = 10  # seconds; UI floor for non-zero values, 0 (disabled) is always allowed
+DEFAULT_COLD_TOLERANCE = 0.3  # °C; 0 disables the deadband
+DEFAULT_HOT_TOLERANCE = 0.3  # °C; 0 disables the deadband
+DEFAULT_MIN_CYCLE_DURATION = 15  # minutes between setpoint writes; 0 disables the rate-limit
 DEFAULT_PLATFORMS = [
     "light",
     "cover",

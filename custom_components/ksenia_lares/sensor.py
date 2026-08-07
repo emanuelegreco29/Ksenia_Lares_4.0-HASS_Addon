@@ -459,9 +459,9 @@ class KseniaPartitionSensor(KseniaSensorEntity):
 class KseniaPartitionArmingFailureSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor tracking failed arming attempts and the open zones that caused them.
 
-    Ksenia's own arming-failure signal is the "PARMF" log event (documented in
-    the Ksenia Lares 4.0 SDK, not in the community protocol writeup).
-    STATUS_PARTITIONS.ARM alone can't distinguish a real failure from a manual
+    Ksenia's own arming-failure signal is the "PARMF" log event (not covered
+    by the community protocol writeup). STATUS_PARTITIONS.ARM alone can't
+    distinguish a real failure from a manual
     cancel during exit delay, so this entity correlates two already-existing
     realtime channels: "partitions" snapshots open door/window/contact zones
     the instant a partition enters exit delay, and "event_logs" (the existing
@@ -1042,10 +1042,10 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [key.value for key in SystemTamperingStatus]
 
-    # STATUS_SYSTEM.TAMPER/TAMPER_MEM code sets, per the SDK. The "tampers"
-    # listener (STATUS_TAMPERS) below is documented as "REALTIME NOT
-    # IMPLEMENTED" and some firmware never returns it via READ either, so
-    # STATUS_SYSTEM is the reliable source for panel-level tampering.
+    # STATUS_SYSTEM.TAMPER/TAMPER_MEM code sets. The "tampers" listener
+    # (STATUS_TAMPERS) below never pushes realtime updates in practice and
+    # some firmware never returns it via READ either, so STATUS_SYSTEM is
+    # the reliable source for panel-level tampering.
     _PANEL_TAMPER_CODES = {"PANEL"}
     _PERIPHERAL_TAMPER_CODES = {"BUS_PER", "WLS_PER", "IP_PER"}
     _COMM_LOST_CODES = {"LOST_BUS", "LOST_WLS", "LOST_IP_PER"}
@@ -1972,10 +1972,9 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
     """Diagnostic sensor showing system-wide fault status from power, communication, and peripherals.
 
     Reads STATUS_SYSTEM.FAULT (flat list of fault codes) rather than
-    STATUS_FAULTS: per the Ksenia Lares 4.0 SDK, STATUS_FAULTS is documented
-    as "REALTIME NOT IMPLEMENTED", and some panel firmware never returns it
-    via READ either, leaving this sensor permanently stuck at "ok".
-    STATUS_SYSTEM is the structure the SDK confirms works for both.
+    STATUS_FAULTS: STATUS_FAULTS never pushes realtime updates in practice,
+    and some panel firmware never returns it via READ either, leaving this
+    sensor permanently stuck at "ok". STATUS_SYSTEM works reliably for both.
     """
 
     _attr_has_entity_name = True
@@ -1983,7 +1982,7 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [key.value for key in SystemFaults]
 
-    # STATUS_SYSTEM.FAULT code -> category, per the SDK's flat fault-code list.
+    # STATUS_SYSTEM.FAULT code -> category, from the flat fault-code list.
     _FAULT_CATEGORY_CODES = {
         "power_supply_faults": {"PS_MISS", "PS_LOW", "PS_FAULT", "FUSE"},
         "battery_faults": {"LOW_BATT", "BAD_BATT"},

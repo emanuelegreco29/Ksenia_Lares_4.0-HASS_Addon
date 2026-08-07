@@ -442,6 +442,188 @@ async def test_async_set_temperature_noop_without_temperature_kwarg():
 
 
 # ============================================================================
+# Temperature deadband + min_cycle_duration rate-limit
+# ============================================================================
+
+
+def _recording_call_later(monkeypatch):
+    """Patch async_call_later and return the list of recorded scheduling calls."""
+    calls = []
+
+    def _fake_call_later(hass, delay, action):
+        cancel = MagicMock()
+        calls.append({"hass": hass, "delay": delay, "action": action, "cancel": cancel})
+        return cancel
+
+    monkeypatch.setattr("custom_components.ksenia_lares.climate.async_call_later", _fake_call_later)
+    return calls
+
+
+def _tolerant_entity(ws_manager, cold=0.3, hot=0.3, min_cycle=15, status=None):
+    from custom_components.ksenia_lares.climate import KseniaClimateEntity
+
+    thermo = _thermo_data(status=status or {"THERM": {"ACT_SEA": "WIN"}})
+    entity = KseniaClimateEntity(
+        ws_manager,
+        thermo,
+        None,
+        "AA:BB:CC",
+        cold_tolerance=cold,
+        hot_tolerance=hot,
+        min_cycle_duration=min_cycle,
+    )
+    entity.hass = MagicMock()
+    entity.async_write_ha_state = MagicMock()
+    return entity
+
+
+@pytest.mark.asyncio
+async def test_deadband_skips_write_within_tolerance(monkeypatch):
+    from homeassistant.const import ATTR_TEMPERATURE
+
+    _recording_call_later(monkeypatch)
+    ws_manager = MagicMock()
+    ws_manager.write_thermostat_config = AsyncMock(return_value=True)
+    entity = _tolerant_entity(ws_manager, min_cycle=0)
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.0})
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.2})  # delta 0.2 < 0.3 hot tolerance
+
+    ws_manager.write_thermostat_config.assert_called_once()
+    assert entity._last_commanded_target == 20.0
+
+
+@pytest.mark.asyncio
+async def test_deadband_allows_write_beyond_hot_tolerance(monkeypatch):
+    from homeassistant.const import ATTR_TEMPERATURE
+
+    _recording_call_later(monkeypatch)
+    ws_manager = MagicMock()
+    ws_manager.write_thermostat_config = AsyncMock(return_value=True)
+    entity = _tolerant_entity(ws_manager, min_cycle=0)
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.0})
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.5})  # delta 0.5 >= 0.3 hot tolerance
+
+    assert ws_manager.write_thermostat_config.call_count == 2
+    assert entity._last_commanded_target == 20.5
+
+
+@pytest.mark.asyncio
+async def test_deadband_uses_cold_tolerance_for_decreases(monkeypatch):
+    from homeassistant.const import ATTR_TEMPERATURE
+
+    _recording_call_later(monkeypatch)
+    ws_manager = MagicMock()
+    ws_manager.write_thermostat_config = AsyncMock(return_value=True)
+    entity = _tolerant_entity(ws_manager, cold=0.3, hot=0.3, min_cycle=0)
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.0})
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 19.8})  # delta -0.2 < 0.3 cold tolerance
+    assert ws_manager.write_thermostat_config.call_count == 1
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 19.6})  # delta -0.4 >= 0.3 cold tolerance
+    assert ws_manager.write_thermostat_config.call_count == 2
+    assert entity._last_commanded_target == 19.6
+
+
+@pytest.mark.asyncio
+async def test_zero_tolerance_disables_deadband(monkeypatch):
+    from homeassistant.const import ATTR_TEMPERATURE
+
+    _recording_call_later(monkeypatch)
+    ws_manager = MagicMock()
+    ws_manager.write_thermostat_config = AsyncMock(return_value=True)
+    entity = _tolerant_entity(ws_manager, cold=0, hot=0, min_cycle=0)
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.0})
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.1})  # smallest resolvable step
+
+    assert ws_manager.write_thermostat_config.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_min_cycle_duration_defers_and_flushes_write(monkeypatch):
+    from homeassistant.const import ATTR_TEMPERATURE
+
+    calls = _recording_call_later(monkeypatch)
+    ws_manager = MagicMock()
+    ws_manager.write_thermostat_config = AsyncMock(return_value=True)
+    entity = _tolerant_entity(ws_manager, cold=0, hot=0, min_cycle=15)
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.0})
+    ws_manager.write_thermostat_config.assert_called_once()
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 21.0})  # within cooldown -> deferred
+    ws_manager.write_thermostat_config.assert_called_once()  # still only the first write
+    assert len(calls) == 1
+    assert calls[0]["delay"] == pytest.approx(15 * 60, abs=1)
+
+    await calls[0]["action"](None)  # simulate the scheduled flush firing
+
+    assert ws_manager.write_thermostat_config.call_count == 2
+    ws_manager.write_thermostat_config.assert_called_with("10", {"ACT_MODE": "MAN", "WIN": {"TM": "21.0"}})
+    assert entity._last_commanded_target == 21.0
+
+
+@pytest.mark.asyncio
+async def test_new_request_during_cooldown_supersedes_pending(monkeypatch):
+    from homeassistant.const import ATTR_TEMPERATURE
+
+    calls = _recording_call_later(monkeypatch)
+    ws_manager = MagicMock()
+    ws_manager.write_thermostat_config = AsyncMock(return_value=True)
+    entity = _tolerant_entity(ws_manager, cold=0, hot=0, min_cycle=15)
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.0})
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 21.0})  # deferred
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 22.0})  # supersedes the 21.0 deferral
+
+    calls[0]["cancel"].assert_called_once()
+    assert ws_manager.write_thermostat_config.call_count == 1  # only the initial 20.0 write so far
+
+    await calls[1]["action"](None)
+
+    assert ws_manager.write_thermostat_config.call_count == 2
+    ws_manager.write_thermostat_config.assert_called_with("10", {"ACT_MODE": "MAN", "WIN": {"TM": "22.0"}})
+
+
+@pytest.mark.asyncio
+async def test_pending_write_preserved_when_new_request_within_deadband(monkeypatch):
+    from homeassistant.const import ATTR_TEMPERATURE
+
+    calls = _recording_call_later(monkeypatch)
+    ws_manager = MagicMock()
+    ws_manager.write_thermostat_config = AsyncMock(return_value=True)
+    entity = _tolerant_entity(ws_manager, cold=0.3, hot=0.3, min_cycle=15)
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.0})
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.5})  # deferred (beyond hot tolerance)
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.05})  # within tolerance of 20.0 -> dropped
+
+    calls[0]["cancel"].assert_not_called()  # the 20.5 deferral must survive
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_async_will_remove_from_hass_cancels_pending(monkeypatch):
+    from homeassistant.const import ATTR_TEMPERATURE
+
+    calls = _recording_call_later(monkeypatch)
+    ws_manager = MagicMock()
+    ws_manager.write_thermostat_config = AsyncMock(return_value=True)
+    entity = _tolerant_entity(ws_manager, cold=0, hot=0, min_cycle=15)
+
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 20.0})
+    await entity.async_set_temperature(**{ATTR_TEMPERATURE: 21.0})  # deferred
+
+    await entity.async_will_remove_from_hass()
+
+    calls[0]["cancel"].assert_called_once()
+    assert entity._pending_cancel is None
+
+
+# ============================================================================
 # async_set_preset_mode
 # ============================================================================
 
@@ -518,6 +700,37 @@ async def test_async_setup_entry_creates_one_entity_per_thermostat():
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args[0][0]
     assert len(entities) == 2
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_passes_tolerance_options():
+    from custom_components.ksenia_lares.climate import async_setup_entry
+    from custom_components.ksenia_lares.const import (
+        CONF_COLD_TOLERANCE,
+        CONF_HOT_TOLERANCE,
+        CONF_MIN_CYCLE_DURATION,
+        DOMAIN,
+    )
+
+    ws_manager = MagicMock()
+    ws_manager.ip = "192.168.1.50"
+    ws_manager.getThermostats = AsyncMock(return_value=[_thermo_data("1", "10")])
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"ws_manager": ws_manager, "device_info": None, "mac": "AA:BB:CC"}}
+    config_entry = MagicMock()
+    config_entry.options = {
+        CONF_COLD_TOLERANCE: 0.5,
+        CONF_HOT_TOLERANCE: 0.7,
+        CONF_MIN_CYCLE_DURATION: 5,
+    }
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, config_entry, async_add_entities)
+
+    entity = async_add_entities.call_args[0][0][0]
+    assert entity._cold_tolerance == 0.5
+    assert entity._hot_tolerance == 0.7
+    assert entity._min_cycle_duration == 5 * 60
 
 
 @pytest.mark.asyncio

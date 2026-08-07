@@ -15,13 +15,23 @@ Data sources
 """
 
 import logging
+import time
 from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACAction, HVACMode
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
+from homeassistant.helpers.event import async_call_later
 
-from .const import DOMAIN
+from .const import (
+    CONF_COLD_TOLERANCE,
+    CONF_HOT_TOLERANCE,
+    CONF_MIN_CYCLE_DURATION,
+    DEFAULT_COLD_TOLERANCE,
+    DEFAULT_HOT_TOLERANCE,
+    DEFAULT_MIN_CYCLE_DURATION,
+    DOMAIN,
+)
 from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -111,7 +121,7 @@ _SUPPORTED_HVAC_MODES = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.AU
 
 MIN_TEMP = 5.0
 MAX_TEMP = 35.0
-TEMP_STEP = 0.1  # CFG_THERMOSTATS setpoints (T1/T2/T3/TM) accept 0.1°C resolution per SDK
+TEMP_STEP = 0.1  # CFG_THERMOSTATS setpoints (T1/T2/T3/TM) accept 0.1°C resolution
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -125,11 +135,26 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         device_info = hass.data[DOMAIN].get("device_info")
         base_id = hass.data[DOMAIN].get("mac") or ws_manager.ip
 
+        cold_tolerance = config_entry.options.get(CONF_COLD_TOLERANCE, DEFAULT_COLD_TOLERANCE)
+        hot_tolerance = config_entry.options.get(CONF_HOT_TOLERANCE, DEFAULT_HOT_TOLERANCE)
+        min_cycle_duration = config_entry.options.get(
+            CONF_MIN_CYCLE_DURATION, DEFAULT_MIN_CYCLE_DURATION
+        )
+
         thermostats = await ws_manager.getThermostats()
         _LOGGER.debug("Found %d thermostat zones", len(thermostats))
 
         entities = [
-            KseniaClimateEntity(ws_manager, thermo, device_info, base_id) for thermo in thermostats
+            KseniaClimateEntity(
+                ws_manager,
+                thermo,
+                device_info,
+                base_id,
+                cold_tolerance=cold_tolerance,
+                hot_tolerance=hot_tolerance,
+                min_cycle_duration=min_cycle_duration,
+            )
+            for thermo in thermostats
         ]
 
         if entities:
@@ -165,7 +190,16 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
     )
     _attr_preset_modes = [PRESET_ECO, PRESET_STANDARD, PRESET_COMFORT]
 
-    def __init__(self, ws_manager, thermo_data: dict, device_info, base_id: str):
+    def __init__(
+        self,
+        ws_manager,
+        thermo_data: dict,
+        device_info,
+        base_id: str,
+        cold_tolerance: float = DEFAULT_COLD_TOLERANCE,
+        hot_tolerance: float = DEFAULT_HOT_TOLERANCE,
+        min_cycle_duration: float = DEFAULT_MIN_CYCLE_DURATION,
+    ):
         """Initialise from merged thermostat data returned by getThermostats()."""
         self.ws_manager = ws_manager
         self._sensor_id: str = thermo_data["sensor_id"]
@@ -179,6 +213,21 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
         # Mutable state — updated by REALTIME push
         self._status_data: dict = dict(thermo_data.get("status", {}))
         self._cfg_data: dict = dict(thermo_data.get("cfg", {}))
+
+        # Setpoint deadband + rate-limit: the panel runs its own hysteresis on
+        # the TM setpoint we write, so this only throttles how often/how far
+        # apart the writes we send it are — it doesn't drive any relay itself.
+        self._cold_tolerance = cold_tolerance
+        self._hot_tolerance = hot_tolerance
+        self._min_cycle_duration = min_cycle_duration * 60  # minutes -> seconds
+        self._last_command_time: float | None = None
+        self._last_commanded_target: float | None = None
+        self._pending_cancel = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._pending_cancel is not None:
+            self._pending_cancel()
+            self._pending_cancel = None
 
     @property
     def unique_id(self) -> str:
@@ -332,14 +381,19 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
                 self._cfg_data["ACT_SEA"] = ksenia_season
             self.async_write_ha_state()
 
-    async def async_set_temperature(self, **kwargs: Any) -> None:
-        """Set target temperature (switches to MAN mode, updates TM setpoint)."""
-        temperature = kwargs.get(ATTR_TEMPERATURE)
-        if temperature is None:
-            return
+    def _passes_deadband(self, temperature: float) -> bool:
+        """Return False if temperature is too close to the last commanded value."""
+        if self._last_commanded_target is None:
+            return True
+        delta = temperature - self._last_commanded_target
+        if delta > 0:
+            return delta >= self._hot_tolerance
+        if delta < 0:
+            return -delta >= self._cold_tolerance
+        return False
 
-        temperature = round(float(temperature), 1)  # panel setpoint resolution is 0.1°C
-
+    async def _write_target_temperature(self, temperature: float) -> None:
+        """Send the TM setpoint change to the panel and update local state."""
         season = self._active_season
 
         _LOGGER.debug(
@@ -355,11 +409,47 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
         }
         success = await self.ws_manager.write_thermostat_config(self._thermo_id, changes)
         if success:
+            self._last_command_time = time.monotonic()
+            self._last_commanded_target = temperature
             self._cfg_data["ACT_MODE"] = "MAN"
             season_cfg = dict(self._cfg_data.get(season, {}))
             season_cfg["TM"] = str(temperature)
             self._cfg_data[season] = season_cfg
             self.async_write_ha_state()
+
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        """Set target temperature (switches to MAN mode, updates TM setpoint).
+
+        Requests within the deadband of the last commanded value are dropped;
+        requests arriving before min_cycle_duration has elapsed since the
+        last write are deferred and coalesced into a single later write.
+        """
+        temperature = kwargs.get(ATTR_TEMPERATURE)
+        if temperature is None:
+            return
+
+        temperature = round(float(temperature), 1)  # panel setpoint resolution is 0.1°C
+
+        if not self._passes_deadband(temperature):
+            return
+
+        if self._pending_cancel is not None:
+            self._pending_cancel()
+            self._pending_cancel = None
+
+        now = time.monotonic()
+        elapsed = None if self._last_command_time is None else now - self._last_command_time
+        if self._min_cycle_duration and elapsed is not None and elapsed < self._min_cycle_duration:
+            remaining = self._min_cycle_duration - elapsed
+
+            async def _deferred(_now, temperature=temperature) -> None:
+                self._pending_cancel = None
+                await self._write_target_temperature(temperature)
+
+            self._pending_cancel = async_call_later(self.hass, remaining, _deferred)
+            return
+
+        await self._write_target_temperature(temperature)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Apply a named temperature preset (eco=T1, standard=T2, comfort=T3).

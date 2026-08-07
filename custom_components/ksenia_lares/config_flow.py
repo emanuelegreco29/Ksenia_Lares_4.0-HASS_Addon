@@ -21,12 +21,18 @@ from .const import (
     CONF_ARM_HOME_SCENARIO_ID,
     CONF_ARM_NIGHT_SCENARIO_ID,
     CONF_BRAND,
+    CONF_COLD_TOLERANCE,
     CONF_HOST,
+    CONF_HOT_TOLERANCE,
+    CONF_MIN_CYCLE_DURATION,
     CONF_PIN,
     CONF_PLATFORMS,
     CONF_PORT,
     CONF_SSL,
     DEFAULT_BRAND,
+    DEFAULT_COLD_TOLERANCE,
+    DEFAULT_HOT_TOLERANCE,
+    DEFAULT_MIN_CYCLE_DURATION,
     DEFAULT_PLATFORMS,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
@@ -299,6 +305,34 @@ class KseniaOptionsFlowHandler(config_entries.OptionsFlow):
                         unit_of_measurement="s",
                     )
                 ),
+                # Climate setpoint deadband + rate-limit — 0 disables either check.
+                vol.Optional(CONF_COLD_TOLERANCE): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0,
+                        max=5,
+                        step=0.1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="°C",
+                    )
+                ),
+                vol.Optional(CONF_HOT_TOLERANCE): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0,
+                        max=5,
+                        step=0.1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="°C",
+                    )
+                ),
+                vol.Optional(CONF_MIN_CYCLE_DURATION): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0,
+                        max=120,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="min",
+                    )
+                ),
             }
         )
 
@@ -308,6 +342,15 @@ class KseniaOptionsFlowHandler(config_entries.OptionsFlow):
             ),
             CONF_SCAN_INTERVAL: self.config_entry.options.get(
                 CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+            ),
+            CONF_COLD_TOLERANCE: self.config_entry.options.get(
+                CONF_COLD_TOLERANCE, DEFAULT_COLD_TOLERANCE
+            ),
+            CONF_HOT_TOLERANCE: self.config_entry.options.get(
+                CONF_HOT_TOLERANCE, DEFAULT_HOT_TOLERANCE
+            ),
+            CONF_MIN_CYCLE_DURATION: self.config_entry.options.get(
+                CONF_MIN_CYCLE_DURATION, DEFAULT_MIN_CYCLE_DURATION
             ),
         }
         if CONF_ARM_NIGHT_SCENARIO_ID in self.config_entry.options:

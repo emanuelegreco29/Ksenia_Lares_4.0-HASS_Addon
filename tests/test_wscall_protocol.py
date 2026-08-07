@@ -239,20 +239,57 @@ async def test_readdata_requires_pending_reads_dict():
 
 
 @pytest.mark.asyncio
-async def test_readdata_resolves_and_returns_payload():
+async def test_readdata_splits_into_batches_within_panel_limit():
+    """READ_TYPES has more entries than the panel accepts in one READ; readData()
+    must split it into multiple <=15-item requests and merge the responses.
+    """
     ws = AsyncMock()
     pending: dict = {}
 
-    async def _resolve_soon():
-        await asyncio.sleep(0)
-        msg_id = next(iter(pending))
-        pending[msg_id]["future"].set_result({"PAYLOAD": {"ZONES": []}})
+    async def _resolve_all():
+        # Wait until readData() has registered all its batch requests.
+        while len(pending) < len(wscall._split_read_types(wscall.READ_TYPES)):
+            await asyncio.sleep(0)
+        for i, msg_id in enumerate(list(pending)):
+            pending[msg_id]["future"].set_result({"PAYLOAD": {f"KEY_{i}": [i]}})
 
-    task = asyncio.create_task(_resolve_soon())
+    task = asyncio.create_task(_resolve_all())
     result = await wscall.readData(ws, 1, MagicMock(), pending_reads=pending)
     await task
 
-    assert result == {"ZONES": []}
+    expected_batches = len(wscall._split_read_types(wscall.READ_TYPES))
+    assert expected_batches > 1  # sanity check: this is exactly the bug being tested
+    assert len(result) == expected_batches
+    assert ws.send.await_count == expected_batches
+
+
+@pytest.mark.asyncio
+async def test_readdata_batches_stay_within_panel_item_limit():
+    """Every individual READ request sent must have <=15 TYPES items."""
+    ws = AsyncMock()
+    pending: dict = {}
+    sent_type_counts = []
+
+    def _capture_send(raw_message):
+        import json as _json
+
+        sent_type_counts.append(len(_json.loads(raw_message)["PAYLOAD"]["TYPES"]))
+
+    ws.send = AsyncMock(side_effect=_capture_send)
+
+    async def _resolve_all():
+        while len(pending) < len(wscall._split_read_types(wscall.READ_TYPES)):
+            await asyncio.sleep(0)
+        for msg_id in list(pending):
+            pending[msg_id]["future"].set_result({"PAYLOAD": {}})
+
+    task = asyncio.create_task(_resolve_all())
+    await wscall.readData(ws, 1, MagicMock(), pending_reads=pending)
+    await task
+
+    assert sent_type_counts
+    assert all(count <= wscall._MAX_READ_TYPES_PER_REQUEST for count in sent_type_counts)
+    assert sum(sent_type_counts) == len(wscall.READ_TYPES)
 
 
 # ============================================================================
