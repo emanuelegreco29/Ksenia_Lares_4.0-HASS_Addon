@@ -1042,6 +1042,14 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [key.value for key in SystemTamperingStatus]
 
+    # STATUS_SYSTEM.TAMPER/TAMPER_MEM code sets, per the SDK. The "tampers"
+    # listener (STATUS_TAMPERS) below is documented as "REALTIME NOT
+    # IMPLEMENTED" and some firmware never returns it via READ either, so
+    # STATUS_SYSTEM is the reliable source for panel-level tampering.
+    _PANEL_TAMPER_CODES = {"PANEL"}
+    _PERIPHERAL_TAMPER_CODES = {"BUS_PER", "WLS_PER", "IP_PER"}
+    _COMM_LOST_CODES = {"LOST_BUS", "LOST_WLS", "LOST_IP_PER"}
+
     def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize the alarm tamper status sensor."""
         self.ws_manager = ws_manager
@@ -1051,6 +1059,7 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         self._tampered_zones = []  # Track current tampered zones
         self._zone_names = {}  # Map zone IDs to names
         self._partition_tst_states: dict = {}  # Map partition ID to TST value
+        self._system_tamper_memory = False  # STATUS_SYSTEM.TAMPER_MEM non-empty
         self._attributes = {
             "tampered_zones": [],
             "panel_tampered": False,
@@ -1061,11 +1070,12 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
         self._raw_data = {}
 
     async def async_added_to_hass(self):
-        """Subscribe to partition, zone, and tamper realtime updates."""
+        """Subscribe to partition, zone, system, and tamper realtime updates."""
         await super().async_added_to_hass()
         self.ws_manager.register_listener("partitions", self._handle_partition_update)
         self.ws_manager.register_listener("zones", self._handle_zone_update)
         self.ws_manager.register_listener("tampers", self._handle_tampers_update)
+        self.ws_manager.register_listener("systems", self._handle_system_update)
         # Build zone name map from static data
         try:
             zones = await self.ws_manager.getSensor("ZONES")
@@ -1074,6 +1084,9 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
                 self._zone_names[zone_id] = get_entity_name(zone, zone_id, f"Zone {zone_id}")
         except Exception as e:
             _LOGGER.debug(f"Error loading zone names for tamper sensor: {e}")
+        cached = self.ws_manager.get_cached_data("STATUS_SYSTEM")
+        if cached:
+            await self._handle_system_update(cached)
 
     async def _handle_zone_update(self, data_list):
         """Handle realtime zone updates and track tampered zones."""
@@ -1085,6 +1098,24 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
                 tampered.append(zone_name)
         self._tampered_zones = tampered
         self._attributes["tampered_zones"] = tampered
+        self._recalculate_state()
+
+    async def _handle_system_update(self, data_list):
+        """Handle realtime STATUS_SYSTEM updates and extract TAMPER/TAMPER_MEM."""
+        if not data_list:
+            return
+        system = data_list[0]
+        tamper_codes = set(system.get("TAMPER", []) or [])
+        tamper_mem_codes = set(system.get("TAMPER_MEM", []) or [])
+
+        self._attributes["panel_tampered"] = bool(tamper_codes & self._PANEL_TAMPER_CODES)
+        self._attributes["peripheral_tampers"] = len(
+            tamper_codes & self._PERIPHERAL_TAMPER_CODES
+        )
+        self._attributes["jam_868_detected"] = "JAM_868" in tamper_codes
+        self._attributes["communication_lost"] = bool(tamper_codes & self._COMM_LOST_CODES)
+        self._system_tamper_memory = bool(tamper_mem_codes)
+
         self._recalculate_state()
 
     async def _handle_tampers_update(self, data_list):
@@ -1153,7 +1184,7 @@ class KseniaAlarmTamperStatusSensor(KseniaEntity, SensorEntity):
                 v == PartitionTamperStatus.ONGOING_TAMPERING
                 for v in self._partition_tst_states.values()
             )
-            has_tamper_memory = any(
+            has_tamper_memory = self._system_tamper_memory or any(
                 v == PartitionTamperStatus.TAMPERING_MEMORY
                 for v in self._partition_tst_states.values()
             )
@@ -1502,9 +1533,10 @@ class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
         self._raw_data = {}
 
     async def async_added_to_hass(self):
-        """Subscribe to zone realtime updates to detect tamper state changes."""
+        """Subscribe to zone and system realtime updates to detect tamper state changes."""
         await super().async_added_to_hass()
         self.ws_manager.register_listener("zones", self._handle_zone_update)
+        self.ws_manager.register_listener("systems", self._handle_system_update)
         # Build zone name map
         try:
             zones = await self.ws_manager.getSensor("ZONES")
@@ -1532,6 +1564,16 @@ class KseniaLastTamperedZonesSensor(KseniaEntity, SensorEntity):
         elif not tampered and self._last_tampered_zones:
             # Keep the last state (don't clear until explicitly reset)
             pass
+
+    async def _handle_system_update(self, data_list):
+        """Capture a panel-level tamper (not tied to any zone ID) via STATUS_SYSTEM.TAMPER."""
+        if not data_list or self._last_tampered_zones:
+            return
+        system = data_list[0]
+        if "PANEL" in (system.get("TAMPER") or []):
+            self._last_tampered_zones = ["Panel"]
+            self._state = "Panel"
+            self.async_write_ha_state()
 
     @property
     def unique_id(self):
@@ -1712,6 +1754,13 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [key.value for key in PowerSupplyStatus]
 
+    # Fallback fault codes (from STATUS_SYSTEM.FAULT) used to estimate power
+    # health when STATUS_PANEL never reports usable M/B voltage fields - some
+    # Lares 4.0 panel/firmware combinations omit them entirely, which
+    # previously left this sensor stuck on "Unknown" forever.
+    _MAIN_POWER_FAULT_CODES = {"PS_MISS", "PS_LOW", "PS_FAULT", "FUSE"}
+    _BATTERY_FAULT_CODES = {"LOW_BATT", "BAD_BATT"}
+
     def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize the power supply sensor."""
         self.ws_manager = ws_manager
@@ -1728,6 +1777,7 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
         try:
             await super().async_added_to_hass()
             self.ws_manager.register_listener("panel", self._handle_panel_update)
+            self.ws_manager.register_listener("systems", self._handle_system_fallback_update)
             self._listener_registered = True
             _LOGGER.debug("[PowerSupply] Registered panel listener")
 
@@ -1744,6 +1794,9 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
                 await self._handle_panel_update(cached)
             else:
                 _LOGGER.debug("[PowerSupply] No STATUS_PANEL in cached payload")
+            cached_system = self.ws_manager.get_cached_data("STATUS_SYSTEM")
+            if cached_system:
+                await self._handle_system_fallback_update(cached_system)
         except Exception as e:
             _LOGGER.error("[PowerSupply] Error during registration: %s", e, exc_info=True)
             self._listener_registered = False
@@ -1818,6 +1871,27 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
             self._battery_voltage,
         )
         return True
+
+    async def _handle_system_fallback_update(self, data_list):
+        """Estimate power health from STATUS_SYSTEM.FAULT when STATUS_PANEL has no voltages.
+
+        Only takes effect while no STATUS_PANEL voltage has ever been parsed;
+        once real M/B values arrive, that path always takes priority.
+        """
+        if self._main_voltage is not None or not data_list:
+            return
+        fault_codes = set(data_list[0].get("FAULT", []) or [])
+        main_fault = bool(fault_codes & self._MAIN_POWER_FAULT_CODES)
+        battery_fault = bool(fault_codes & self._BATTERY_FAULT_CODES)
+        if main_fault and battery_fault:
+            self._state = PowerSupplyStatus.CRITICAL
+        elif main_fault:
+            self._state = PowerSupplyStatus.LOW_MAIN_POWER
+        elif battery_fault:
+            self._state = PowerSupplyStatus.LOW_BATTERY
+        else:
+            self._state = PowerSupplyStatus.OK
+        self.async_write_ha_state()
 
     def _calculate_power_health_state(self) -> str:
         """Determine power supply health state from stored voltage values."""
@@ -1895,12 +1969,37 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
 
 
 class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
-    """Diagnostic sensor showing system-wide fault status from power, communication, and peripherals."""
+    """Diagnostic sensor showing system-wide fault status from power, communication, and peripherals.
+
+    Reads STATUS_SYSTEM.FAULT (flat list of fault codes) rather than
+    STATUS_FAULTS: per the Ksenia Lares 4.0 SDK, STATUS_FAULTS is documented
+    as "REALTIME NOT IMPLEMENTED", and some panel firmware never returns it
+    via READ either, leaving this sensor permanently stuck at "ok".
+    STATUS_SYSTEM is the structure the SDK confirms works for both.
+    """
 
     _attr_has_entity_name = True
     _attr_translation_key = "system_faults"
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [key.value for key in SystemFaults]
+
+    # STATUS_SYSTEM.FAULT code -> category, per the SDK's flat fault-code list.
+    _FAULT_CATEGORY_CODES = {
+        "power_supply_faults": {"PS_MISS", "PS_LOW", "PS_FAULT", "FUSE"},
+        "battery_faults": {"LOW_BATT", "BAD_BATT"},
+        "communication_faults": {
+            "LOST_BUS",
+            "LOST_WLS",
+            "LAN_ETH",
+            "REM_ETH",
+            "PSTN",
+            "MOBILE",
+            "LOST_IP_PER",
+        },
+        "zone_faults": {"ZONE"},
+        "sim_faults": {"SIM_CRE", "SIM_DATE"},
+        "system_faults": {"COMMUNICATION", "SIAIP_SUP", "SYSTEM"},
+    }
 
     def __init__(self, ws_manager, device_info=None, base_id=None):
         """Initialize the system faults sensor."""
@@ -1921,51 +2020,30 @@ class KseniaSystemFaultsSensor(KseniaEntity, SensorEntity):
         self._raw_data = {}
 
     async def async_added_to_hass(self):
-        """Subscribe to faults realtime updates."""
+        """Subscribe to system realtime updates and seed from cache."""
         await super().async_added_to_hass()
-        self.ws_manager.register_listener("faults", self._handle_faults_update)
+        self.ws_manager.register_listener("systems", self._handle_system_update)
+        cached = self.ws_manager.get_cached_data("STATUS_SYSTEM")
+        if cached:
+            await self._handle_system_update(cached)
 
-    async def _handle_faults_update(self, data_list):
-        """Handle realtime fault status updates from STATUS_FAULTS."""
+    async def _handle_system_update(self, data_list):
+        """Handle realtime STATUS_SYSTEM updates and extract the FAULT code list."""
         if not data_list or len(data_list) == 0:
             self._reset_faults()
             return
 
-        faults = data_list[0]  # Usually only one faults object
-        self._raw_data = faults
-        self._count_fault_categories(faults)
+        system = data_list[0]
+        self._raw_data = system
+        self._count_fault_categories(system.get("FAULT", []))
         self._apply_fault_state()
         self.async_write_ha_state()
 
-    def _count_fault_categories(self, faults: dict) -> None:
-        """Count faults per category and update attributes in-place."""
-        self._attributes["power_supply_faults"] = (
-            len(faults.get("PS_MISS", []))
-            + len(faults.get("PS_LOW", []))
-            + len(faults.get("PS_FAULT", []))
-            + len(faults.get("FUSE", []))
-        )
-        self._attributes["battery_faults"] = len(faults.get("LOW_BATT", [])) + len(
-            faults.get("BAD_BATT", [])
-        )
-        self._attributes["communication_faults"] = (
-            len(faults.get("LOST_BUS", []))
-            + len(faults.get("LOST_WLS", []))
-            + len(faults.get("LAN_ETH", []))
-            + len(faults.get("REM_ETH", []))
-            + len(faults.get("PSTN", []))
-            + len(faults.get("MOBILE", []))
-            + len(faults.get("LOST_IP_PER", []))
-        )
-        self._attributes["zone_faults"] = len(faults.get("ZONE", []))
-        self._attributes["sim_faults"] = len(faults.get("SIM_DATE", [])) + len(
-            faults.get("SIM_CRE", [])
-        )
-        self._attributes["system_faults"] = (
-            len(faults.get("COMMUNICATION", []))
-            + len(faults.get("SIAIP_SUP", []))
-            + len(faults.get("SYSTEM", []))
-        )
+    def _count_fault_categories(self, fault_codes) -> None:
+        """Count active fault codes per category and update attributes in-place."""
+        codes = set(fault_codes or [])
+        for attr_key, category_codes in self._FAULT_CATEGORY_CODES.items():
+            self._attributes[attr_key] = len(codes & category_codes)
 
     def _apply_fault_state(self) -> None:
         """Recalculate total faults, category labels, and sensor state from attributes."""

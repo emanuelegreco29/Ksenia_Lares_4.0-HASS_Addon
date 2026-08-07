@@ -1573,8 +1573,16 @@ class WebSocketManager:
                     f"[WS] Notifying listeners for {status_payload_type}: {listener_types}"
                 )
                 self._update_cache(status_payload_type, data[status_payload_type])
+                # STATUS_SYSTEM broadcasts are often partial; notify with the merged cache
+                # entry so listeners never see a sub-field as cleared just because a given
+                # broadcast omitted it.
+                notify_payload = (
+                    self._readData.get(status_payload_type, data[status_payload_type])
+                    if status_payload_type == "STATUS_SYSTEM"
+                    else data[status_payload_type]
+                )
                 try:
-                    await self._notify_listeners(listener_types, data[status_payload_type])
+                    await self._notify_listeners(listener_types, notify_payload)
                 except Exception as e:
                     self._logger.error(
                         f"[WS] Error notifying listeners for {status_payload_type}: {e}",

@@ -572,14 +572,23 @@ async def test_connection_status_sensor_deep_merges_partial_updates():
 
 @pytest.mark.asyncio
 async def test_system_faults_sensor_counts_categories():
+    """Reads STATUS_SYSTEM.FAULT (flat code list), not STATUS_FAULTS.
+
+    STATUS_FAULTS is documented "REALTIME NOT IMPLEMENTED" in the Ksenia SDK
+    and some firmware never returns it via READ either, so the sensor was
+    rewired to STATUS_SYSTEM.FAULT, which the SDK confirms works for both.
+    """
     ws_manager = MagicMock()
     entity = KseniaSystemFaultsSensor(ws_manager)
     entity.async_write_ha_state = MagicMock()
 
-    await entity._handle_faults_update([{"PS_MISS": ["a"], "LOW_BATT": ["b", "c"]}])
+    await entity._handle_system_update(
+        [{"ID": "1", "FAULT": ["PS_MISS", "LOW_BATT", "LOST_BUS"]}]
+    )
 
     assert entity.extra_state_attributes["power_supply_faults"] == 1
-    assert entity.extra_state_attributes["battery_faults"] == 2
+    assert entity.extra_state_attributes["battery_faults"] == 1
+    assert entity.extra_state_attributes["communication_faults"] == 1
     assert entity._state == SystemFaults.MULTIPLE_FAULTS  # total=3
 
 
@@ -589,7 +598,9 @@ async def test_system_faults_sensor_critical_when_many_faults():
     entity = KseniaSystemFaultsSensor(ws_manager)
     entity.async_write_ha_state = MagicMock()
 
-    await entity._handle_faults_update([{"ZONE": ["a", "b", "c", "d", "e", "f"]}])
+    await entity._handle_system_update(
+        [{"ID": "1", "FAULT": ["PS_MISS", "LOW_BATT", "LOST_BUS", "ZONE", "SIM_CRE", "SYSTEM"]}]
+    )
 
     assert entity._state == SystemFaults.CRITICAL_FAULTS
 
@@ -600,8 +611,8 @@ async def test_system_faults_sensor_resets_on_empty_update():
     entity = KseniaSystemFaultsSensor(ws_manager)
     entity.async_write_ha_state = MagicMock()
 
-    await entity._handle_faults_update([{"ZONE": ["a"]}])
-    await entity._handle_faults_update([])
+    await entity._handle_system_update([{"ID": "1", "FAULT": ["ZONE"]}])
+    await entity._handle_system_update([])
 
     assert entity._state == SystemFaults.OK
     assert entity.extra_state_attributes["total_faults"] == 0
