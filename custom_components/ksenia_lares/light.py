@@ -3,7 +3,7 @@
 import logging
 import time
 
-from homeassistant.components.light import LightEntity
+from homeassistant.components.light import LightEntity, ATTR_BRIGHTNESS
 from homeassistant.components.light.const import ColorMode
 
 from .const import DOMAIN
@@ -75,6 +75,8 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         _LOGGER.debug("Initializing KseniaLightEntity with data: %s", light_data)
         # Use the name given by Ksenia, otherwise "Light <ID>"
         self._attr_name = get_entity_name(light_data, self._id, f"Light {self._id}")
+        # Determine if the light is dimmable based on the "MOD" field
+        self._is_dimmable = light_data.get("MOD") == "AN"
         self._state = light_data.get("STA", "off").lower() == "on"
         self._pending_command = None
         self._device_info = device_info
@@ -120,13 +122,34 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
 
     @property
     def supported_color_modes(self):
-        """Only ON/OFF is supported."""
+        """Returns the supported color modes of the light
+        (BRIGHTNESS and ONOFF if dimmable, only ONOFF otherwise)."""
+        if self._is_dimmable:
+            return {ColorMode.BRIGHTNESS, ColorMode.ONOFF}
+
         return {ColorMode.ONOFF}
 
     @property
     def color_mode(self):
-        """Only ON/OFF is supported."""
+        """Returns the color mode of the light
+        (BRIGHTNESS if dimmable, ONOFF otherwise)."""
+        if self._is_dimmable:
+            return ColorMode.BRIGHTNESS
+
         return ColorMode.ONOFF
+
+    @property
+    def brightness(self):
+        """Returns the brightness of the light (0-255) if dimmable,
+        None otherwise."""
+        if not self._is_dimmable:
+            return None
+
+        try:
+            position = int(self._raw_data.get("POS", 0))
+        except (TypeError, ValueError):
+            return None
+        return round(position * 255 / 100)
 
     @property
     def extra_state_attributes(self):
@@ -142,6 +165,18 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         if not self.ws_manager.available:
             _LOGGER.error("WebSocket not connected, cannot turn on light %s", self._id)
             return
+
+        # Handle brightness if provided and the light is dimmable
+        if ATTR_BRIGHTNESS in kwargs and self._is_dimmable:
+            level = round(kwargs[ATTR_BRIGHTNESS] * 100 / 255)
+            level = max(0, min(100, level))
+
+            await self.ws_manager.turnOnOutput(
+                self._id,
+                brightness=level,
+            )
+        else:  # Otherwise just turn it on
+            await self.ws_manager.turnOnOutput(self._id)
 
         await self.ws_manager.turnOnOutput(self._id)
         self._state = True
