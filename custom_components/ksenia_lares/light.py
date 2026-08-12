@@ -1,15 +1,19 @@
 """Light entities for Ksenia Lares integration."""
 
 import logging
+import math
 import time
 
-from homeassistant.components.light import LightEntity, ATTR_BRIGHTNESS
+from homeassistant.components.light import ATTR_BRIGHTNESS, LightEntity
 from homeassistant.components.light.const import ColorMode
+from homeassistant.util.color import brightness_to_value, value_to_brightness
 
 from .const import DOMAIN
 from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
+
+BRIGHTNESS_SCALE = (0, 100)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -125,7 +129,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         """Returns the supported color modes of the light
         (BRIGHTNESS and ONOFF if dimmable, only ONOFF otherwise)."""
         if self._is_dimmable:
-            return {ColorMode.BRIGHTNESS, ColorMode.ONOFF}
+            return {ColorMode.BRIGHTNESS}
 
         return {ColorMode.ONOFF}
 
@@ -144,12 +148,11 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         None otherwise."""
         if not self._is_dimmable:
             return None
-
         try:
-            position = int(self._raw_data.get("POS", 0))
+            pos = int(self._raw_data.get("POS", 0))
         except (TypeError, ValueError):
             return None
-        return round(position * 255 / 100)
+        return value_to_brightness(BRIGHTNESS_SCALE, pos)
 
     @property
     def extra_state_attributes(self):
@@ -168,8 +171,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
 
         # Handle brightness if provided and the light is dimmable
         if ATTR_BRIGHTNESS in kwargs and self._is_dimmable:
-            level = round(kwargs[ATTR_BRIGHTNESS] * 100 / 255)
-            level = max(0, min(100, level))
+            level = math.ceil(brightness_to_value(BRIGHTNESS_SCALE, kwargs[ATTR_BRIGHTNESS]))
 
             await self.ws_manager.turnOnOutput(
                 self._id,
