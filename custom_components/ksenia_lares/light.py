@@ -1,7 +1,6 @@
 """Light entities for Ksenia Lares integration."""
 
 import logging
-import math
 import time
 
 from homeassistant.components.light import ATTR_BRIGHTNESS, LightEntity
@@ -13,7 +12,7 @@ from .helpers import KseniaEntity, build_unique_id, get_entity_name
 
 _LOGGER = logging.getLogger(__name__)
 
-BRIGHTNESS_SCALE = (0, 100)
+BRIGHTNESS_SCALE = (1, 100)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -30,7 +29,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         lights = await ws_manager.getLights()
         _LOGGER.debug("Found %d lights", len(lights))
 
-        entities = [KseniaLightEntity(ws_manager, light, device_info, base_id) for light in lights]
+        entities = [
+            KseniaLightEntity(ws_manager, light, device_info, base_id)
+            for light in lights
+        ]
         async_add_entities(entities, update_before_add=True)
 
         # Track discovered light IDs and set up listener-based discovery
@@ -50,12 +52,16 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     light_id = light.get("ID")
                     if light_id not in discovered_light_ids:
                         new_entities.append(
-                            KseniaLightEntity(ws_manager, light, device_info, base_id)
+                            KseniaLightEntity(
+                                ws_manager, light, device_info, base_id
+                            )
                         )
                         discovered_light_ids.add(light_id)
 
                 if new_entities:
-                    _LOGGER.info(f"Discovery found {len(new_entities)} new light(s)")
+                    _LOGGER.info(
+                        f"Discovery found {len(new_entities)} new light(s)"
+                    )
                     async_add_entities(new_entities, update_before_add=True)
             except Exception as e:
                 _LOGGER.debug(f"Error during light discovery: {e}")
@@ -76,9 +82,13 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         self.ws_manager = ws_manager
         self._id = light_data.get("ID")
         self._base_id = base_id or ws_manager.ip
-        _LOGGER.debug("Initializing KseniaLightEntity with data: %s", light_data)
+        _LOGGER.debug(
+            "Initializing KseniaLightEntity with data: %s", light_data
+        )
         # Use the name given by Ksenia, otherwise "Light <ID>"
-        self._attr_name = get_entity_name(light_data, self._id, f"Light {self._id}")
+        self._attr_name = get_entity_name(
+            light_data, self._id, f"Light {self._id}"
+        )
         # Determine if the light is dimmable based on the "MOD" field
         self._is_dimmable = light_data.get("MOD") == "AN"
         self._state = light_data.get("STA", "off").lower() == "on"
@@ -90,7 +100,9 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
     async def async_added_to_hass(self):
         """Subscribe to realtime light updates."""
         await super().async_added_to_hass()
-        self.ws_manager.register_listener("lights", self._handle_realtime_update)
+        self.ws_manager.register_listener(
+            "lights", self._handle_realtime_update
+        )
 
     async def _handle_realtime_update(self, data_list):
         """Process realtime STATUS_OUTPUTS updates for this light."""
@@ -166,21 +178,21 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         updates the light's state, and notifies Home Assistant of the state change.
         """
         if not self.ws_manager.available:
-            _LOGGER.error("WebSocket not connected, cannot turn on light %s", self._id)
+            _LOGGER.error(
+                "WebSocket not connected, cannot turn on light %s", self._id
+            )
             return
 
         # Handle brightness if provided and the light is dimmable
         if ATTR_BRIGHTNESS in kwargs and self._is_dimmable:
-            level = math.ceil(brightness_to_value(BRIGHTNESS_SCALE, kwargs[ATTR_BRIGHTNESS]))
-
-            await self.ws_manager.turnOnOutput(
-                self._id,
-                brightness=level,
+            level = round(
+                brightness_to_value(BRIGHTNESS_SCALE, kwargs[ATTR_BRIGHTNESS])
             )
+            await self.ws_manager.turnOnOutput(self._id, brightness=level)
+            self._raw_data["POS"] = str(level)
         else:  # Otherwise just turn it on
             await self.ws_manager.turnOnOutput(self._id)
 
-        await self.ws_manager.turnOnOutput(self._id)
         self._state = True
         self._pending_command = ("on", time.time())
         self.async_write_ha_state()
@@ -192,7 +204,9 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         updates the light's state, and notifies Home Assistant of the state change.
         """
         if not self.ws_manager.available:
-            _LOGGER.error("WebSocket not connected, cannot turn off light %s", self._id)
+            _LOGGER.error(
+                "WebSocket not connected, cannot turn off light %s", self._id
+            )
             return
 
         await self.ws_manager.turnOffOutput(self._id)
