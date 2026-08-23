@@ -18,10 +18,21 @@ from custom_components.ksenia_lares.alarm_control_panel import (
 from custom_components.ksenia_lares.const import DOMAIN
 
 
+_TEST_ENTRY_ID = "test_entry_id"
+
+
 def _hass_with_ws_manager(ws_manager):
     hass = MagicMock()
-    hass.data = {DOMAIN: {"ws_manager": ws_manager, "device_info": None, "mac": "AA:BB:CC"}}
+    hass.data = {
+        DOMAIN: {
+            _TEST_ENTRY_ID: {"ws_manager": ws_manager, "device_info": None, "mac": "AA:BB:CC"}
+        }
+    }
     return hass
+
+
+def _config_entry():
+    return MagicMock(entry_id=_TEST_ENTRY_ID)
 
 
 # ============================================================================
@@ -59,7 +70,7 @@ async def test_async_setup_entry_creates_single_panel_entity():
         return_value=[{"ID": "1", "CAT": "DISARM"}, {"ID": "2", "CAT": "ARM"}]
     )
     hass = _hass_with_ws_manager(ws_manager)
-    config_entry = MagicMock()
+    config_entry = _config_entry()
     config_entry.options = {}
     async_add_entities = MagicMock()
 
@@ -76,7 +87,7 @@ async def test_async_setup_entry_no_scenarios_skips_add_entities():
     ws_manager = MagicMock()
     ws_manager.getScenarios = AsyncMock(return_value=[])
     hass = _hass_with_ws_manager(ws_manager)
-    config_entry = MagicMock()
+    config_entry = _config_entry()
     config_entry.options = {}
     async_add_entities = MagicMock()
 
@@ -90,7 +101,7 @@ async def test_async_setup_entry_handles_exception_gracefully():
     ws_manager = MagicMock()
     ws_manager.getScenarios = AsyncMock(side_effect=RuntimeError("boom"))
     hass = _hass_with_ws_manager(ws_manager)
-    config_entry = MagicMock()
+    config_entry = _config_entry()
     async_add_entities = MagicMock()
 
     await async_setup_entry(hass, config_entry, async_add_entities)

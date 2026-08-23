@@ -509,8 +509,16 @@ async def test_async_setup_entry_creates_one_entity_per_thermostat():
         return_value=[_thermo_data("1", "10"), _thermo_data("2", "20")]
     )
     hass = MagicMock()
-    hass.data = {DOMAIN: {"ws_manager": ws_manager, "device_info": None, "mac": "AA:BB:CC"}}
-    config_entry = MagicMock()
+    config_entry = MagicMock(entry_id="test_entry_id")
+    hass.data = {
+        DOMAIN: {
+            config_entry.entry_id: {
+                "ws_manager": ws_manager,
+                "device_info": None,
+                "mac": "AA:BB:CC",
+            }
+        }
+    }
     async_add_entities = MagicMock()
 
     await async_setup_entry(hass, config_entry, async_add_entities)
@@ -529,8 +537,16 @@ async def test_async_setup_entry_no_thermostats_skips_add_entities():
     ws_manager.ip = "192.168.1.50"
     ws_manager.getThermostats = AsyncMock(return_value=[])
     hass = MagicMock()
-    hass.data = {DOMAIN: {"ws_manager": ws_manager, "device_info": None, "mac": "AA:BB:CC"}}
-    config_entry = MagicMock()
+    config_entry = MagicMock(entry_id="test_entry_id")
+    hass.data = {
+        DOMAIN: {
+            config_entry.entry_id: {
+                "ws_manager": ws_manager,
+                "device_info": None,
+                "mac": "AA:BB:CC",
+            }
+        }
+    }
     async_add_entities = MagicMock()
 
     await async_setup_entry(hass, config_entry, async_add_entities)
@@ -546,8 +562,16 @@ async def test_async_setup_entry_handles_exception_gracefully():
     ws_manager = MagicMock()
     ws_manager.getThermostats = AsyncMock(side_effect=RuntimeError("boom"))
     hass = MagicMock()
-    hass.data = {DOMAIN: {"ws_manager": ws_manager, "device_info": None, "mac": "AA:BB:CC"}}
-    config_entry = MagicMock()
+    config_entry = MagicMock(entry_id="test_entry_id")
+    hass.data = {
+        DOMAIN: {
+            config_entry.entry_id: {
+                "ws_manager": ws_manager,
+                "device_info": None,
+                "mac": "AA:BB:CC",
+            }
+        }
+    }
     async_add_entities = MagicMock()
 
     # Should not raise

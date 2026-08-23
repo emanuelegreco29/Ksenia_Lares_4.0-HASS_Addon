@@ -418,11 +418,11 @@ def test_cleanup_ws_manager_removes_key():
     from custom_components.ksenia_lares import _cleanup_ws_manager
 
     hass = _fake_hass()
-    hass.data[DOMAIN] = {"ws_manager": MagicMock()}
+    hass.data[DOMAIN] = {"entry1": {"ws_manager": MagicMock()}}
 
-    _cleanup_ws_manager(hass)
+    _cleanup_ws_manager(hass, "entry1")
 
-    assert "ws_manager" not in hass.data[DOMAIN]
+    assert "ws_manager" not in hass.data[DOMAIN]["entry1"]
 
 
 def test_cleanup_ws_manager_noop_when_missing():
@@ -430,7 +430,7 @@ def test_cleanup_ws_manager_noop_when_missing():
 
     hass = _fake_hass()
     # Should not raise even with no DOMAIN key at all
-    _cleanup_ws_manager(hass)
+    _cleanup_ws_manager(hass, "entry1")
 
 
 # ============================================================================
@@ -454,7 +454,7 @@ async def test_setup_connection_success():
 
     assert result is mock_manager
     mock_manager.connect.assert_called_once()
-    assert hass.data[DOMAIN]["ws_manager"] is mock_manager
+    assert hass.data[DOMAIN][entry.entry_id]["ws_manager"] is mock_manager
 
 
 @pytest.mark.asyncio
@@ -603,7 +603,7 @@ async def test_async_setup_entry_happy_path_forwards_platforms():
     forwarded_platforms = hass.config_entries.async_forward_entry_setups.call_args[0][1]
     assert "light" in forwarded_platforms
     assert "binary_sensor" in forwarded_platforms
-    assert hass.data[DOMAIN]["mac"] == "AA:BB:CC"
+    assert hass.data[DOMAIN][entry.entry_id]["mac"] == "AA:BB:CC"
 
 
 @pytest.mark.asyncio
@@ -686,13 +686,13 @@ async def test_async_unload_entry_stops_manager_and_unloads_platforms():
     entry = _fake_entry(data={CONF_HOST: "1.2.3.4", CONF_PIN: "1234", CONF_PLATFORMS: ["light"]})
     manager = MagicMock()
     manager.stop = AsyncMock()
-    hass.data[DOMAIN] = {"ws_manager": manager}
+    hass.data[DOMAIN] = {entry.entry_id: {"ws_manager": manager}}
 
     result = await async_unload_entry(hass, entry)
 
     assert result is True
     manager.stop.assert_called_once()
-    assert "ws_manager" not in hass.data[DOMAIN]
+    assert entry.entry_id not in hass.data[DOMAIN]
     hass.config_entries.async_forward_entry_unload.assert_called_once()
 
 
@@ -717,13 +717,13 @@ async def test_async_unload_entry_returns_true_even_on_stop_error():
     entry = _fake_entry(data={CONF_HOST: "1.2.3.4", CONF_PIN: "1234", CONF_PLATFORMS: ["light"]})
     manager = MagicMock()
     manager.stop = AsyncMock(side_effect=RuntimeError("boom"))
-    hass.data[DOMAIN] = {"ws_manager": manager}
+    hass.data[DOMAIN] = {entry.entry_id: {"ws_manager": manager}}
 
     result = await async_unload_entry(hass, entry)
 
     assert result is True
-    # ws_manager popped even though stop() raised
-    assert "ws_manager" not in hass.data[DOMAIN]
+    # per-entry slot popped even though stop() raised
+    assert entry.entry_id not in hass.data[DOMAIN]
 
 
 @pytest.mark.asyncio

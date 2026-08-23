@@ -403,7 +403,7 @@ async def async_setup_entry(hass, entry):
     except asyncio.CancelledError:
         _LOGGER.info("Setup task cancelled for entry %s", entry.title)
         _SETUP_TASKS.pop(entry.entry_id, None)
-        _cleanup_ws_manager(hass)
+        _cleanup_ws_manager(hass, entry.entry_id)
         raise
     except ConfigEntryNotReady:
         _SETUP_TASKS.pop(entry.entry_id, None)

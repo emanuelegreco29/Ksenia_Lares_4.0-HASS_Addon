@@ -9,10 +9,21 @@ from custom_components.ksenia_lares.const import DOMAIN
 from custom_components.ksenia_lares.light import KseniaLightEntity, async_setup_entry
 
 
+_TEST_ENTRY_ID = "test_entry_id"
+
+
 def _hass_with_ws_manager(ws_manager):
     hass = MagicMock()
-    hass.data = {DOMAIN: {"ws_manager": ws_manager, "device_info": None, "mac": "AA:BB:CC"}}
+    hass.data = {
+        DOMAIN: {
+            _TEST_ENTRY_ID: {"ws_manager": ws_manager, "device_info": None, "mac": "AA:BB:CC"}
+        }
+    }
     return hass
+
+
+def _config_entry():
+    return MagicMock(entry_id=_TEST_ENTRY_ID)
 
 
 # ============================================================================
@@ -28,7 +39,7 @@ async def test_async_setup_entry_creates_entity_per_light():
     hass = _hass_with_ws_manager(ws_manager)
     async_add_entities = MagicMock()
 
-    await async_setup_entry(hass, MagicMock(), async_add_entities)
+    await async_setup_entry(hass, _config_entry(), async_add_entities)
 
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args[0][0]
@@ -44,7 +55,7 @@ async def test_discovery_listener_adds_only_new_lights():
     hass = _hass_with_ws_manager(ws_manager)
     async_add_entities = MagicMock()
 
-    await async_setup_entry(hass, MagicMock(), async_add_entities)
+    await async_setup_entry(hass, _config_entry(), async_add_entities)
     discovery_callback = ws_manager.register_listener.call_args[0][1]
 
     ws_manager.getLights = AsyncMock(
@@ -70,7 +81,7 @@ async def test_discovery_listener_swallows_exceptions():
     ws_manager.register_listener = MagicMock()
     hass = _hass_with_ws_manager(ws_manager)
 
-    await async_setup_entry(hass, MagicMock(), MagicMock())
+    await async_setup_entry(hass, _config_entry(), MagicMock())
     discovery_callback = ws_manager.register_listener.call_args[0][1]
 
     ws_manager.getLights = AsyncMock(side_effect=RuntimeError("boom"))
@@ -85,7 +96,7 @@ async def test_async_setup_entry_handles_exception_gracefully():
     hass = _hass_with_ws_manager(ws_manager)
     async_add_entities = MagicMock()
 
-    await async_setup_entry(hass, MagicMock(), async_add_entities)
+    await async_setup_entry(hass, _config_entry(), async_add_entities)
 
     async_add_entities.assert_not_called()
 
