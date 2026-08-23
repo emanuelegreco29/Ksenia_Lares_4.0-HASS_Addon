@@ -18,9 +18,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     - Clear commands (communications, alarms, faults)
     """
     try:
-        ws_manager = hass.data[DOMAIN]["ws_manager"]
-        device_info = hass.data[DOMAIN].get("device_info")
-        base_id = hass.data[DOMAIN].get("mac") or ws_manager.ip
+        ws_manager = hass.data[DOMAIN][config_entry.entry_id]["ws_manager"]
+        device_info = hass.data[DOMAIN][config_entry.entry_id].get("device_info")
+        base_id = hass.data[DOMAIN][config_entry.entry_id].get("mac") or ws_manager.ip
         entities = []
 
         # Add scenario execution buttons

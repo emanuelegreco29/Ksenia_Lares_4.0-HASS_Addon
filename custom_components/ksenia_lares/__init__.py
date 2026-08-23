@@ -261,10 +261,11 @@ def _register_device(hass, entry, ip, use_ssl, port, system_info):
     )
 
 
-def _cleanup_ws_manager(hass) -> None:
+def _cleanup_ws_manager(hass, entry_id) -> None:
     """Remove the ws_manager from hass.data if present."""
-    if DOMAIN in hass.data and "ws_manager" in hass.data[DOMAIN]:
-        hass.data[DOMAIN].pop("ws_manager", None)
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+    if entry_data and "ws_manager" in entry_data:
+        entry_data.pop("ws_manager", None)
 
 
 async def _setup_connection(hass, entry, ip, port, pin, use_ssl, brand) -> WebSocketManager:
@@ -292,7 +293,7 @@ async def _setup_connection(hass, entry, ip, port, pin, use_ssl, brand) -> WebSo
         brand=brand,
         periodic_read_interval=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
     )
-    hass.data.setdefault(DOMAIN, {})["ws_manager"] = ws_manager
+    hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})["ws_manager"] = ws_manager
     try:
         connection_method = ws_manager.connectSecure if use_ssl else ws_manager.connect
         _LOGGER.info(f"Starting connection to {ip}:{port}")
@@ -308,10 +309,10 @@ async def _setup_connection(hass, entry, ip, port, pin, use_ssl, brand) -> WebSo
         _LOGGER.info("Initial data available, setup continuing")
         return ws_manager
     except asyncio.CancelledError:
-        _cleanup_ws_manager(hass)
+        _cleanup_ws_manager(hass, entry.entry_id)
         raise
     except Exception as e:
-        _cleanup_ws_manager(hass)
+        _cleanup_ws_manager(hass, entry.entry_id)
         error_msg = f"Failed to connect to Ksenia Lares at {ip}:{port}: {e}"
         _LOGGER.warning("%s - HA will retry with backoff", error_msg)
         raise ConfigEntryNotReady(error_msg) from e
@@ -361,9 +362,10 @@ async def async_setup_entry(hass, entry):
         system_info = await ws_manager.getSystemVersion()
         device_info = build_device_info(ip, port, use_ssl, system_info)
         _register_device(hass, entry, ip, use_ssl, port, system_info)
-        hass.data[DOMAIN]["device_info"] = device_info
+        entry_data = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+        entry_data["device_info"] = device_info
         mac = system_info.get("MAC")
-        hass.data[DOMAIN]["mac"] = mac
+        entry_data["mac"] = mac
 
         platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
 
@@ -431,7 +433,8 @@ async def async_unload_entry(hass, entry):
                     await asyncio.sleep(0)  # Allow task to process cancellation
 
         # Gracefully handle cases where setup failed and ws_manager wasn't created
-        ws_manager = hass.data.get(DOMAIN, {}).get("ws_manager")
+        entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+        ws_manager = entry_data.get("ws_manager")
         if ws_manager:
             try:
                 await ws_manager.stop()
@@ -439,7 +442,10 @@ async def async_unload_entry(hass, entry):
             except Exception as e:
                 _LOGGER.warning("Error stopping WebSocket manager during unload: %s", e)
             finally:
-                hass.data[DOMAIN].pop("ws_manager", None)
+                entry_data.pop("ws_manager", None)
+
+        # Drop the whole per-entry slot once cleaned up
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
 
         platforms = entry.data.get(CONF_PLATFORMS, DEFAULT_PLATFORMS)
 
