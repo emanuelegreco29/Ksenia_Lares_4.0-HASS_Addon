@@ -22,7 +22,9 @@ This **unofficial** integration allows you to connect your HomeAssistant to the 
 | Buttons | ✅ |
 | Switches | ✅ |
 | Scenarios | ✅ |
-| Sensors | ⚠️ (see below) |
+| Zones (Door/Window/Motion/Smoke/Seismic sensors) | ✅ |
+| Power Monitoring (Power Lines/Energy) | ✅ |
+| Diagnostic & Environmental Sensors | ✅ |
 | Partitions | ✅ |
 
 #### Legend
