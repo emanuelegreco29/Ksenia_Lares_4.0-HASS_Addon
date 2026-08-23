@@ -134,7 +134,7 @@ def partition_in_mask(prt_value: str | None, partition_id: str | int) -> bool:
     try:
         mask = int(value, 16)
         bit_index = int(partition_id) - 1
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return False
     if bit_index < 0:
         return False

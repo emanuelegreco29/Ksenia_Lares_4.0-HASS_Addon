@@ -175,7 +175,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
             return None
         try:
             pos = int(self._raw_data.get("POS", 0))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return None
         return value_to_brightness(BRIGHTNESS_SCALE, pos)
 
@@ -237,7 +237,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         if self._is_dimmable:
             try:
                 previous_level = int(self._raw_data.get("POS", 0))
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 previous_level = None
 
         _LOGGER.debug(

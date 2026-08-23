@@ -533,7 +533,7 @@ class KseniaPartitionArmingFailureSensor(KseniaEntity, SensorEntity):
         for entry in logs or []:
             try:
                 log_id = int(entry.get("ID", 0))
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 continue
             if log_id <= self._last_seen_log_id:
                 continue
@@ -1813,7 +1813,7 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
         else:
             try:
                 self._battery_voltage = float(b_val)
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 # No battery installed/monitored on this panel.
                 self._battery_voltage = None
         _LOGGER.debug(
