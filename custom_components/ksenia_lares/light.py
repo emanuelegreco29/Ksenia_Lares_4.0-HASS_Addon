@@ -5,13 +5,8 @@ import logging
 import time
 from contextlib import suppress
 
-from homeassistant.components.light import (
-    ATTR_BRIGHTNESS,
-    ATTR_FLASH,
-    LightEntity,
-    LightEntityFeature,
-)
-from homeassistant.components.light.const import ColorMode
+from homeassistant.components.light import ATTR_BRIGHTNESS, ATTR_FLASH, LightEntity
+from homeassistant.components.light.const import ColorMode, LightEntityFeature
 from homeassistant.util.color import brightness_to_value, value_to_brightness
 
 from .const import DOMAIN
@@ -41,10 +36,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         lights = await ws_manager.getLights()
         _LOGGER.debug("Found %d lights", len(lights))
 
-        entities = [
-            KseniaLightEntity(ws_manager, light, device_info, base_id)
-            for light in lights
-        ]
+        entities = [KseniaLightEntity(ws_manager, light, device_info, base_id) for light in lights]
         async_add_entities(entities, update_before_add=True)
 
         # Track discovered light IDs and set up listener-based discovery
@@ -64,16 +56,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     light_id = light.get("ID")
                     if light_id not in discovered_light_ids:
                         new_entities.append(
-                            KseniaLightEntity(
-                                ws_manager, light, device_info, base_id
-                            )
+                            KseniaLightEntity(ws_manager, light, device_info, base_id)
                         )
                         discovered_light_ids.add(light_id)
 
                 if new_entities:
-                    _LOGGER.info(
-                        f"Discovery found {len(new_entities)} new light(s)"
-                    )
+                    _LOGGER.info(f"Discovery found {len(new_entities)} new light(s)")
                     async_add_entities(new_entities, update_before_add=True)
             except Exception as e:
                 _LOGGER.debug(f"Error during light discovery: {e}")
@@ -95,13 +83,9 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         self.ws_manager = ws_manager
         self._id = light_data.get("ID")
         self._base_id = base_id or ws_manager.ip
-        _LOGGER.debug(
-            "Initializing KseniaLightEntity with data: %s", light_data
-        )
+        _LOGGER.debug("Initializing KseniaLightEntity with data: %s", light_data)
         # Use the name given by Ksenia, otherwise "Light <ID>"
-        self._attr_name = get_entity_name(
-            light_data, self._id, f"Light {self._id}"
-        )
+        self._attr_name = get_entity_name(light_data, self._id, f"Light {self._id}")
         # Determine if the light is dimmable based on the "MOD" field
         self._is_dimmable = light_data.get("MOD") == "AN"
         self._state = light_data.get("STA", "off").lower() == "on"
@@ -115,9 +99,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
     async def async_added_to_hass(self):
         """Subscribe to realtime light updates."""
         await super().async_added_to_hass()
-        self.ws_manager.register_listener(
-            "lights", self._handle_realtime_update
-        )
+        self.ws_manager.register_listener("lights", self._handle_realtime_update)
 
     async def async_will_remove_from_hass(self):
         """Cancel active flash when the entity is removed."""
@@ -193,7 +175,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
             return None
         try:
             pos = int(self._raw_data.get("POS", 0))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
         return value_to_brightness(BRIGHTNESS_SCALE, pos)
 
@@ -255,7 +237,7 @@ class KseniaLightEntity(KseniaEntity, LightEntity):
         if self._is_dimmable:
             try:
                 previous_level = int(self._raw_data.get("POS", 0))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 previous_level = None
 
         _LOGGER.debug(

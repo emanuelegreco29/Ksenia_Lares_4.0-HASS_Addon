@@ -533,7 +533,7 @@ class KseniaPartitionArmingFailureSensor(KseniaEntity, SensorEntity):
         for entry in logs or []:
             try:
                 log_id = int(entry.get("ID", 0))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
             if log_id <= self._last_seen_log_id:
                 continue
@@ -1807,11 +1807,15 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
         except (ValueError, TypeError) as e:
             _LOGGER.error("[PowerSupply] Failed to parse main voltage: %s (M=%s)", e, m_val)
             return False
-        try:
-            self._battery_voltage = float(b_val)
-        except (ValueError, TypeError):
+        if b_val is None:
             # No battery installed/monitored on this panel.
             self._battery_voltage = None
+        else:
+            try:
+                self._battery_voltage = float(b_val)
+            except ValueError, TypeError:
+                # No battery installed/monitored on this panel.
+                self._battery_voltage = None
         _LOGGER.debug(
             "[PowerSupply] Parsed voltages: Main=%.1fV, Battery=%s",
             self._main_voltage,
