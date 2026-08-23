@@ -9,14 +9,18 @@ from homeassistant.const import (
     LIGHT_LUX,
     PERCENTAGE,
     EntityCategory,
+    UnitOfEnergy,
     UnitOfPower,
     UnitOfTemperature,
 )
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     _ARM_STATE_MAP,
     BINARY_ZONE_CATS,
     DOMAIN,
+    OPENING_ZONE_CATS,
     AlarmStatus,
     ConnectionStatus,
     PartitionArmStatus,
@@ -26,7 +30,7 @@ from .const import (
     SystemTamperingStatus,
     TriggeredStatus,
 )
-from .helpers import KseniaEntity, build_unique_id, get_entity_name
+from .helpers import KseniaEntity, build_unique_id, get_entity_name, partition_in_mask
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -134,6 +138,7 @@ async def _add_powerline_sensors(ws_manager, device_info, base_id, entities):
     _LOGGER.debug("Found %d power lines", len(powerlines))
     for sensor in powerlines:
         entities.append(KseniaPowerlineSensor(ws_manager, sensor, device_info, base_id))
+        entities.append(KseniaPowerlineEnergySensor(ws_manager, sensor, device_info, base_id))
 
 
 async def _add_partition_sensors(ws_manager, device_info, base_id, entities):
@@ -142,6 +147,9 @@ async def _add_partition_sensors(ws_manager, device_info, base_id, entities):
     _LOGGER.debug("Found %d partitions", len(partitions))
     for sensor in partitions:
         entities.append(KseniaPartitionSensor(ws_manager, sensor, device_info, base_id))
+        entities.append(
+            KseniaPartitionArmingFailureSensor(ws_manager, sensor, device_info, base_id)
+        )
 
 
 async def _add_zone_sensors(ws_manager, device_info, base_id, entities):
@@ -313,6 +321,81 @@ class KseniaPowerlineSensor(KseniaSensorEntity):
             return None
 
 
+class KseniaPowerlineEnergySensor(KseniaEntity, RestoreEntity, SensorEntity):
+    """Energy sensor for a power line, integrating instantaneous power (PCONS) over time.
+
+    Ksenia's POWER_LINES payload has no cumulative energy counter — only
+    instantaneous power. This sensor performs its own trapezoidal (Riemann
+    sum) integration of PCONS as realtime/periodic updates arrive, so a
+    native kWh entity is available for HA's Energy dashboard "individual
+    devices" flow without requiring a manually-configured `integration`
+    helper. Accumulated total is restored across HA restarts.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "powerline_energy"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_icon = "mdi:lightning-bolt"
+
+    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
+        """Initialise a power line energy sensor."""
+        self.ws_manager = ws_manager
+        self._id = sensor_data["ID"]
+        self._base_id = base_id or ws_manager.ip
+        self._base_name = get_entity_name(sensor_data, self._id) or ""
+        self._device_info = device_info
+        self._attr_translation_placeholders = {"name": self._base_name}
+        self._total_kwh = 0.0
+        self._last_power_w = KseniaPowerlineSensor._parse_power_float(
+            sensor_data.get("PCONS"), "PCONS"
+        )
+        self._last_updated = dt_util.utcnow()
+
+    async def async_added_to_hass(self):
+        """Restore accumulated energy and register the realtime listener."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in (None, "unknown", "unavailable"):
+            try:
+                self._total_kwh = float(last_state.state)
+            except ValueError:
+                self._total_kwh = 0.0
+        self.ws_manager.register_listener("powerlines", self._handle_realtime_update)
+
+    async def _handle_realtime_update(self, data_list):
+        """Integrate newly reported power readings into accumulated energy."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            power_w = KseniaPowerlineSensor._parse_power_float(data.get("PCONS"), "PCONS")
+            now = dt_util.utcnow()
+            if power_w is not None and self._last_power_w is not None:
+                elapsed_hours = (now - self._last_updated).total_seconds() / 3600
+                avg_power_w = (self._last_power_w + power_w) / 2
+                self._total_kwh += (avg_power_w * elapsed_hours) / 1000
+            self._last_power_w = power_w
+            self._last_updated = now
+            self.async_write_ha_state()
+            break
+
+    @property
+    def unique_id(self) -> str:
+        """Returns a unique ID for the sensor."""
+        return build_unique_id(self._base_id, "powerlines", self._id, "energy")
+
+    @property
+    def native_value(self) -> float:
+        """Returns the accumulated energy in kWh."""
+        return round(self._total_kwh, 3)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Returns the last known instantaneous power used for integration."""
+        return {"last_power_w": self._last_power_w}
+
+
 class KseniaPartitionSensor(KseniaSensorEntity):
     """Sensor entity for partition (security zone) status."""
 
@@ -371,6 +454,139 @@ class KseniaPartitionSensor(KseniaSensorEntity):
             self._apply_partition_data(data)
             self.async_write_ha_state()
             break
+
+
+class KseniaPartitionArmingFailureSensor(KseniaEntity, SensorEntity):
+    """Diagnostic sensor tracking failed arming attempts and the open zones that caused them.
+
+    Ksenia's own arming-failure signal is the "PARMF" log event (documented in
+    the Ksenia Lares 4.0 SDK, not in the community protocol writeup).
+    STATUS_PARTITIONS.ARM alone can't distinguish a real failure from a manual
+    cancel during exit delay, so this entity correlates two already-existing
+    realtime channels: "partitions" snapshots open door/window/contact zones
+    the instant a partition enters exit delay, and "event_logs" (the existing
+    periodic log poll) is watched for the matching PARMF event.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "partition_arming_failed"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, ws_manager, sensor_data, device_info=None, base_id=None):
+        """Initialise the arming-failure sensor for one partition."""
+        self.ws_manager = ws_manager
+        self._id = sensor_data["ID"]
+        self._base_id = base_id or ws_manager.ip
+        self._base_name = get_entity_name(sensor_data, self._id) or ""
+        self._device_info = device_info
+        self._attr_translation_placeholders = {"name": self._base_name}
+        self._last_arm_value = sensor_data.get("ARM", "")
+        self._last_failure_dt = None
+        self._last_open_zones: list = []
+        self._resolved = True
+        self._last_seen_log_id = 0
+
+    async def async_added_to_hass(self):
+        """Register realtime listeners for partition ARM transitions and log events."""
+        await super().async_added_to_hass()
+        self.ws_manager.register_listener("partitions", self._handle_partition_update)
+        self.ws_manager.register_listener("event_logs", self._handle_logs_update)
+
+    async def _handle_partition_update(self, data_list):
+        """Snapshot open zones on exit-delay start; clear on successful arm."""
+        for data in data_list:
+            if str(data.get("ID")) != str(self._id):
+                continue
+            new_arm = data.get("ARM", "")
+            previous_arm = self._last_arm_value
+            self._last_arm_value = new_arm
+
+            if new_arm == PartitionArmStatus.EXIT_DELAY_ACTIVE and previous_arm != new_arm:
+                open_zones = await self._snapshot_open_zones()
+                self.ws_manager.set_pending_arming_snapshot(self._id, open_zones)
+            elif previous_arm == PartitionArmStatus.EXIT_DELAY_ACTIVE and new_arm in (
+                PartitionArmStatus.IMMEDIATE_ARMING,
+                PartitionArmStatus.DELAYED_ARMING,
+            ):
+                self.ws_manager.pop_pending_arming_snapshot(self._id)
+                if self._last_failure_dt is not None:
+                    self._resolved = True
+                    self.async_write_ha_state()
+            break
+
+    async def _snapshot_open_zones(self) -> list:
+        """Return names of open door/window/contact zones assigned to this partition."""
+        zones = await self.ws_manager.getSensor("ZONES")
+        open_names = []
+        for zone in zones:
+            cat = (zone.get("CAT") or "").upper()
+            if cat not in OPENING_ZONE_CATS:
+                continue
+            if not partition_in_mask(zone.get("PRT", "0"), self._id):
+                continue
+            if zone.get("STA") == "A":
+                open_names.append(get_entity_name(zone, zone.get("ID")))
+        return open_names
+
+    async def _handle_logs_update(self, logs):
+        """Watch periodic log pushes for a PARMF entry matching this partition."""
+        for entry in logs or []:
+            try:
+                log_id = int(entry.get("ID", 0))
+            except (TypeError, ValueError):
+                continue
+            if log_id <= self._last_seen_log_id:
+                continue
+            self._last_seen_log_id = max(self._last_seen_log_id, log_id)
+            if entry.get("TYPE") != "PARMF":
+                continue
+
+            prt = entry.get("PRT")
+            if prt is not None:
+                if not partition_in_mask(prt, self._id):
+                    continue
+            elif self._id not in self.ws_manager.pending_arming_partition_ids():
+                continue
+
+            open_zones = self.ws_manager.pop_pending_arming_snapshot(self._id)
+            if open_zones is None:
+                continue
+            self._last_failure_dt = dt_util.utcnow()
+            self._last_open_zones = open_zones
+            self._resolved = False
+            self.async_write_ha_state()
+
+    @property
+    def unique_id(self) -> str:
+        """Returns a unique ID for the sensor."""
+        return build_unique_id(self._base_id, "partition_arming_failed", self._id)
+
+    @property
+    def native_value(self):
+        """Returns the timestamp of the last failed arming attempt, if any."""
+        return self._last_failure_dt
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Returns the open zones that blocked the last failed arming attempt."""
+        return {
+            "open_zones": self._last_open_zones,
+            "zone_count": len(self._last_open_zones),
+            "partition": self._id,
+            "resolved": self._resolved,
+        }
+
+    @property
+    def entity_category(self):
+        """Classify this sensor as a diagnostic entity."""
+        return EntityCategory.DIAGNOSTIC
+
+    @property
+    def icon(self):
+        """Returns the icon of the sensor."""
+        if self._last_failure_dt is not None and not self._resolved:
+            return "mdi:door-open"
+        return "mdi:shield-check"
 
 
 class KseniaDomusSensorEntity(KseniaSensorEntity):
@@ -1566,7 +1782,11 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
     def _extract_panel_voltages(self) -> bool:
         """Extract and parse main/battery voltages from merged raw data.
 
-        Returns True if both voltages were successfully parsed, False otherwise.
+        Returns True once the main voltage was parsed. A missing or
+        non-numeric battery voltage (the panel reports "NA" for B when no
+        battery is installed, mirroring the M/B convention documented for
+        other peripherals such as STATUS_BUS_SIRENS) is treated as "not
+        applicable" rather than leaving the sensor stuck at Unknown.
         """
         m_val = self._raw_data.get("M")
         b_val = self._raw_data.get("B")
@@ -1577,32 +1797,35 @@ class KseniaPowerSupplySensor(KseniaEntity, SensorEntity):
             b_val,
             type(b_val),
         )
-        if m_val is None or b_val is None:
+        if m_val is None:
             _LOGGER.debug(
-                "[PowerSupply] Missing voltage fields after merge: M=%s, B=%s, keeping current state",
-                m_val,
-                b_val,
+                "[PowerSupply] Missing main voltage field after merge, keeping current state"
             )
             return False
         try:
             self._main_voltage = float(m_val)
-            self._battery_voltage = float(b_val)
-            _LOGGER.debug(
-                "[PowerSupply] Parsed voltages: Main=%.1fV, Battery=%.1fV",
-                self._main_voltage,
-                self._battery_voltage,
-            )
-            return True
         except (ValueError, TypeError) as e:
-            _LOGGER.error(
-                "[PowerSupply] Failed to parse voltages: %s (M=%s, B=%s)", e, m_val, b_val
-            )
+            _LOGGER.error("[PowerSupply] Failed to parse main voltage: %s (M=%s)", e, m_val)
             return False
+        try:
+            self._battery_voltage = float(b_val)
+        except (ValueError, TypeError):
+            # No battery installed/monitored on this panel.
+            self._battery_voltage = None
+        _LOGGER.debug(
+            "[PowerSupply] Parsed voltages: Main=%.1fV, Battery=%s",
+            self._main_voltage,
+            self._battery_voltage,
+        )
+        return True
 
     def _calculate_power_health_state(self) -> str:
         """Determine power supply health state from stored voltage values."""
         main_ok = self._main_voltage is not None and self._main_voltage >= 12.0
-        battery_ok = self._battery_voltage is not None and self._battery_voltage >= 12.0
+        if self._battery_voltage is None:
+            # No battery installed/monitored: health depends on main power only.
+            return PowerSupplyStatus.OK if main_ok else PowerSupplyStatus.CRITICAL
+        battery_ok = self._battery_voltage >= 12.0
         if main_ok and battery_ok:
             return PowerSupplyStatus.OK
         if main_ok:

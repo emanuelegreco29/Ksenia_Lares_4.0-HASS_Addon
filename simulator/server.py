@@ -1077,7 +1077,7 @@ def initial_read_payload(types: List[str]) -> Dict[str, Any]:
             payload["STATUS_CONNECTION"] = connection_status_payload()
         elif t == "STATUS_PANEL":
             payload["STATUS_PANEL"] = panel_status_payload()
-        elif t == "FAULTS":
+        elif t == "STATUS_FAULTS":
             payload["STATUS_FAULTS"] = [{
                 "PS_MISS": [], "PS_LOW": [], "PS_FAULT": [], "FUSE": [],
                 "LOW_BATT": [], "BAD_BATT": [], "LOST_BUS": [], "LOST_WLS": [],
@@ -1085,7 +1085,7 @@ def initial_read_payload(types: List[str]) -> Dict[str, Any]:
                 "MOBILE": [], "SIM_DATE": [], "SIM_CRE": [], "COMMUNICATION": [],
                 "SIAIP_SUP": [], "SYSTEM": [], "LOST_IP_PER": [],
             }]
-        elif t == "TAMPERS":
+        elif t == "STATUS_TAMPERS":
             payload["STATUS_TAMPERS"] = [{
                 "PANEL": [], "BUS_PER": [], "WLS_PER": [], "JAM_868": [],
                 "LOST_BUS": [], "LOST_WLS": [], "ZONE": [], "LOST_IP_PER": [], "IP_PER": [],
@@ -1913,6 +1913,17 @@ async def handle_websocket_realtime(ws: WebSocket, msg_id: str, payload_type: st
         "STATUS_CONNECTION": connection_status_payload(),
         "STATUS_PANEL": panel_status_payload(),
         "STATUS_TEMPERATURES": list(state.status_temperatures.values()),
+        "STATUS_FAULTS": [{
+            "PS_MISS": [], "PS_LOW": [], "PS_FAULT": [], "FUSE": [],
+            "LOW_BATT": [], "BAD_BATT": [], "LOST_BUS": [], "LOST_WLS": [],
+            "ZONE": [], "LAN_ETH": [], "REM_ETH": [], "PSTN": [],
+            "MOBILE": [], "SIM_DATE": [], "SIM_CRE": [], "COMMUNICATION": [],
+            "SIAIP_SUP": [], "SYSTEM": [], "LOST_IP_PER": [],
+        }],
+        "STATUS_TAMPERS": [{
+            "PANEL": [], "BUS_PER": [], "WLS_PER": [], "JAM_868": [],
+            "LOST_BUS": [], "LOST_WLS": [], "ZONE": [], "LOST_IP_PER": [], "IP_PER": [],
+        }],
     }
     response = build_message(
         cmd="REALTIME_RES",

@@ -37,6 +37,11 @@ READ_TYPES = [
     "STATUS_CONNECTION",
     "STATUS_PANEL",
     "STATUS_TEMPERATURES",
+    # Fault/tamper detail categories (STATUS_SYSTEM only carries flat FAULT/TAMPER
+    # arrays; the per-category breakdown consumed by the faults/tampering sensors
+    # lives in these dedicated structures)
+    "STATUS_FAULTS",
+    "STATUS_TAMPERS",
 ]
 
 REALTIME_TYPES = [
@@ -51,6 +56,11 @@ REALTIME_TYPES = [
     "STATUS_PANEL",
     # Thermostat real-time status
     "STATUS_TEMPERATURES",
+    # Without these, the panel never spontaneously reports fault/tamper
+    # category changes (e.g. low battery, panel tamper) and the system_faults
+    # / system_tampering sensors stay stuck at "ok" forever.
+    "STATUS_FAULTS",
+    "STATUS_TAMPERS",
 ]
 
 # Command ID counter (max 65535 to fit in 2 bytes)

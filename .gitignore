@@ -1,4 +1,5 @@
 .venv
+.venv_test
 bin
 lib64
 lib
@@ -11,3 +12,7 @@ __pycache__
 *.pyd
 tool_simulator_mockup/__pycache__
 .coverage
+
+# AI Helpful files
+.claude/
+docs/

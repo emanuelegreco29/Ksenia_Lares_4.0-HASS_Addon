@@ -54,6 +54,10 @@ DATA_WAIT_TIMEOUT = 10
 RECV_TIMEOUT = 3
 CONNECTION_HEALTH_CHECK = 120  # 2 minutes; floor for the dynamic health-check threshold
 
+# Status payload types whose single entry is an aggregate object (category name
+# -> array of detail objects) with no "ID" field, unlike STATUS_PANEL/STATUS_SYSTEM.
+_IDLESS_SINGLETON_STATUS_TYPES = frozenset({"STATUS_TAMPERS", "STATUS_FAULTS"})
+
 
 class ConnectionState(Enum):
     """WebSocket connection states."""
@@ -341,6 +345,11 @@ class WebSocketManager:
         # Periodic read for state reconciliation
         self._last_periodic_read = 0
 
+        # Pending open-zone snapshots for in-progress arming attempts, keyed by
+        # partition ID; written when a partition enters exit delay, consumed
+        # when a matching PARMF ("arming failed") log event arrives.
+        self._pending_arming_snapshots: dict[str, list[str]] = {}
+
         # Entity listeners for real-time updates
         self.listeners = {
             "lights": [],
@@ -372,7 +381,7 @@ class WebSocketManager:
         # Debug mode based on logger level (safe for mocks)
         try:
             self._debug_mode = logger.getEffectiveLevel() <= logging.DEBUG
-        except TypeError, AttributeError:
+        except (TypeError, AttributeError):
             # Handle test mocks or non-standard loggers
             self._debug_mode = False
 
@@ -534,6 +543,18 @@ class WebSocketManager:
             True if cache is populated, False otherwise
         """
         return self._readData is not None
+
+    def set_pending_arming_snapshot(self, partition_id: str, zone_names: list) -> None:
+        """Store the open-zone snapshot captured when a partition entered exit delay."""
+        self._pending_arming_snapshots[str(partition_id)] = zone_names
+
+    def pop_pending_arming_snapshot(self, partition_id: str):
+        """Remove and return the pending open-zone snapshot for a partition, if any."""
+        return self._pending_arming_snapshots.pop(str(partition_id), None)
+
+    def pending_arming_partition_ids(self) -> list:
+        """Return the IDs of partitions currently awaiting arming-failure confirmation."""
+        return list(self._pending_arming_snapshots.keys())
 
     def register_listener(self, entity_type, callback):
         """Register callback for entity type real-time updates.
@@ -1614,6 +1635,19 @@ class WebSocketManager:
             # Defensive: wrap in list to maintain consistency
             status_entities = [status_entities] if status_entities else []
 
+        # STATUS_TAMPERS/STATUS_FAULTS are a single aggregate object (category
+        # name -> array of detail objects) with no "ID" field of their own,
+        # unlike STATUS_PANEL/STATUS_SYSTEM. The entity-ID merge below would
+        # treat that object as "without ID" and silently drop it, leaving the
+        # cache empty from the second update onward. Full-replace instead.
+        if status_payload_type in _IDLESS_SINGLETON_STATUS_TYPES:
+            self._readData[status_payload_type] = status_entities
+            self._logger.debug(
+                f"[WS] _update_cache: Replaced ID-less singleton {status_payload_type} "
+                f"with {len(status_entities)} entry(ies)"
+            )
+            return
+
         # Get existing cached entities for this status payload type from unified cache
         existing_entities = self._readData.get(status_payload_type, [])
 
@@ -1673,7 +1707,7 @@ class WebSocketManager:
         """
         try:
             return int(value)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return default
 
     async def process_command_queue(self):

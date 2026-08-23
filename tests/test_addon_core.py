@@ -1427,13 +1427,73 @@ async def test_ksenia_last_tampered_zones_sensor_initialization():
 async def test_build_message_has_crc():
     """Test that message building includes CRC calculation."""
     from custom_components.ksenia_lares.wscall import _build_message
-    
+
     message = _build_message("TEST", "TEST_TYPE", {"test": "data"})
-    
+
     # Should be a JSON string with CRC_16 field
     assert isinstance(message, str)
     assert "CRC_16" in message
     assert "0x" in message  # CRC should be in hex format
+
+
+@pytest.mark.asyncio
+async def test_realtime_types_includes_faults_and_tampers():
+    """REALTIME_TYPES must include STATUS_FAULTS/STATUS_TAMPERS or the panel
+    never sends spontaneous fault/tamper updates, leaving the system_faults
+    and system_tampering sensors stuck at OK forever (see websocketmanager.py
+    listener map at STATUS_TAMPERS -> "tampers", STATUS_FAULTS -> "faults")."""
+    from custom_components.ksenia_lares.wscall import REALTIME_TYPES
+
+    assert "STATUS_FAULTS" in REALTIME_TYPES
+    assert "STATUS_TAMPERS" in REALTIME_TYPES
+
+
+@pytest.mark.asyncio
+async def test_read_types_includes_faults_and_tampers():
+    """READ_TYPES must include STATUS_FAULTS/STATUS_TAMPERS so sensors have an
+    initial value at startup instead of waiting for a spontaneous change."""
+    from custom_components.ksenia_lares.wscall import READ_TYPES
+
+    assert "STATUS_FAULTS" in READ_TYPES
+    assert "STATUS_TAMPERS" in READ_TYPES
+
+
+@pytest.mark.asyncio
+async def test_update_cache_preserves_idless_singleton_on_second_update():
+    """STATUS_TAMPERS/STATUS_FAULTS payloads are a single aggregate object with
+    no "ID" field (unlike STATUS_PANEL/STATUS_SYSTEM). _update_cache's entity-ID
+    merge must not silently drop them to an empty list on the second update."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+
+    first = [{"PS_MISS": [], "LOW_BATT": [{"DES": "centrale", "ID": "1", "STA": "F"}]}]
+    manager._update_cache("STATUS_FAULTS", first)
+    assert manager._readData["STATUS_FAULTS"] == first
+
+    second = [{"PS_MISS": [], "LOW_BATT": [{"DES": "centrale", "ID": "1", "STA": "F"}]}]
+    manager._update_cache("STATUS_FAULTS", second)
+    # Must still contain the fault data, not have been merged away to []
+    assert manager._readData["STATUS_FAULTS"] == second
+
+
+@pytest.mark.asyncio
+async def test_power_supply_sensor_handles_missing_battery_voltage():
+    """When no battery is installed, the panel reports B as "NA" (as it does
+    for the analogous M/B fields on other peripherals, e.g. STATUS_BUS_SIRENS).
+    The sensor must not get stuck at Unknown just because it can't parse a
+    battery voltage that legitimately doesn't exist."""
+    from custom_components.ksenia_lares.sensor import KseniaPowerSupplySensor
+    from custom_components.ksenia_lares.const import PowerSupplyStatus
+
+    ws_manager = MagicMock()
+    entity = KseniaPowerSupplySensor(ws_manager)
+    entity.async_write_ha_state = MagicMock()
+
+    await entity._handle_panel_update([{"ID": "1", "M": "13.8", "B": "NA"}])
+
+    assert entity.native_value != None
+    assert entity.native_value == PowerSupplyStatus.OK
 
 
 # ============================================================================
@@ -2393,4 +2453,210 @@ async def test_notify_connection_state_after_cleanup_in_handle_connection_closed
 
     # Listener should have seen _readData as None (cleared before notification)
     assert len(observed_readData) == 1
-    assert observed_readData[0] is None
+
+
+def test_opening_zone_cats_is_focused_subset():
+    """OPENING_ZONE_CATS covers only physical-opening zone types relevant to arming checks."""
+    from custom_components.ksenia_lares.const import BINARY_ZONE_CATS, OPENING_ZONE_CATS
+
+    assert OPENING_ZONE_CATS == {"DOOR", "WINDOW", "PMC"}
+    assert OPENING_ZONE_CATS.issubset(BINARY_ZONE_CATS)
+
+
+def test_partition_in_mask():
+    """Parses the Ksenia PRT partition-mask format: ALL / 0 / hex bitmask."""
+    from custom_components.ksenia_lares.helpers import partition_in_mask
+
+    assert partition_in_mask("ALL", "1") is True
+    assert partition_in_mask("ALL", "8") is True
+    assert partition_in_mask("0", "1") is False
+    assert partition_in_mask("1", "1") is True  # bit 0 set -> partition 1
+    assert partition_in_mask("1", "2") is False  # bit 1 not set -> partition 2
+    assert partition_in_mask("3", "1") is True  # bits 0+1 set -> partitions 1 and 2
+    assert partition_in_mask("3", "2") is True
+    assert partition_in_mask("3", "3") is False
+    assert partition_in_mask(None, "1") is False
+    assert partition_in_mask("", "1") is False
+
+
+def test_websocket_manager_pending_arming_snapshot_registry():
+    """set/pop/list roundtrip for the per-partition arming-failure snapshot registry."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+
+    manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+
+    assert manager.pending_arming_partition_ids() == []
+    assert manager.pop_pending_arming_snapshot("1") is None
+
+    manager.set_pending_arming_snapshot("1", ["Front Door"])
+    manager.set_pending_arming_snapshot("2", ["Garage Door"])
+
+    assert sorted(manager.pending_arming_partition_ids()) == ["1", "2"]
+    assert manager.pop_pending_arming_snapshot("1") == ["Front Door"]
+    assert manager.pending_arming_partition_ids() == ["2"]
+    assert manager.pop_pending_arming_snapshot("1") is None
+
+
+@pytest.mark.asyncio
+async def test_arming_failure_sensor_snapshots_open_zones_on_exit_delay():
+    """Entering exit delay (ARM=='OT') snapshots open DOOR/WINDOW/PMC zones for that partition."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+    from custom_components.ksenia_lares.sensor import KseniaPartitionArmingFailureSensor
+
+    ws_manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    ws_manager.getSensor = AsyncMock(return_value=[
+        {"ID": "1", "CAT": "DOOR", "PRT": "1", "STA": "A", "DES": "Front Door"},
+        {"ID": "2", "CAT": "WINDOW", "PRT": "1", "STA": "R", "DES": "Kitchen Window"},
+        {"ID": "3", "CAT": "IMOV", "PRT": "1", "STA": "A", "DES": "Hallway Motion"},
+        {"ID": "4", "CAT": "PMC", "PRT": "2", "STA": "A", "DES": "Garage Door"},
+    ])
+
+    entity = KseniaPartitionArmingFailureSensor(
+        ws_manager, {"ID": "1", "DES": "Living Room", "ARM": "D"}
+    )
+    entity.async_write_ha_state = MagicMock()
+
+    await entity._handle_partition_update([{"ID": "1", "ARM": "OT"}])
+
+    assert ws_manager.pending_arming_partition_ids() == ["1"]
+    assert ws_manager.pop_pending_arming_snapshot("1") == ["Front Door"]
+
+
+@pytest.mark.asyncio
+async def test_arming_failure_sensor_discards_snapshot_on_successful_arm():
+    """Reaching an armed state (IA/DA) after exit delay discards the pending snapshot."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+    from custom_components.ksenia_lares.sensor import KseniaPartitionArmingFailureSensor
+
+    ws_manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    ws_manager.getSensor = AsyncMock(return_value=[
+        {"ID": "1", "CAT": "DOOR", "PRT": "1", "STA": "A", "DES": "Front Door"},
+    ])
+
+    entity = KseniaPartitionArmingFailureSensor(
+        ws_manager, {"ID": "1", "DES": "Living Room", "ARM": "D"}
+    )
+    entity.async_write_ha_state = MagicMock()
+
+    await entity._handle_partition_update([{"ID": "1", "ARM": "OT"}])
+    assert ws_manager.pending_arming_partition_ids() == ["1"]
+
+    await entity._handle_partition_update([{"ID": "1", "ARM": "IA"}])
+    assert ws_manager.pending_arming_partition_ids() == []
+
+
+@pytest.mark.asyncio
+async def test_arming_failure_sensor_publishes_on_matching_parmf():
+    """A PARMF log entry with a matching PRT publishes the pending snapshot."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+    from custom_components.ksenia_lares.sensor import KseniaPartitionArmingFailureSensor
+
+    ws_manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    entity = KseniaPartitionArmingFailureSensor(
+        ws_manager, {"ID": "1", "DES": "Living Room", "ARM": "D"}
+    )
+    entity.async_write_ha_state = MagicMock()
+    ws_manager.set_pending_arming_snapshot("1", ["Front Door"])
+
+    await entity._handle_logs_update([
+        {"ID": "500", "TYPE": "PARMF", "PRT": "1", "EV": "Arming failed"},
+    ])
+
+    assert entity.native_value is not None
+    assert entity.extra_state_attributes["open_zones"] == ["Front Door"]
+    assert entity.extra_state_attributes["resolved"] is False
+    assert ws_manager.pending_arming_partition_ids() == []
+
+
+@pytest.mark.asyncio
+async def test_arming_failure_sensor_fallback_single_pending_partition():
+    """A PARMF entry with no PRT is attributed to the sole pending partition."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+    from custom_components.ksenia_lares.sensor import KseniaPartitionArmingFailureSensor
+
+    ws_manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    entity = KseniaPartitionArmingFailureSensor(
+        ws_manager, {"ID": "1", "DES": "Living Room", "ARM": "D"}
+    )
+    entity.async_write_ha_state = MagicMock()
+    ws_manager.set_pending_arming_snapshot("1", ["Front Door"])
+
+    await entity._handle_logs_update([
+        {"ID": "501", "TYPE": "PARMF", "EV": "Arming failed"},
+    ])
+
+    assert entity.extra_state_attributes["open_zones"] == ["Front Door"]
+    assert ws_manager.pending_arming_partition_ids() == []
+
+
+@pytest.mark.asyncio
+async def test_arming_failure_sensor_fallback_multiple_pending_partitions():
+    """A PARMF entry with no PRT and multiple pending partitions is published to all of them."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+    from custom_components.ksenia_lares.sensor import KseniaPartitionArmingFailureSensor
+
+    ws_manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    partition1 = KseniaPartitionArmingFailureSensor(
+        ws_manager, {"ID": "1", "DES": "Partition 1", "ARM": "D"}
+    )
+    partition2 = KseniaPartitionArmingFailureSensor(
+        ws_manager, {"ID": "2", "DES": "Partition 2", "ARM": "D"}
+    )
+    partition1.async_write_ha_state = MagicMock()
+    partition2.async_write_ha_state = MagicMock()
+    ws_manager.set_pending_arming_snapshot("1", ["Front Door"])
+    ws_manager.set_pending_arming_snapshot("2", ["Garage Door"])
+
+    log_entry = [{"ID": "600", "TYPE": "PARMF", "EV": "Arming failed"}]
+    await partition1._handle_logs_update(log_entry)
+    await partition2._handle_logs_update(log_entry)
+
+    assert partition1.extra_state_attributes["open_zones"] == ["Front Door"]
+    assert partition2.extra_state_attributes["open_zones"] == ["Garage Door"]
+
+
+@pytest.mark.asyncio
+async def test_arming_failure_sensor_does_not_reprocess_same_log_id():
+    """The same log ID delivered again (repeated poll) never re-triggers a publish."""
+    from custom_components.ksenia_lares.websocketmanager import WebSocketManager
+    from custom_components.ksenia_lares.sensor import KseniaPartitionArmingFailureSensor
+
+    ws_manager = WebSocketManager("192.168.1.50", "1234", 443, MagicMock())
+    entity = KseniaPartitionArmingFailureSensor(
+        ws_manager, {"ID": "1", "DES": "Living Room", "ARM": "D"}
+    )
+    entity.async_write_ha_state = MagicMock()
+    ws_manager.set_pending_arming_snapshot("1", ["Front Door"])
+    log_entry = [{"ID": "700", "TYPE": "PARMF", "PRT": "1", "EV": "Arming failed"}]
+
+    await entity._handle_logs_update(log_entry)
+    assert entity.async_write_ha_state.call_count == 1
+
+    ws_manager.set_pending_arming_snapshot("1", ["Kitchen Window"])
+    await entity._handle_logs_update(log_entry)
+
+    assert entity.async_write_ha_state.call_count == 1
+    assert entity.extra_state_attributes["open_zones"] == ["Front Door"]
+    assert ws_manager.pending_arming_partition_ids() == ["1"]
+
+
+@pytest.mark.asyncio
+async def test_add_partition_sensors_includes_arming_failure_sensor():
+    """_add_partition_sensors creates one KseniaPartitionSensor and one arming-failure sensor per partition."""
+    from custom_components.ksenia_lares.sensor import (
+        KseniaPartitionArmingFailureSensor,
+        KseniaPartitionSensor,
+        _add_partition_sensors,
+    )
+
+    ws_manager = MagicMock()
+    ws_manager.getSensor = AsyncMock(return_value=[
+        {"ID": "1", "DES": "Living Room", "ARM": "D", "AST": "OK"},
+    ])
+    entities = []
+
+    await _add_partition_sensors(ws_manager, None, "AA:BB:CC", entities)
+
+    assert len(entities) == 2
+    assert any(isinstance(e, KseniaPartitionSensor) for e in entities)
+    assert any(isinstance(e, KseniaPartitionArmingFailureSensor) for e in entities)

@@ -91,6 +91,12 @@
       "domus_light": {
         "name": "{name} Ljusintensitet"
       },
+      "powerline_energy": {
+        "name": "{name} Energi"
+      },
+      "partition_arming_failed": {
+        "name": "{name} Aktiveringsfel"
+      },
       "partition_status": {
         "name": "{name}",
         "state": {

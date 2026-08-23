@@ -26,6 +26,23 @@ from .helpers import KseniaEntity, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _merge_status(existing: dict, update: dict) -> dict:
+    """Recursively merge a partial STATUS_TEMPERATURES entity into cached state.
+
+    Dict-valued keys (e.g. THERM) are merged field-by-field instead of being
+    replaced wholesale, so a partial broadcast can't wipe out sibling fields
+    that simply weren't included in this particular update.
+    """
+    merged = dict(existing)
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_status(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 # Preset mode names — correspond to T1/T2/T3 thermostat thresholds
 PRESET_ECO = "eco"
 PRESET_STANDARD = "standard"
@@ -94,7 +111,7 @@ _SUPPORTED_HVAC_MODES = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.AU
 
 MIN_TEMP = 5.0
 MAX_TEMP = 35.0
-TEMP_STEP = 0.5
+TEMP_STEP = 0.1  # CFG_THERMOSTATS setpoints (T1/T2/T3/TM) accept 0.1°C resolution per SDK
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -181,12 +198,20 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
         self.ws_manager.register_listener("thermostats", self._handle_realtime_update)
 
     async def _handle_realtime_update(self, data_list: list) -> None:
-        """Handle STATUS_TEMPERATURES realtime updates."""
+        """Handle STATUS_TEMPERATURES realtime updates.
+
+        Realtime broadcasts can carry a partial entity (e.g. only TEMP, or only
+        THERM.OUT_STATUS) rather than the full status object, so updates are merged
+        into the cached state instead of replacing it outright. A wholesale replace
+        would wipe previously known fields (hvac_mode/target_temperature/hvac_action)
+        whenever a partial push arrives, leaving the entity stuck until something
+        (e.g. a manual toggle) happened to trigger a full status push.
+        """
         for data in data_list:
             if str(data.get("ID")) != self._sensor_id:
                 continue
             _LOGGER.debug("[thermostat %s] Realtime update: %s", self._sensor_id, data)
-            self._status_data = data
+            self._status_data = _merge_status(self._status_data, data)
             self.async_write_ha_state()
             break
 
@@ -197,7 +222,7 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
             return None
         try:
             return float(raw)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return None
 
     @property
@@ -209,7 +234,7 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
             return None
         try:
             return float(val)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return None
 
     @property
@@ -313,7 +338,7 @@ class KseniaClimateEntity(KseniaEntity, ClimateEntity):
         if temperature is None:
             return
 
-        temperature = round(float(temperature) * 2) / 2  # round to 0.5
+        temperature = round(float(temperature), 1)  # panel setpoint resolution is 0.1°C
 
         season = self._active_season
 
