@@ -59,6 +59,7 @@ DOMUS_LABEL = "Living Room Domus"
 # Output labels
 OUTPUT_LABEL_SIREN = "Outdoor siren"
 OUTPUT_LABEL_LIGHT = "Hall light"
+OUTPUT_LABEL_DIMLIGHT = "Kitchen light"
 OUTPUT_LABEL_COVER = "Living Room Blinds"
 
 # Partition labels
@@ -90,7 +91,8 @@ ZONE_5 = "5"
 # Output IDs
 OUTPUT_SIREN = "1"
 OUTPUT_LIGHT = "2"
-OUTPUT_COVER = "3"
+OUTPUT_DIMLIGHT = "3"
+OUTPUT_COVER = "4"
 
 # Thermostat zone (TEMPERATURES.ID / STATUS_TEMPERATURES.ID)
 THERMO_SENSOR_ID = "1"
@@ -261,6 +263,7 @@ class SimulatorState:
         return {
             OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "DES": OUTPUT_LABEL_SIREN, "CNV": "H", "CAT": "GEN", "MOD": "A"},
             OUTPUT_LIGHT: {"ID": OUTPUT_LIGHT, "DES": OUTPUT_LABEL_LIGHT, "CAT": "GEN", "MOD": "A"},
+            OUTPUT_DIMLIGHT: {"ID": OUTPUT_DIMLIGHT, "DES": OUTPUT_LABEL_DIMLIGHT, "CAT": "LIGHT", "MOD": "AN"},
             OUTPUT_COVER: {"ID": OUTPUT_COVER, "DES": OUTPUT_LABEL_COVER, "CAT": "ROLL", "MOD": "A"},
         }
 
@@ -269,6 +272,7 @@ class SimulatorState:
         return {
             OUTPUT_SIREN: {"ID": OUTPUT_SIREN, "STA": "OFF"},
             OUTPUT_LIGHT: {"ID": OUTPUT_LIGHT, "STA": "OFF"},
+            OUTPUT_DIMLIGHT: {"ID": OUTPUT_DIMLIGHT, "STA": "OFF", "POS": "50"},
             OUTPUT_COVER: {"ID": OUTPUT_COVER, "STA": "OFF", "POS": "0"},
         }
 
@@ -803,7 +807,7 @@ async def delayed_entry_delay_expired(partition_id: str) -> None:
 
         # Activate siren
         state.outputs[OUTPUT_SIREN]["STA"] = "ON"
-        outputs_update = [{**state.outputs[o]} for o in [OUTPUT_SIREN, OUTPUT_LIGHT]]
+        outputs_update = [{**state.outputs[o]} for o in [OUTPUT_SIREN, OUTPUT_LIGHT, OUTPUT_DIMLIGHT]]
         await state.broadcast_realtime({"STATUS_OUTPUTS": outputs_update})
         logger.info(f"[SIMULATOR] Siren activated")
 
@@ -1525,6 +1529,22 @@ async def api_toggle_output(output_id: str) -> Response:
         if not output:
             return JSONResponse(status_code=404, content={"detail": "Output not found"})
         output["STA"] = "OFF" if output["STA"].upper() == "ON" else "ON"
+        await state.broadcast_realtime({"STATUS_OUTPUTS": [output]})
+        return JSONResponse(content=output)
+
+@app.post("/api/outputs/{output_id}/command", response_model=None)
+async def api_output_command(output_id: str, request: Request) -> Response:
+    """Send a command to an output (brightness position)."""
+    body = await request.json()
+    cmd = str(body.get("pos", "")).upper()
+    async with state.lock:
+        output = state.outputs.get(output_id)
+        if not output or state.output_configs.get(output_id, {}).get("CAT") != "LIGHT":
+            return JSONResponse(status_code=404, content={"detail": "Light not found"})
+        if cmd.isdigit():
+            output["POS"] = str(max(0, min(100, int(cmd))))
+        else:
+            return JSONResponse(status_code=400, content={"detail": f"Unknown command: {cmd}"})
         await state.broadcast_realtime({"STATUS_OUTPUTS": [output]})
         return JSONResponse(content=output)
 
